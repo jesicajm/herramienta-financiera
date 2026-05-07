@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#f7f4ef">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>ABBA · Evalúa tus Finanzas</title>
+<link rel="icon" type="image/png" href="logo-abba.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT@9..144,300..600,30..100&family=Geist:wght@300..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════════════
+     LOGIN
+     ════════════════════════════════════════════════════════ -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="brand-mark">
+      <img src="logo-abba.png" alt="ABBA" class="brand-logo-full">
+    </div>
+    <span class="login-eyebrow">Asesoría financiera personal</span>
+    <h1 class="login-title">Evalúa tus <em>finanzas</em></h1>
+    <p class="login-sub">Diagnóstico, presupuesto y plan de acción.<br>Construido para ordenar tu vida financiera.</p>
+
+    <!-- ── MODO LOGIN ── -->
+    <div class="auth-pane" id="pane-login">
+      <button class="btn-google" id="btn-google-login">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+      Continuar con Google
+      </button>
+      <div class="auth-divider"><span>o con tu correo</span></div>
+      <div class="field">
+        <label for="auth-email">Correo electrónico</label>
+        <input type="email" id="auth-email" autocomplete="email" placeholder="tucorreo@ejemplo.com">
+      </div>
+      <div class="field">
+        <label for="auth-password">Contraseña</label>
+        <input type="password" id="auth-password" autocomplete="current-password" placeholder="••••••••">
+      </div>
+      <div id="auth-login-error" class="auth-error" style="display:none"></div>
+      <button class="btn-cta" id="btn-login">
+        Iniciar sesión
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+      </button>
+      <div class="auth-links">
+        <a href="#" id="link-forgot">¿Olvidaste tu contraseña?</a>
+        <span class="auth-sep">·</span>
+        <a href="#" id="link-to-register">Crear cuenta nueva</a>
+      </div>
+    </div>
+
+    <!-- ── MODO REGISTRO ── -->
+    <div class="auth-pane" id="pane-register" style="display:none">
+      <button class="btn-google" id="btn-google-register">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+        Registrarme con Google
+      </button>
+      <div class="auth-divider"><span>o crea tu cuenta</span></div>
+      <div class="field">
+        <label for="reg-email">Correo electrónico</label>
+        <input type="email" id="reg-email" autocomplete="email" placeholder="tucorreo@ejemplo.com">
+      </div>
+      <div class="field">
+        <label for="reg-password">Crea una contraseña</label>
+        <input type="password" id="reg-password" autocomplete="new-password" placeholder="Mínimo 8 caracteres">
+      </div>
+      <div id="auth-register-error" class="auth-error" style="display:none"></div>
+      <button class="btn-cta" id="btn-register">
+        Crear cuenta
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+      </button>
+      <div class="auth-links">
+        <a href="#" id="link-to-login">Ya tengo una cuenta</a>
+      </div>
+    </div>
+
+    <!-- ── MODO RECUPERAR ── -->
+    <div class="auth-pane" id="pane-forgot" style="display:none">
+      <p class="auth-instructions">Ingresa tu correo y te enviaremos un enlace para restablecer tu contraseña.</p>
+      <div class="field">
+        <label for="forgot-email">Correo electrónico</label>
+        <input type="email" id="forgot-email" autocomplete="email" placeholder="tucorreo@ejemplo.com">
+      </div>
+      <div id="auth-forgot-msg" class="auth-error" style="display:none"></div>
+      <button class="btn-cta" id="btn-forgot">
+        Enviar enlace de recuperación
+      </button>
+      <div class="auth-links">
+        <a href="#" id="link-back-to-login">Volver al inicio de sesión</a>
+      </div>
+    </div>
+
+    <div class="demo-buttons" id="demo-buttons-wrap">
+      <div class="demo-divider"><span>o explora con datos demo</span></div>
+      <button class="btn-demo" id="btn-demo-carlos">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="4"/><path d="M4 22a8 8 0 0 1 16 0"/></svg>
+        <div class="btn-demo-text">
+          <strong>Carlos</strong>
+          <span>Asesor de seguros independiente · 38 años</span>
+        </div>
+      </button>
+      <button class="btn-demo" id="btn-demo-maria">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="4"/><path d="M4 22a8 8 0 0 1 16 0"/></svg>
+        <div class="btn-demo-text">
+          <strong>María</strong>
+          <span>Coordinadora de marketing empleada · 34 años</span>
+        </div>
+      </button>
+    </div>
+    <p class="login-foot">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      Tus datos se guardan de forma cifrada y privada
+    </p>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════
+     ONBOARDING — Perfil del cliente (primera vez)
+     ════════════════════════════════════════════════════════ -->
+<div id="onboarding-screen" style="display:none">
+  <div class="onboarding-card">
+    <div class="brand-mark">
+      <img src="logo-abba.png" alt="ABBA" class="brand-logo-full">
+    </div>
+    <span class="login-eyebrow">Bienvenido</span>
+    <h1 class="login-title">Cuéntanos un poco <em>de ti</em></h1>
+    <p class="login-sub">Antes de empezar, necesitamos algunos datos básicos.<br>Puedes editarlos cuando quieras desde tu perfil.</p>
+
+    <div class="field">
+      <label for="ob-nombre">Tu nombre completo</label>
+      <input type="text" id="ob-nombre" placeholder="Ej: Juan Pérez García" autocapitalize="words" autocomplete="name">
+    </div>
+
+    <div class="field">
+      <label for="ob-email">Correo electrónico</label>
+      <input type="email" id="ob-email" placeholder="tucorreo@ejemplo.com" autocomplete="email" readonly>
+      <span class="field-hint">Lo usamos para tu cuenta y notificaciones importantes</span>
+    </div>
+
+    <div class="field">
+      <label for="ob-whatsapp">WhatsApp</label>
+      <div class="phone-input-wrap">
+        <span class="phone-prefix">+57</span>
+        <input type="tel" id="ob-whatsapp" placeholder="3001234567" inputmode="numeric" maxlength="10" autocomplete="tel">
+      </div>
+      <span class="field-hint">10 dígitos, empezando con 3. Solo te contactaremos si autorizas.</span>
+      <div class="field-error" id="ob-whatsapp-error" style="display:none"></div>
+    </div>
+
+    <!-- Consentimientos -->
+    <div class="consent-section">
+      <h4 class="consent-title">Autorizaciones</h4>
+
+      <label class="consent-item required">
+        <input type="checkbox" id="ob-consent-tratamiento">
+        <span class="consent-check"></span>
+        <div class="consent-text">
+          <strong>Autorizo el tratamiento de mis datos personales</strong>
+          <span>Acepto que ABBA recolecte y procese mis datos financieros con el fin de ofrecerme un análisis personalizado, identificar oportunidades de productos y servicios financieros relevantes para mí, y comunicarme cuando aplique. ABBA no comparte mis datos con terceros sin mi autorización adicional. Puedo consultar, corregir o eliminar mis datos en cualquier momento. <a href="#" id="link-aviso-privacidad">Aviso de privacidad</a> · <strong class="required-tag">Requerido</strong></span>
+        </div>
+      </label>
+
+      <label class="consent-item">
+        <input type="checkbox" id="ob-consent-recomendaciones">
+        <span class="consent-check"></span>
+        <div class="consent-text">
+          <strong>Quiero recibir recomendaciones financieras personalizadas</strong>
+          <span>Autorizo que ABBA me contacte por correo o WhatsApp cuando identifique oportunidades específicas para mí: renovaciones de pólizas, ajustes tributarios, fondos de inversión, reorganización de deudas, o pensión voluntaria. Puedo desactivar esto cuando quiera desde mi perfil. <span class="optional-tag">Opcional</span></span>
+        </div>
+      </label>
+    </div>
+
+    <div id="ob-error" class="auth-error" style="display:none"></div>
+
+    <button class="btn-cta" id="btn-onboarding-continuar">
+      Continuar
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+    </button>
+    <p class="login-foot">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      Tus datos se guardan de forma cifrada y privada
+    </p>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════
+     APP
+     ════════════════════════════════════════════════════════ -->
+<div id="app">
+
+  <!-- Topbar -->
+  <header class="topbar">
+    <div class="topbar-brand">
+      <img src="logo-abba.png" alt="ABBA" class="brand-logo-icon">
+    </div>
+    <div class="topbar-title" id="topbar-title">Ingresos y Gastos</div>
+    <div class="topbar-user" id="topbar-user-menu">
+      <span class="user-name" id="user-display"></span>
+      <button class="user-avatar" id="user-avatar" title="Mi cuenta">U</button>
+      <div class="user-dropdown" id="user-dropdown" style="display:none">
+        <a href="#" id="dd-perfil"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="4"/><path d="M4 22a8 8 0 0 1 16 0"/></svg>Mi perfil</a>
+        <a href="#" id="dd-logout"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Cerrar sesión</a>
+      </div>
+    </div>
+  </header>
+  <div class="progress-strip"><div class="progress-fill" id="progress-bar" style="width:0%"></div></div>
+
+  <!-- Sidebar (desktop) -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-section">Diagnóstico</div>
+    <a class="sb-item active" data-module="1" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+      Ingresos y Gastos
+      <span class="sb-dot" id="dot-1"></span>
+    </a>
+    <a class="sb-item sb-item-sub" data-module="var" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 17l6-6 4 4 8-8"/><polyline points="14 7 21 7 21 14"/></svg>
+      Ingresos variables
+      <span class="sb-dot" id="dot-var"></span>
+    </a>
+    <a class="sb-item" data-module="2" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+      Endeudamiento
+      <span class="sb-dot" id="dot-2"></span>
+    </a>
+    <a class="sb-item" data-module="3" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21V12h6v9"/></svg>
+      Activos
+      <span class="sb-dot" id="dot-3"></span>
+    </a>
+    <a class="sb-item" data-module="4" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+      Ahorro y Solvencia
+      <span class="sb-dot" id="dot-4"></span>
+    </a>
+    <a class="sb-item" data-module="5" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      Presupuesto Anual
+      <span class="sb-dot" id="dot-5"></span>
+    </a>
+    <div class="sidebar-section" style="margin-top:8px">Resultado</div>
+    <a class="sb-item" data-module="6" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+      Tablero de Control
+      <span class="sb-dot" id="dot-6"></span>
+    </a>
+  </aside>
+
+  <!-- Main content -->
+  <main class="main">
+
+    <!-- ─── MÓDULO 1 ─── -->
+    <div id="modulo-1" class="module active">
+      <div class="module-head">
+        <div class="module-eyebrow"><span class="dot"></span>Módulo 01</div>
+        <h1 class="module-title">¿Cómo están tus <em>ingresos</em> y gastos?</h1>
+        <p class="module-desc">Registra todas tus fuentes de ingreso y tus gastos mensuales recurrentes para entender el flujo de tu dinero.</p>
+      </div>
+
+      <!-- Tipo de ingreso principal -->
+      <div class="card type-card">
+        <div class="type-card-grid">
+          <div class="type-card-text">
+            <div class="type-card-eyebrow">Para personalizar tu plan</div>
+            <h4 class="type-card-title">¿Cómo recibes principalmente tu ingreso?</h4>
+            <p class="type-card-sub">Esto define qué ingresos no mensuales pre-cargamos en tu presupuesto anual: primas legales si eres empleado, devoluciones y dividendos si eres independiente.</p>
+          </div>
+          <div class="type-card-select">
+            <select id="tipo-ingreso">
+              <option value="">— Selecciona —</option>
+              <option value="empleado">Empleado · recibo nómina</option>
+              <option value="independiente">Independiente · facturo o cobro comisiones</option>
+              <option value="mixto">Mixto · combinación de los dos</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Invitación: módulo de ingresos variables -->
+      <div class="invite-card" onclick="navigateTo('var')">
+        <div class="invite-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 17l6-6 4 4 8-8"/><polyline points="14 7 21 7 21 14"/></svg>
+        </div>
+        <div class="invite-body">
+          <div class="invite-eyebrow">Para independientes y emprendedores</div>
+          <h4 class="invite-title">¿Tus ingresos varían cada mes?</h4>
+          <p class="invite-text">Estabiliza tus finanzas. Convierte un ingreso volátil en un sueldo personal predecible.</p>
+        </div>
+        <div class="invite-arrow">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>
+          <h3>Fuentes de ingreso</h3>
+        </div>
+        <div class="m1-mvar-note" id="m1-mvar-note" style="display:none">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 17l6-6 4 4 8-8"/><polyline points="14 7 21 7 21 14"/></svg>
+          <div>
+            <strong>Tu ingreso variable se sincroniza desde el módulo dedicado.</strong>
+            La línea marcada como "sincronizada" muestra tu salario personal predecible. El resto puedes usarlas para ingresos fijos adicionales (renovaciones, rentas, dividendos).
+          </div>
+        </div>
+        <div class="item-list" id="ingresos-body"></div>
+        <button class="btn-add" id="add-ingreso">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Agregar fuente de ingreso
+        </button>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+          <h3>Gasto mensual por categoría</h3>
+        </div>
+        <div class="item-list" id="gastos-body"></div>
+      </div>
+      <div class="kpi-grid" id="m1-kpis"></div>
+      <div class="actions">
+        <button class="btn btn-secondary" onclick="navigateTo(2)">Siguiente
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+        <button class="btn btn-primary" id="save-m1">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
+          Guardar módulo
+        </button>
+      </div>
+    </div>
+
+    <!-- ─── MÓDULO INGRESOS VARIABLES ─── -->
+    <div id="modulo-var" class="module">
+      <div class="module-head">
+        <div class="module-eyebrow"><span class="dot"></span>Para independientes</div>
+        <h1 class="module-title">Convierte un ingreso <em>volátil</em> en un sueldo predecible</h1>
+        <p class="module-desc">Si tus ingresos cambian cada mes, este módulo te ayuda a definir un salario personal sostenible y un fondo que estabiliza tus finanzas — vivir con tranquilidad aunque tu negocio sea variable.</p>
+      </div>
+
+      <!-- Activación -->
+      <div class="card mvar-toggle" id="mvar-activate-card">
+        <div class="mvar-toggle-row">
+          <div class="mvar-toggle-text">
+            <h4>¿Tus ingresos varían mes a mes?</h4>
+            <p>Activa el análisis para independientes y empieza a registrar tu historial.</p>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="mvar-active">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Contenido condicional -->
+      <div id="mvar-content" style="display:none">
+
+        <!-- Configuración inicial -->
+        <div class="card">
+          <div class="card-head">
+            <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
+            <h3>Configuración</h3>
+          </div>
+          <div class="mvar-config-grid">
+            <div class="mr-field">
+              <label>Tipo de actividad</label>
+              <select id="mvar-actividad">
+                <option value="servicios">Servicios profesionales</option>
+                <option value="comercio">Comercio / Ventas</option>
+                <option value="freelance">Freelance / Creativo</option>
+                <option value="comisiones">Comisiones</option>
+                <option value="rentas">Rentas / Arriendos</option>
+                <option value="mixto">Mixto</option>
+              </select>
+            </div>
+            <div class="mr-field">
+              <label>Reserva tributaria estimada (%) <span class="info-tip" data-def="reserva_tributaria" tabindex="0">i</span></label>
+              <input type="number" id="mvar-tributo-pct" min="0" max="50" step="0.5" placeholder="10">
+            </div>
+            <div class="mr-field full">
+              <label>Saldo actual del fondo de estabilización</label>
+              <input class="money-input" id="mvar-fondo-actual" placeholder="0">
+            </div>
+          </div>
+          <p class="mvar-hint">La reserva tributaria es lo que apartas de cada ingreso para impuestos. En Colombia, para independientes con régimen ordinario, suele estar entre <strong>8 % y 15 %</strong> del bruto. Ajústalo según tu caso.</p>
+        </div>
+
+        <!-- Histórico mensual -->
+        <div class="card">
+          <div class="card-head">
+            <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
+            <h3>Historial de ingresos</h3>
+            <span class="head-meta" id="mvar-meses-count">0 meses</span>
+          </div>
+          <p class="mvar-hint" style="margin-top:-6px;margin-bottom:14px">Registra los últimos <strong>12 meses</strong> (mínimo 6). Para cada mes ingresa lo que <em>realmente</em> recibiste y los costos directos del negocio si los hay.</p>
+          <div id="mvar-meses-body"></div>
+          <button class="btn-add" id="mvar-add-mes">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Agregar mes
+          </button>
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+            <button class="btn-ghost" id="mvar-fill-12">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+              Crear 12 meses recientes
+            </button>
+            <button class="btn-ghost" id="mvar-clear">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              Limpiar historial
+            </button>
+          </div>
+        </div>
+
+        <!-- Análisis estadístico -->
+        <div class="kpi-grid" id="mvar-kpis"></div>
+
+        <!-- Estado tributario -->
+        <div class="card" id="mvar-tributario-card" style="display:none">
+          <div class="card-head">
+            <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg></div>
+            <h3>Estado tributario</h3>
+          </div>
+          <div id="mvar-tributario-content"></div>
+        </div>
+
+        <!-- Distribución visual -->
+        <div class="card">
+          <div class="card-head">
+            <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg></div>
+            <h3>Mes a mes · ingreso neto vs salario personal</h3>
+          </div>
+          <canvas id="mvar-chart" style="max-height:280px"></canvas>
+          <div class="mvar-chart-legend">
+            <span><span class="leg-dot" style="background:var(--pos)"></span>Excedente · va al fondo</span>
+            <span><span class="leg-dot" style="background:var(--neg)"></span>Déficit · sale del fondo</span>
+            <span><span class="leg-dot" style="background:var(--ink)"></span>Salario personal</span>
+          </div>
+        </div>
+
+        <!-- Salario personal recomendado -->
+        <div class="card mvar-salary-card" id="mvar-salary-card">
+          <div class="mvar-salary-eyebrow">Tu sueldo predecible</div>
+          <div class="mvar-salary-row">
+            <div class="mvar-salary-amount">
+              <div class="mvar-salary-label">Salario personal mensual <span class="info-tip" data-def="salario_personal" tabindex="0" style="background:rgba(255,255,255,.3);color:#fff">i</span></div>
+              <div class="mvar-salary-value" id="mvar-salary-display">—</div>
+              <div class="mvar-salary-meta" id="mvar-salary-meta">—</div>
+            </div>
+            <div class="mvar-salary-input-wrap">
+              <label>Ajusta tu salario</label>
+              <div class="mvar-salary-input-box">
+                <span class="it-prefix" id="mvar-salary-prefix">COP $</span>
+                <input class="money-input" id="mvar-salary-input" placeholder="0">
+              </div>
+              <button class="btn-link" id="mvar-salary-reset">Usar el sugerido</button>
+            </div>
+          </div>
+          <div class="mvar-salary-explainer">
+            <div class="mse-item">
+              <div class="mse-num">1</div>
+              <div><strong>Te pagas a ti mismo</strong> este monto cada mes, sin importar lo que haya entrado.</div>
+            </div>
+            <div class="mse-item">
+              <div class="mse-num">2</div>
+              <div><strong>Cuando ganes más</strong>, el excedente va a tu fondo de estabilización.</div>
+            </div>
+            <div class="mse-item">
+              <div class="mse-num">3</div>
+              <div><strong>Cuando ganes menos</strong>, el fondo cubre la diferencia y tu sueldo no cambia.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Fondo de estabilización -->
+        <div class="card">
+          <div class="card-head">
+            <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.8.95 6.5 2.5"/><polyline points="21 4 21 11 14 11"/></svg></div>
+            <h3>Fondo de estabilización <span class="info-tip" data-def="fondo_estabilizacion" tabindex="0">i</span></h3>
+          </div>
+          <div class="fondo-grid">
+            <div class="fondo-stat">
+              <div class="fondo-label">Saldo actual</div>
+              <div class="fondo-value" id="fondo-actual-val">—</div>
+            </div>
+            <div class="fondo-stat">
+              <div class="fondo-label">Meta recomendada</div>
+              <div class="fondo-value" id="fondo-meta-val">—</div>
+              <div class="fondo-sub" id="fondo-meta-sub">—</div>
+            </div>
+            <div class="fondo-stat">
+              <div class="fondo-label">Cobertura actual</div>
+              <div class="fondo-value" id="fondo-cobertura-val">—</div>
+              <div class="fondo-sub">Meses de salario cubiertos</div>
+            </div>
+          </div>
+          <div class="fondo-progress-wrap">
+            <div class="fondo-progress-track">
+              <div class="fondo-progress-fill" id="fondo-progress" style="width:0%"></div>
+            </div>
+            <div class="fondo-progress-meta" id="fondo-progress-meta">— · —</div>
+          </div>
+          <div class="alert" id="fondo-alert" style="display:none"></div>
+        </div>
+
+        <!-- Estacionalidad -->
+        <div class="card" id="mvar-stacion-card" style="display:none">
+          <div class="card-head">
+            <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></div>
+            <h3>Estacionalidad detectada</h3>
+          </div>
+          <div id="mvar-stacion-body"></div>
+        </div>
+
+        <!-- Recomendaciones -->
+        <div class="card">
+          <div class="card-head">
+            <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg></div>
+            <h3>Recomendaciones financieras</h3>
+          </div>
+          <div id="mvar-recos"></div>
+        </div>
+
+      </div>
+
+      <div class="actions">
+        <button class="btn btn-secondary" onclick="navigateTo(2)">Siguiente
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+        <button class="btn btn-primary" id="save-mvar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
+          Guardar módulo
+        </button>
+      </div>
+    </div>
+
+    <!-- ─── MÓDULO 2 ─── -->
+    <div id="modulo-2" class="module">
+      <div class="module-head">
+        <div class="module-eyebrow"><span class="dot"></span>Módulo 02</div>
+        <h1 class="module-title">¿Cómo está tu <em>endeudamiento</em>?</h1>
+        <p class="module-desc">Diferenciar entre deuda de consumo y apalancamiento es clave para entender el impacto real sobre tu capacidad económica.</p>
+      </div>
+
+      <div class="legend">
+        <div class="legend-row"><span class="tag-pill consumo">Consumo</span> Tarjeta, préstamo personal, libranza · reduce tu capacidad</div>
+        <div class="legend-row"><span class="tag-pill apal">Apalancamiento</span> Hipotecaria, inversión, negocio · puede generar retorno</div>
+        <div class="legend-row"><span class="tag-pill otro">Otro</span> Educación, vehículo, deuda personal o familiar</div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+          <h3>Registro de deudas</h3>
+        </div>
+        <div id="deudas-body"></div>
+        <button class="btn-add" id="add-deuda">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Agregar deuda
+        </button>
+      </div>
+      <div class="kpi-grid" id="m2-kpis"></div>
+      <div id="m2-structure"></div>
+      <div class="actions">
+        <button class="btn btn-secondary" onclick="navigateTo(3)">Siguiente
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+        <button class="btn btn-primary" id="save-m2">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
+          Guardar módulo
+        </button>
+      </div>
+    </div>
+
+    <!-- ─── MÓDULO 3 ─── -->
+    <div id="modulo-3" class="module">
+      <div class="module-head">
+        <div class="module-eyebrow"><span class="dot"></span>Módulo 03</div>
+        <h1 class="module-title">¿Cómo están tus <em>activos</em>?</h1>
+        <p class="module-desc">Inventario de todo lo que tienes a valor de mercado actual. La proporción entre activos líquidos y no líquidos define tu flexibilidad financiera.</p>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21V12h6v9"/></svg></div>
+          <h3>Inventario de activos</h3>
+        </div>
+        <div id="activos-body"></div>
+        <button class="btn-add" id="add-activo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Agregar activo
+        </button>
+      </div>
+      <div class="kpi-grid" id="m3-kpis"></div>
+      <div class="actions">
+        <button class="btn btn-secondary" onclick="navigateTo(4)">Siguiente
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+        <button class="btn btn-primary" id="save-m3">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
+          Guardar módulo
+        </button>
+      </div>
+    </div>
+
+    <!-- ─── MÓDULO 4 ─── -->
+    <div id="modulo-4" class="module">
+      <div class="module-head">
+        <div class="module-eyebrow"><span class="dot"></span>Módulo 04</div>
+        <h1 class="module-title">¿Cómo está tu <em>ahorro</em> y solvencia?</h1>
+        <p class="module-desc">Tu capacidad de ahorro mensual y tu nivel de solvencia frente a las deudas determinan tu resiliencia financiera.</p>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg></div>
+          <h3>Objetivos de ahorro mensual</h3>
+        </div>
+        <div class="item-list" id="ahorro-body"></div>
+        <button class="btn-add" id="add-ahorro">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Agregar objetivo
+        </button>
+      </div>
+      <div class="kpi-grid" id="m4-kpis"></div>
+      <div class="actions">
+        <button class="btn btn-secondary" onclick="navigateTo(5)">Siguiente
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+        <button class="btn btn-primary" id="save-m4">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
+          Guardar módulo
+        </button>
+      </div>
+    </div>
+
+    <!-- ─── MÓDULO 5 ─── -->
+    <div id="modulo-5" class="module">
+      <div class="module-head">
+        <div class="module-eyebrow"><span class="dot"></span>Módulo 05</div>
+        <h1 class="module-title">Tu <em>presupuesto</em> anual</h1>
+        <p class="module-desc">Distingue lo que ocurre todos los meses de lo estacional. Convierte cada gasto anual en un equivalente mensual y construye tu fondo de provisiones para evitar la inercia financiera y el endeudamiento forzoso.</p>
+      </div>
+
+      <!-- Explicación pedagógica -->
+      <div class="provision-intro">
+        <div class="prov-intro-grid">
+          <div class="prov-intro-step">
+            <div class="prov-intro-num serif">1</div>
+            <strong>Lo episódico se vuelve periódico</strong>
+            <p>La póliza de tu carro no cuesta $4.200.000 una vez al año — cuesta $350.000 cada mes que tienes el carro asegurado. Pensar así cambia todo.</p>
+          </div>
+          <div class="prov-intro-step">
+            <div class="prov-intro-num serif">2</div>
+            <strong>Lo previsto se provisiona</strong>
+            <p>Apartas mes a mes el equivalente mensual. Cuando llega el mes del pago, la plata ya está. <span class="info-tip" data-def="fondo_provisiones" tabindex="0">i</span></p>
+          </div>
+          <div class="prov-intro-step">
+            <div class="prov-intro-num serif">3</div>
+            <strong>Evitas la deuda forzosa</strong>
+            <p>Sin provisión, el gasto anual te obliga a financiar a tasa de tarjeta de crédito (~28% anual). Una póliza pagada con tarjeta puede costar hasta 25% más.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Fondo de provisiones -->
+      <div class="card prov-card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="8" width="18" height="13" rx="2"/><path d="M8 21V8a4 4 0 0 1 8 0v13"/><circle cx="12" cy="14" r="1.5"/></svg></div>
+          <h3>Fondo de provisiones <span class="info-tip" data-def="fondo_provisiones" tabindex="0">i</span></h3>
+        </div>
+        <div class="prov-config-grid">
+          <div class="mr-field">
+            <label>Saldo actual del fondo</label>
+            <input class="money-input" id="prov-saldo-actual" placeholder="0">
+          </div>
+          <div class="prov-stat">
+            <div class="prov-stat-label">Aporte mensual sugerido</div>
+            <div class="prov-stat-value serif" id="prov-aporte-sugerido">—</div>
+            <div class="prov-stat-sub" id="prov-aporte-sub">Suma anual ÷ 12 meses</div>
+          </div>
+          <div class="prov-stat">
+            <div class="prov-stat-label">Cobertura próximos 90 días</div>
+            <div class="prov-stat-value serif" id="prov-indice-prevision">—</div>
+            <div class="prov-stat-sub">Índice de previsión <span class="info-tip" data-def="indice_prevision" tabindex="0">i</span></div>
+          </div>
+        </div>
+        <div class="alert" id="prov-alert" style="display:none"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="9" cy="7" r="4"/><circle cx="17" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg></div>
+          <h3>Socios del hogar</h3>
+        </div>
+        <div class="socios-grid">
+          <div class="socio-field"><label>Socio 01</label><input type="text" id="socio1" placeholder="Ej: Juan"></div>
+          <div class="socio-field"><label>Socio 02 (opcional)</label><input type="text" id="socio2" placeholder="Ej: María"></div>
+        </div>
+      </div>
+
+      <div class="acc open" data-acc="ingresos">
+        <div class="acc-head" onclick="toggleAcc(this)">
+          <h4>Ingresos</h4>
+          <div class="acc-meta"><span id="acc-ing-m">— mensual</span><span id="acc-ing-a">— anual</span></div>
+          <div class="acc-chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="6 9 12 15 18 9"/></svg></div>
+        </div>
+        <div class="acc-body">
+          <div id="p5-ingresos-body"></div>
+          <button class="btn-add" onclick="addP5Row('ingresos')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Agregar ingreso
+          </button>
+        </div>
+      </div>
+
+      <div class="acc" data-acc="deudas">
+        <div class="acc-head" onclick="toggleAcc(this)">
+          <h4>Pago de deudas</h4>
+          <div class="acc-meta"><span id="acc-deu-m">— mensual</span><span id="acc-deu-a">— anual</span></div>
+          <div class="acc-chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="6 9 12 15 18 9"/></svg></div>
+        </div>
+        <div class="acc-body">
+          <div id="p5-deudas-body"></div>
+          <button class="btn-add" onclick="addP5Row('deudas')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Agregar pago de deuda
+          </button>
+        </div>
+      </div>
+
+      <div class="acc" data-acc="ahorro">
+        <div class="acc-head" onclick="toggleAcc(this)">
+          <h4>Ahorro</h4>
+          <div class="acc-meta"><span id="acc-aho-m">— mensual</span><span id="acc-aho-a">— anual</span></div>
+          <div class="acc-chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="6 9 12 15 18 9"/></svg></div>
+        </div>
+        <div class="acc-body">
+          <div id="p5-ahorro-body"></div>
+          <button class="btn-add" onclick="addP5Row('ahorro')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Agregar ahorro
+          </button>
+        </div>
+      </div>
+
+      <div id="p5-gastos-accordions"></div>
+
+      <div id="m5-saldo-kpi" style="margin-top:14px"></div>
+
+      <!-- Calendario anual de eventos -->
+      <div class="card calendar-card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
+          <h3>Calendario anual de eventos</h3>
+        </div>
+        <p class="card-sub">Tus próximos 12 meses con todos los gastos e ingresos no mensuales que registraste. Los puntos verdes son ingresos, los rojos son gastos. Si un gasto está en rojo intenso, no tienes provisión suficiente.</p>
+        <div class="cal-legend">
+          <span class="cal-leg-item"><span class="cal-leg-dot ingreso"></span>Ingreso esperado</span>
+          <span class="cal-leg-item"><span class="cal-leg-dot gasto-ok"></span>Gasto provisionado</span>
+          <span class="cal-leg-item"><span class="cal-leg-dot gasto-warn"></span>Gasto sin provisión</span>
+        </div>
+        <div id="m5-calendar" class="cal-grid"></div>
+      </div>
+
+      <div class="actions">
+        <button class="btn btn-secondary" onclick="navigateTo(6)">Ver tablero
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+        <button class="btn btn-primary" id="save-m5">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
+          Guardar módulo
+        </button>
+      </div>
+    </div>
+
+    <!-- ─── MÓDULO 6 ─── -->
+    <div id="modulo-6" class="module">
+      <div class="module-head">
+        <div class="module-eyebrow"><span class="dot"></span>Tablero de control</div>
+        <h1 class="module-title">Tu <em>salud</em> financiera</h1>
+        <p class="module-desc">Resumen integral, indicadores clave y plan de acción.</p>
+      </div>
+
+      <div class="charts-wrap">
+        <div class="chart-card">
+          <div class="ch-label">Distribución del ingreso mensual</div>
+          <canvas id="chart-donut-mensual"></canvas>
+        </div>
+        <div class="chart-card">
+          <div class="ch-label">Activos · Liquidez</div>
+          <canvas id="chart-donut-activos"></canvas>
+        </div>
+        <div class="chart-card">
+          <div class="ch-label">Estructura de deuda</div>
+          <canvas id="chart-donut-deuda"></canvas>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div>
+          <h3>Uso mensual del dinero</h3>
+        </div>
+        <div class="use-list" id="t6-uso-mensual"></div>
+        <div id="t6-aviso-exceso"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
+          <h3>Otros ingresos y gastos anuales</h3>
+        </div>
+        <div class="use-list" id="t6-anuales"></div>
+        <div id="t6-saldo-anual"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div>
+          <h3>Indicadores de salud financiera</h3>
+        </div>
+        <div class="ind-list" id="t6-indicadores"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></div>
+          <h3>Mis objetivos</h3>
+        </div>
+        <div class="obj-grid" id="t6-objetivos"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></div>
+          <h3>Mi plan de acción</h3>
+        </div>
+        <textarea class="plan-area" id="t6-plan" placeholder="Escribe aquí tu plan de acción financiero..."></textarea>
+      </div>
+
+      <div class="actions">
+        <button class="btn btn-primary" id="save-m6">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
+          Guardar tablero
+        </button>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Bottom nav (mobile) -->
+  <nav class="bottombar">
+    <a class="bb-item active" data-module="1" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+      <span class="bb-label">Ingresos</span>
+      <span class="bb-dot" id="bbdot-1"></span>
+    </a>
+    <a class="bb-item" data-module="2" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+      <span class="bb-label">Deudas</span>
+      <span class="bb-dot" id="bbdot-2"></span>
+    </a>
+    <a class="bb-item" data-module="3" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21V12h6v9"/></svg>
+      <span class="bb-label">Activos</span>
+      <span class="bb-dot" id="bbdot-3"></span>
+    </a>
+    <a class="bb-item" data-module="4" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+      <span class="bb-label">Ahorro</span>
+      <span class="bb-dot" id="bbdot-4"></span>
+    </a>
+    <a class="bb-item" data-module="5" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      <span class="bb-label">Plan</span>
+      <span class="bb-dot" id="bbdot-5"></span>
+    </a>
+    <a class="bb-item" data-module="6" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+      <span class="bb-label">Tablero</span>
+      <span class="bb-dot" id="bbdot-6"></span>
+    </a>
+  </nav>
+
+</div>
+
+<!-- Toast -->
+<div class="toast-wrap" id="toast-wrap"></div>
+
+<!-- Modal -->
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal">
+    <div class="modal-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
+    </div>
+    <h3 id="modal-title">Guardado</h3>
+    <p id="modal-msg">Los datos se guardaron correctamente.</p>
+    <button class="btn-modal" onclick="closeModal()">Continuar</button>
+  </div>
+</div>
+
+
+<script src="app.js"></script>
+</body>
+</html>

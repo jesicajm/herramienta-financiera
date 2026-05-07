@@ -1,0 +1,3640 @@
+/* ═══════════════════════════════════════════════════════════
+   FIREBASE — auth + firestore
+   ═══════════════════════════════════════════════════════════ */
+   const firebaseConfig = {
+    apiKey: "AIzaSyBLNS_xLAoAsnf5XfajAmVf12f4_mpUMfY",
+    authDomain: "evaluafinanzas.firebaseapp.com",
+    projectId: "evaluafinanzas",
+    storageBucket: "evaluafinanzas.firebasestorage.app",
+    messagingSenderId: "216050844635",
+    appId: "1:216050844635:web:ca5700949ed37f45385dfe",
+    measurementId: "G-WWS234JYZC"
+  };
+  
+  let db=null, auth=null, firestoreAvailable=false, authAvailable=false;
+  try {
+    firebase.initializeApp(firebaseConfig);
+    db=firebase.firestore();
+    db.enablePersistence().catch(()=>{});
+    firestoreAvailable=true;
+    auth=firebase.auth();
+    authAvailable=true;
+  } catch(e){ console.warn('Firebase no configurado, usando localStorage.'); }
+  
+  /* AuthService — abstrae los métodos de auth para que el resto de la app no dependa de Firebase directamente */
+  const authService = {
+    /* Suscribirse a cambios de estado de autenticación. Callback recibe (user|null) */
+    onChange(callback){
+      if(!authAvailable){
+        // Modo localStorage: leer un usuario falso si existe
+        const stored = localStorage.getItem('abba_local_user');
+        callback(stored ? JSON.parse(stored) : null);
+        return ()=>{};
+      }
+      return auth.onAuthStateChanged(callback);
+    },
+  
+    async loginEmail(email, password){
+      if(!authAvailable){
+        // Modo localStorage: aceptar cualquier credencial sin validar (solo dev/demo)
+        const fakeUser = {uid:'local_'+btoa(email).slice(0,16), email:email, displayName:email.split('@')[0]};
+        localStorage.setItem('abba_local_user', JSON.stringify(fakeUser));
+        return fakeUser;
+      }
+      const cred = await auth.signInWithEmailAndPassword(email, password);
+      return cred.user;
+    },
+  
+    async registerEmail(email, password){
+      if(!authAvailable){
+        const fakeUser = {uid:'local_'+btoa(email).slice(0,16), email:email, displayName:email.split('@')[0]};
+        localStorage.setItem('abba_local_user', JSON.stringify(fakeUser));
+        return fakeUser;
+      }
+      const cred = await auth.createUserWithEmailAndPassword(email, password);
+      return cred.user;
+    },
+  
+    async loginGoogle(){
+      if(!authAvailable){
+        const fakeUser = {uid:'local_google', email:'demo@gmail.com', displayName:'Usuario Google'};
+        localStorage.setItem('abba_local_user', JSON.stringify(fakeUser));
+        return fakeUser;
+      }
+      const provider = new firebase.auth.GoogleAuthProvider();
+      const cred = await auth.signInWithPopup(provider);
+      return cred.user;
+    },
+  
+    async sendPasswordReset(email){
+      if(!authAvailable){
+        // En modo local no enviamos correo; simulamos éxito
+        return true;
+      }
+      await auth.sendPasswordResetEmail(email);
+      return true;
+    },
+  
+    async logout(){
+      if(!authAvailable){
+        localStorage.removeItem('abba_local_user');
+        return;
+      }
+      await auth.signOut();
+    },
+  
+    /* Devuelve el usuario actual (sincrónico) */
+    current(){
+      if(!authAvailable){
+        const stored = localStorage.getItem('abba_local_user');
+        return stored ? JSON.parse(stored) : null;
+      }
+      return auth.currentUser;
+    },
+  
+    /* Traduce los códigos de error de Firebase a mensajes legibles en español */
+    prettyError(err){
+      const code = err && err.code ? err.code : '';
+      const map = {
+        'auth/invalid-email':'El correo no tiene un formato válido.',
+        'auth/user-not-found':'No encontramos una cuenta con ese correo.',
+        'auth/wrong-password':'La contraseña es incorrecta.',
+        'auth/invalid-credential':'Correo o contraseña incorrectos.',
+        'auth/email-already-in-use':'Ya existe una cuenta con ese correo. Intenta iniciar sesión.',
+        'auth/weak-password':'La contraseña debe tener al menos 6 caracteres.',
+        'auth/network-request-failed':'Sin conexión a internet. Revisa tu red.',
+        'auth/too-many-requests':'Demasiados intentos. Espera unos minutos.',
+        'auth/popup-closed-by-user':'Cerraste la ventana de Google sin completar el inicio.',
+        'auth/popup-blocked':'Tu navegador bloqueó la ventana emergente. Permítela e intenta de nuevo.'
+      };
+      return map[code] || (err && err.message) || 'Algo salió mal. Intenta de nuevo.';
+    }
+  };
+  
+  /* ═══════════════════════════════════════════════════════════
+     STATE
+     ═══════════════════════════════════════════════════════════ */
+  let userId='', currency='COP $';
+  let completedModules=new Set();
+  
+  const MODULE_TITLES = {
+    1:'Ingresos y Gastos',2:'Endeudamiento',3:'Activos',
+    4:'Ahorro y Solvencia',5:'Presupuesto Anual',6:'Tablero de Control',
+    'var':'Ingresos Variables'
+  };
+  
+  const MES_NAMES_ES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  const MES_NAMES_FULL = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+  
+  const DEBT_TYPES = [
+    {val:'CONSUMO_TARJETA',  label:'Consumo · Tarjeta de crédito',  group:'consumo'},
+    {val:'CONSUMO_PRESTAMO', label:'Consumo · Préstamo personal',    group:'consumo'},
+    {val:'CONSUMO_LIBRANZA', label:'Consumo · Libranza',             group:'consumo'},
+    {val:'APAL_HIPOTECA',    label:'Apalancamiento · Hipotecaria',   group:'apalancamiento'},
+    {val:'APAL_INVERSION',   label:'Apalancamiento · Inversión/Negocio', group:'apalancamiento'},
+    {val:'OTRO_EDUCACION',   label:'Otro · Educación',               group:'otro'},
+    {val:'OTRO_VEHICULO',    label:'Otro · Vehículo',                group:'otro'},
+    {val:'OTRO_PERSONAL',    label:'Otro · Deuda personal/familiar', group:'otro'}
+  ];
+  
+  const state = {
+    ingresos:[
+      {nombre:'Salario',monto:0},{nombre:'Ventas',monto:0},
+      {nombre:'Otra fuente 02',monto:0},{nombre:'Otra fuente 03',monto:0}
+    ],
+    gastos:{alimentacion:0,vivienda:0,transporte:0,salud:0,entretenimiento:0,comunicaciones:0,otros:0},
+    deudas:[],
+    activos:[
+      {nombre:'Dinero ahorrado en cuenta',valor:0,tipo:'LÍQUIDO'},
+      {nombre:'Cuentas por cobrar',valor:0,tipo:'LÍQUIDO'},
+      {nombre:'Inversión de corto plazo',valor:0,tipo:'LÍQUIDO'},
+      {nombre:'Vehículo',valor:0,tipo:'NO LÍQUIDO'},
+      {nombre:'Apartamento / Casa',valor:0,tipo:'NO LÍQUIDO'},
+      {nombre:'Inversión de largo plazo',valor:0,tipo:'NO LÍQUIDO'}
+    ],
+    ahorro:[
+      {nombre:'Fondo de Emergencias',monto:0},{nombre:'Viaje',monto:0},
+      {nombre:'Retiro',monto:0},{nombre:'Inversión',monto:0}
+    ],
+    p5:{socio1:'',socio2:'',ingresos:[],deudas:[],ahorro:[],gastos:{},
+        ingMensual:0,ingAnual:0,deuMensual:0,deuAnual:0,
+        ahoMensual:0,ahoAnual:0,gastosMensual:0,gastosAnual:0,saldo:0,
+        fondoProvisiones:0},
+    tablero:{
+      meta_ingresos:0,meta_ahorro:0,meta_deudas:0,meta_gastos:0,
+      meta_otros_ingresos:0,meta_otro_ahorro:0,meta_otros_deudas:0,meta_otros_gastos:0,
+      meta_consumo:0,meta_deuda_total:0,meta_pct_liquidos:0,meta_pct_noliquidos:0,
+      meta_fondo_emerg:0,meta_solvencia:0,meta_ratio_consumo:0,meta_ratio_apal:0,
+      objetivos:Array(15).fill(''),plan:''
+    },
+    varIncome:{
+      active:false,
+      actividad:'servicios',
+      tributoPct:11,
+      fondoActual:0,
+      salarioPersonal:0,
+      salarioOverride:false,
+      meses:[]
+    },
+    profile:{
+      tipoIngreso:''  // 'empleado' | 'independiente' | 'mixto' | ''
+    }
+  };
+  
+  /* ═══════════════════════════════════════════════════════════
+     HELPERS — formato y parseo
+     ═══════════════════════════════════════════════════════════ */
+  const n = v => {
+    if (v == null || v === '') return 0;
+    const s = String(v).replace(/[^\d-]/g,'');
+    return parseInt(s,10) || 0;
+  };
+  const fmt = v => {
+    if (v == null || isNaN(v)) return currency + ' 0';
+    return currency + ' ' + Math.round(Number(v)).toLocaleString('es-CO');
+  };
+  const fmtNum = v => {
+    if (v == null || isNaN(v)) return '0';
+    return Math.round(Number(v)).toLocaleString('es-CO');
+  };
+  const fmtInput = v => {
+    // formato compacto sin moneda para inputs
+    if (v == null || v === 0 || isNaN(v)) return '';
+    return Math.round(Number(v)).toLocaleString('es-CO');
+  };
+  const pct = v => isNaN(v) ? '0%' : (v*100).toFixed(1) + '%';
+  
+  /* Money input: format as user types, preserve cursor */
+  function attachMoneyInput(input){
+    if(input.dataset.money) return;
+    input.dataset.money='1';
+    input.type='text';
+    input.inputMode='numeric';
+    input.autocomplete='off';
+    input.addEventListener('input', function(e){
+      const before = this.value;
+      const cursor = this.selectionStart;
+      // count digits before cursor
+      const digitsBefore = (before.slice(0,cursor).match(/\d/g)||[]).length;
+      const digitsOnly = before.replace(/\D/g,'');
+      const cleaned = digitsOnly.replace(/^0+(\d)/,'$1');
+      const formatted = cleaned ? Number(cleaned).toLocaleString('es-CO') : '';
+      this.value = formatted;
+      // restore cursor
+      let pos = 0, count = 0;
+      while(pos < formatted.length && count < digitsBefore){
+        if(/\d/.test(formatted[pos])) count++;
+        pos++;
+      }
+      this.setSelectionRange(pos,pos);
+    });
+    input.addEventListener('focus', function(){
+      if(this.value === '') return;
+      setTimeout(()=>this.select(),0);
+    });
+    input.addEventListener('blur', function(){
+      const val = n(this.value);
+      this.value = val ? fmtInput(val) : '';
+    });
+  }
+  
+  /* SVG icons */
+  const SVG_CHECK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="20 6 9 17 4 12"/></svg>`;
+  const SVG_WARN  = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`;
+  const SVG_INFO  = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`;
+  const SVG_X     = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+  
+  function debtGroup(val){const dt=DEBT_TYPES.find(d=>d.val===val);return dt?dt.group:'otro';}
+  function debtTypeOptions(selected='CONSUMO_TARJETA'){
+    return DEBT_TYPES.map(d=>`<option value="${d.val}" ${d.val===selected?'selected':''}>${d.label}</option>`).join('');
+  }
+  
+  /* Toast */
+  function showToast(msg,type='info'){
+    const icons={success:SVG_CHECK,error:SVG_WARN,info:SVG_INFO};
+    const c=document.getElementById('toast-wrap');
+    const t=document.createElement('div');
+    t.className='toast '+type;
+    t.innerHTML=`${icons[type]||SVG_INFO}<span>${msg}</span>`;
+    c.appendChild(t);
+    setTimeout(()=>{t.style.animation='slideUp .3s ease forwards';setTimeout(()=>t.remove(),300);},2800);
+  }
+  function showModal(title,msg){
+    document.getElementById('modal-title').textContent=title;
+    document.getElementById('modal-msg').textContent=msg;
+    document.getElementById('modal-overlay').classList.add('show');
+  }
+  function closeModal(){document.getElementById('modal-overlay').classList.remove('show');}
+  function toggleAcc(h){h.parentElement.classList.toggle('open');}
+  
+  function navigateTo(num){
+    document.querySelectorAll('.module').forEach(m=>m.classList.remove('active'));
+    document.querySelectorAll('.sb-item, .bb-item').forEach(n=>n.classList.remove('active'));
+    const id = isNaN(num) ? num : parseInt(num);
+    document.getElementById('modulo-'+id).classList.add('active');
+    document.querySelectorAll(`[data-module="${id}"]`).forEach(el=>el.classList.add('active'));
+    document.getElementById('topbar-title').textContent = MODULE_TITLES[id] || '';
+    if(id===6){renderTablero();renderCharts();}
+    if(id==='var'){renderMVar();}
+    window.scrollTo({top:0,behavior:'smooth'});
+  }
+  
+  /* ═══════════════════════════════════════════════════════════
+     CALCULATIONS
+     ═══════════════════════════════════════════════════════════ */
+  function calcM1(){
+    let totalIng=0;
+    document.querySelectorAll('#ingresos-body .item-row').forEach((r,i)=>{
+      if(!state.ingresos[i]) return;
+      if(r.classList.contains('item-row-locked')){
+        // Línea sincronizada: el monto vive en state, no en input
+        totalIng += state.ingresos[i].monto || 0;
+      } else {
+        const nombreEl = r.querySelector('input[data-f=nombre]');
+        const montoEl  = r.querySelector('input[data-f=monto]');
+        const v = n(montoEl?.value);
+        totalIng += v;
+        state.ingresos[i].monto = v;
+        if(nombreEl) state.ingresos[i].nombre = nombreEl.value;
+      }
+    });
+    let totalGas=0;
+    // Si hay inputs renderizados, leer y actualizar state. Si no hay inputs (DOM aún no rendered), sumar del state.
+    const gastosInputs = document.querySelectorAll('#gastos-body input[data-key]');
+    if(gastosInputs.length > 0){
+      gastosInputs.forEach(inp=>{
+        const k = inp.dataset.key;
+        const v = n(inp.value);
+        totalGas += v;
+        if(k && k in state.gastos) state.gastos[k] = v;
+      });
+    } else {
+      // No hay inputs renderizados todavía; usar el state directamente
+      Object.values(state.gastos).forEach(v => totalGas += (v||0));
+    }
+    const pctG = totalIng>0 ? totalGas/totalIng : 0;
+    const pctL = 1 - pctG;
+    const cls  = pctG<.7 ? 'is-pos' : pctG<=.85 ? 'is-warn' : 'is-neg';
+    const tag  = pctG<.7 ? 'pos'    : pctG<=.85 ? 'warn'   : 'neg';
+    const tagText = pctG<.7 ? 'Saludable' : pctG<=.85 ? 'Atención' : 'Crítico';
+    document.getElementById('m1-kpis').innerHTML = `
+      <div class="kpi is-info">
+        <div class="kpi-label">Total ingresos</div>
+        <div class="kpi-value">${fmt(totalIng)}</div>
+        <div class="kpi-sub">Mensual</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Total gastos</div>
+        <div class="kpi-value">${fmt(totalGas)}</div>
+        <div class="kpi-sub">Mensual</div>
+      </div>
+      <div class="kpi ${cls}">
+        <div class="kpi-label">% destinado a gastos</div>
+        <div class="kpi-value">${pct(pctG)}</div>
+        <div class="kpi-tag ${tag}">${SVG_CHECK}${tagText}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Libre · ahorro y deudas</div>
+        <div class="kpi-value">${pct(pctL)}</div>
+        <div class="kpi-sub">Del ingreso mensual</div>
+      </div>`;
+    return {totalIng,totalGas};
+  }
+  
+  function calcM2(){
+    const {totalIng}=calcM1();
+    let totalDeuda=0,totalPagos=0,sumaPond=0,totConsumo=0,totApal=0,totOtro=0;
+    let pagosConsumo=0,pagosApal=0;
+    state.deudas=[];
+    document.querySelectorAll('#deudas-body .multi-row').forEach(r=>{
+      const nombre=r.querySelector('input[data-f=nombre]')?.value||'';
+      const saldo=n(r.querySelector('input[data-f=saldo]')?.value);
+      const cuota=n(r.querySelector('input[data-f=cuota]')?.value);
+      const tasa=parseFloat(r.querySelector('input[data-f=tasa]')?.value)/100 || 0;
+      const tipo=r.querySelector('select[data-f=tipo]')?.value||'CONSUMO_TARJETA';
+      const grupo=debtGroup(tipo);
+      totalDeuda+=saldo; totalPagos+=cuota; sumaPond+=saldo*tasa;
+      if(grupo==='consumo'){totConsumo+=saldo;pagosConsumo+=cuota;}
+      else if(grupo==='apalancamiento'){totApal+=saldo;pagosApal+=cuota;}
+      else totOtro+=saldo;
+      state.deudas.push({nombre,saldo,cuota_mensual:cuota,tasa_anual:tasa,tipo,grupo});
+    });
+    const tasaProm     = totalDeuda>0 ? sumaPond/totalDeuda : 0;
+    const pctConsumoIng= totalIng>0   ? pagosConsumo/totalIng : 0;
+    const pctTotalIng  = totalIng>0   ? totalPagos/totalIng   : 0;
+    const ratioConsumo = totalDeuda>0 ? totConsumo/totalDeuda : 0;
+    const ratioApal    = totalDeuda>0 ? totApal/totalDeuda    : 0;
+    const ratioOtro    = totalDeuda>0 ? totOtro/totalDeuda    : 0;
+    const cc = pctConsumoIng<.2 ? 'is-pos' : pctConsumoIng<=.3 ? 'is-warn' : 'is-neg';
+    const ct = pctTotalIng<.3   ? 'is-pos' : pctTotalIng<=.4   ? 'is-warn' : 'is-neg';
+  
+    document.getElementById('m2-kpis').innerHTML = `
+      <div class="kpi is-info">
+        <div class="kpi-label">Deuda total</div>
+        <div class="kpi-value">${fmt(totalDeuda)}</div>
+        <div class="kpi-sub">Saldo agregado</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Pagos mensuales</div>
+        <div class="kpi-value">${fmt(totalPagos)}</div>
+        <div class="kpi-sub">Cuotas totales</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Tasa promedio anual</div>
+        <div class="kpi-value">${pct(tasaProm)}</div>
+        <div class="kpi-sub">Ponderada por saldo</div>
+      </div>
+      <div class="kpi ${cc}">
+        <div class="kpi-label">% ingreso · deuda consumo</div>
+        <div class="kpi-value">${pct(pctConsumoIng)}</div>
+        <div class="kpi-tag ${cc==='is-pos'?'pos':cc==='is-warn'?'warn':'neg'}">${cc==='is-pos'?SVG_CHECK:SVG_WARN} Meta &lt;20%</div>
+      </div>
+      <div class="kpi ${ct} span-2">
+        <div class="kpi-label">% ingreso · total deudas</div>
+        <div class="kpi-value">${pct(pctTotalIng)}</div>
+        <div class="kpi-tag ${ct==='is-pos'?'pos':ct==='is-warn'?'warn':'neg'}">${ct==='is-pos'?SVG_CHECK:SVG_WARN} Meta &lt;30%</div>
+      </div>`;
+  
+    document.getElementById('m2-structure').innerHTML = `
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg></div>
+          <h3>Estructura de tu deuda</h3>
+        </div>
+        <div class="structure-grid">
+          <div class="struct-card danger">
+            <div class="sc-label">Consumo</div>
+            <div class="sc-val">${fmt(totConsumo)}</div>
+            <div class="sc-sub">${pct(ratioConsumo)} del total · reduce capacidad</div>
+            <div class="sc-bar"><div class="sc-bar-fill" style="width:${Math.min(ratioConsumo*100,100)}%;background:var(--neg)"></div></div>
+          </div>
+          <div class="struct-card success">
+            <div class="sc-label">Apalancamiento</div>
+            <div class="sc-val">${fmt(totApal)}</div>
+            <div class="sc-sub">${pct(ratioApal)} del total · puede generar retorno</div>
+            <div class="sc-bar"><div class="sc-bar-fill" style="width:${Math.min(ratioApal*100,100)}%;background:var(--pos)"></div></div>
+          </div>
+          <div class="struct-card neutral">
+            <div class="sc-label">Otras deudas</div>
+            <div class="sc-val">${fmt(totOtro)}</div>
+            <div class="sc-sub">${pct(ratioOtro)} del total</div>
+            <div class="sc-bar"><div class="sc-bar-fill" style="width:${Math.min(ratioOtro*100,100)}%;background:var(--ink-4)"></div></div>
+          </div>
+        </div>
+        <div class="alert ${ratioApal>0.5?'pos':ratioApal>0.25?'warn':'neg'}" style="margin-top:14px">
+          ${ratioApal>0.5?SVG_CHECK:SVG_WARN}
+          <div><strong>Ratio de apalancamiento: ${(ratioApal*100).toFixed(1)}%.</strong>
+          ${ratioApal>0.5?' Tu deuda trabaja mayoritariamente para generar activos.':ratioApal>0.25?' Mezcla equilibrada de consumo y apalancamiento.':' La mayor parte de tu deuda es de consumo. Prioriza pagarla.'}</div>
+        </div>
+      </div>`;
+    return {totalDeuda,totalPagos,pagosConsumo,totConsumo,totApal,totOtro,ratioConsumo,ratioApal};
+  }
+  
+  function calcM3(){
+    let totalActivos=0,totalLiquido=0,totalNoLiquido=0;
+    // Preservar filas linked (sincronizadas con MVar)
+    const lockedRows = state.activos.filter(a=>a.linkedToFondo || a.linkedToProvisiones);
+    state.activos = [...lockedRows];
+    // Sumar las locked primero
+    lockedRows.forEach(a=>{
+      totalActivos += a.valor||0;
+      if(a.tipo==='LÍQUIDO') totalLiquido += a.valor||0;
+      else totalNoLiquido += a.valor||0;
+    });
+    // Sumar las editables del DOM (las locked no tienen los inputs estándar)
+    document.querySelectorAll('#activos-body .multi-row').forEach(r=>{
+      if(r.classList.contains('multi-row-locked')) return;
+      const nombre=r.querySelector('input[data-f=nombre]')?.value||'';
+      const valor=n(r.querySelector('input[data-f=valor]')?.value);
+      const tipo=r.querySelector('select[data-f=tipo]')?.value||'NO LÍQUIDO';
+      totalActivos+=valor;
+      if(tipo==='LÍQUIDO') totalLiquido+=valor; else totalNoLiquido+=valor;
+      state.activos.push({nombre,valor,tipo});
+    });
+    const pctL=totalActivos>0?totalLiquido/totalActivos:0;
+    const pctNL=totalActivos>0?totalNoLiquido/totalActivos:0;
+    document.getElementById('m3-kpis').innerHTML = `
+      <div class="kpi is-info span-2">
+        <div class="kpi-label">Total activos</div>
+        <div class="kpi-value">${fmt(totalActivos)}</div>
+        <div class="kpi-sub">Patrimonio bruto</div>
+      </div>
+      <div class="kpi is-pos">
+        <div class="kpi-label">Activos líquidos</div>
+        <div class="kpi-value">${fmt(totalLiquido)}</div>
+        <div class="kpi-sub">${pct(pctL)} del total</div>
+      </div>
+      <div class="kpi is-warn">
+        <div class="kpi-label">Activos no líquidos</div>
+        <div class="kpi-value">${fmt(totalNoLiquido)}</div>
+        <div class="kpi-sub">${pct(pctNL)} del total</div>
+      </div>`;
+    return {totalActivos,totalLiquido,totalNoLiquido,pctL,pctNL};
+  }
+  
+  function calcM4(){
+    let totalAhorro=0;
+    const linkedRows = state.ahorro.filter(a=>a.linkedToFondoAporte || a.linkedToProvisionesAporte);
+    state.ahorro=[];
+    let linkedIdx = 0;
+    document.querySelectorAll('#ahorro-body .item-row').forEach(r=>{
+      const nombre=r.querySelector('input[data-f=nombre]')?.value||'';
+      const monto=n(r.querySelector('input[data-f=monto]')?.value);
+      totalAhorro+=monto;
+      if(r.classList.contains('item-row-suggested') && linkedRows[linkedIdx]){
+        state.ahorro.push({...linkedRows[linkedIdx], nombre, monto_mensual:monto});
+        linkedIdx++;
+      } else {
+        state.ahorro.push({nombre,monto_mensual:monto});
+      }
+    });
+    const {totalIng,totalGas}=calcM1();
+    const {totalDeuda}=calcM2();
+    const {totalActivos,totalLiquido}=calcM3();
+    const pctAho     = totalIng>0  ? totalAhorro/totalIng     : 0;
+    const solvencia  = totalDeuda>0? totalActivos/totalDeuda  : 0;
+    const fondoEmerg = totalGas>0  ? totalLiquido/totalGas    : 0;
+    const ca = pctAho>=.2     ? 'is-pos' : pctAho>=.1     ? 'is-warn' : 'is-neg';
+    const cs = solvencia>1.5  ? 'is-pos' : solvencia>=1   ? 'is-warn' : 'is-neg';
+    const cf = fondoEmerg>6   ? 'is-pos' : fondoEmerg>=3  ? 'is-warn' : 'is-neg';
+    document.getElementById('m4-kpis').innerHTML = `
+      <div class="kpi is-info span-2">
+        <div class="kpi-label">Ahorro mensual total</div>
+        <div class="kpi-value">${fmt(totalAhorro)}</div>
+        <div class="kpi-sub">Suma de objetivos</div>
+      </div>
+      <div class="kpi ${ca}">
+        <div class="kpi-label">Capacidad de ahorro</div>
+        <div class="kpi-value">${pct(pctAho)}</div>
+        <div class="kpi-tag ${ca==='is-pos'?'pos':ca==='is-warn'?'warn':'neg'}">${ca==='is-neg'?SVG_WARN:SVG_CHECK} Meta &gt;10%</div>
+      </div>
+      <div class="kpi ${cs}">
+        <div class="kpi-label">Nivel de solvencia</div>
+        <div class="kpi-value">${solvencia.toFixed(2)}×</div>
+        <div class="kpi-sub">Activos / Deudas</div>
+      </div>
+      <div class="kpi ${cf} span-2">
+        <div class="kpi-label">Fondo de emergencias</div>
+        <div class="kpi-value">${fondoEmerg.toFixed(1)} meses</div>
+        <div class="kpi-sub">Meses de gastos cubiertos · meta &gt;6</div>
+      </div>`;
+    return {totalAhorro};
+  }
+  
+  function calcP5Totals(){
+    const readRows = bodyId => {
+      let m=0,a=0;
+      document.querySelectorAll('#'+bodyId+' .multi-row').forEach(r=>{
+        const frec=r.querySelector('select[data-f=frec]')?.value;
+        const monto=n(r.querySelector('input[data-f=monto]')?.value);
+        if(frec==='TODOS LOS MESES') m+=monto; else a+=monto;
+      });
+      return {m,a};
+    };
+    const {m:iM,a:iA} = readRows('p5-ingresos-body');
+    const {m:dM,a:dA} = readRows('p5-deudas-body');
+    const {m:aM,a:aA} = readRows('p5-ahorro-body');
+    let gM=0,gA=0;
+    P5_GASTO_CATS.forEach(cat=>{
+      const {m,a}=readRows('p5-gas-'+cat.id+'-body');
+      gM+=m;gA+=a;
+      const eM=document.getElementById('acc-gas-'+cat.id+'-m');
+      const eA=document.getElementById('acc-gas-'+cat.id+'-a');
+      if(eM) eM.textContent = fmtNum(m)+' mensual';
+      if(eA) eA.textContent = fmtNum(a)+' anual';
+    });
+    document.getElementById('acc-ing-m').textContent = fmtNum(iM)+' mensual';
+    document.getElementById('acc-ing-a').textContent = fmtNum(iA)+' anual';
+    document.getElementById('acc-deu-m').textContent = fmtNum(dM)+' mensual';
+    document.getElementById('acc-deu-a').textContent = fmtNum(dA)+' anual';
+    document.getElementById('acc-aho-m').textContent = fmtNum(aM)+' mensual';
+    document.getElementById('acc-aho-a').textContent = fmtNum(aA)+' anual';
+    // Total mensual de ingresos del M1 (incluye salario personal sincronizado)
+    const m1IngresoMensual = (state.ingresos||[]).reduce((sum,ing)=>sum + (ing.monto||0), 0);
+    // Total mensual de gastos del M1
+    const m1GastoMensual = Object.values(state.gastos||{}).reduce((a,b)=>a+(b||0),0);
+    // Cuotas mensuales de deudas (también afectan flujo)
+    const m1DeudaMensual = (state.deudas||[]).reduce((s,d)=>s+(d.cuota_mensual||0),0);
+    // Ahorro mensual
+    const m1AhorroMensual = (state.ahorro||[]).reduce((s,a)=>s+(a.monto_mensual||0),0);
+  
+    // Anuales
+    const ingresosAnualM1 = m1IngresoMensual * 12;
+    const gastosAnualM1Mensuales = m1GastoMensual * 12;
+  
+    // Para gastos anuales del M5: solo cuentan los que el cliente NO marcó como "ya está en M1"
+    // (el flag yaEnM1 lo agrego en p5Cells y collectP5Rows)
+    let gastosAnualM5Real = 0;
+    P5_GASTO_CATS.forEach(cat=>{
+      document.querySelectorAll('#p5-gas-'+cat.id+'-body .multi-row').forEach(r=>{
+        const frec  = r.querySelector('select[data-f=frec]')?.value;
+        const monto = n(r.querySelector('input[data-f=monto]')?.value);
+        const formaPago = r.querySelector('select[data-f=formaPago]')?.value || 'contado';
+        const yaEnM1Input = r.querySelector('input[data-f=yaEnM1]');
+        const yaEnM1 = yaEnM1Input ? yaEnM1Input.checked : false;
+        if(frec === 'NO ES TODOS LOS MESES'){
+          // Si paga en cuotas y dice que ya está en M1, NO sumar (evitar doble registro)
+          if(formaPago === 'cuotas' && yaEnM1) return;
+          gastosAnualM5Real += monto;
+        }
+      });
+    });
+  
+    const totalIngresosAnio = ingresosAnualM1 + iA;  // M1×12 + ingresos no mensuales del M5
+    const totalGastosAnio   = gastosAnualM1Mensuales + gastosAnualM5Real;
+    const totalDeudasAnio   = m1DeudaMensual * 12 + dA;
+    const totalAhorroAnio   = m1AhorroMensual * 12 + aA;
+    const saldo = totalIngresosAnio - totalGastosAnio - totalDeudasAnio - totalAhorroAnio;
+  
+    const kpi = document.getElementById('m5-saldo-kpi');
+    // Construir el desglose visible
+    const breakdownHtml = ''
+      + '<div class="m5-breakdown">'
+      + '<div class="m5-breakdown-title">Cómo se calcula tu año</div>'
+      + '<div class="m5-breakdown-grid">'
+      + '<div class="m5-bk-item m5-bk-pos"><span class="m5-bk-label">Ingresos mensuales × 12</span><span class="m5-bk-value">+' + fmt(ingresosAnualM1) + '</span><span class="m5-bk-sub">' + fmt(m1IngresoMensual) + ' mensuales</span></div>'
+      + '<div class="m5-bk-item m5-bk-pos"><span class="m5-bk-label">Ingresos no mensuales</span><span class="m5-bk-value">+' + fmt(iA) + '</span><span class="m5-bk-sub">Primas, dividendos, devoluciones</span></div>'
+      + '<div class="m5-bk-item m5-bk-neg"><span class="m5-bk-label">Gastos mensuales × 12</span><span class="m5-bk-value">−' + fmt(gastosAnualM1Mensuales) + '</span><span class="m5-bk-sub">' + fmt(m1GastoMensual) + ' mensuales</span></div>'
+      + '<div class="m5-bk-item m5-bk-neg"><span class="m5-bk-label">Gastos anuales</span><span class="m5-bk-value">−' + fmt(gastosAnualM5Real) + '</span><span class="m5-bk-sub">No incluye los marcados como "ya en M1"</span></div>'
+      + '<div class="m5-bk-item m5-bk-neg"><span class="m5-bk-label">Cuotas de deudas × 12</span><span class="m5-bk-value">−' + fmt(m1DeudaMensual*12) + '</span><span class="m5-bk-sub">Compromisos de M2</span></div>'
+      + '<div class="m5-bk-item m5-bk-neg"><span class="m5-bk-label">Ahorro mensual × 12</span><span class="m5-bk-value">−' + fmt(m1AhorroMensual*12) + '</span><span class="m5-bk-sub">Tus objetivos del M4</span></div>'
+      + '</div>'
+      + '<div class="m5-bk-totals">'
+      + '<div class="m5-bk-total"><span>Total ingresos del año</span><strong style="color:var(--pos)">' + fmt(totalIngresosAnio) + '</strong></div>'
+      + '<div class="m5-bk-total"><span>Total gastos del año</span><strong style="color:var(--neg)">' + fmt(totalGastosAnio + totalDeudasAnio + totalAhorroAnio) + '</strong></div>'
+      + '</div>'
+      + '</div>';
+  
+    kpi.innerHTML = (saldo>=0
+      ? '<div class="kpi is-pos"><div class="kpi-label">Saldo proyectado del año</div><div class="kpi-value">+' + fmt(saldo) + '</div><div class="kpi-tag pos">' + SVG_CHECK + 'Año cuadra positivo</div></div>'
+      : '<div class="kpi is-neg"><div class="kpi-label">Saldo proyectado del año</div><div class="kpi-value">' + fmt(saldo) + '</div><div class="kpi-tag neg">' + SVG_WARN + 'Faltan ' + fmt(Math.abs(saldo)) + ' para cuadrar</div></div>'
+    ) + breakdownHtml;
+    Object.assign(state.p5,{ingMensual:iM,ingAnual:iA,deuMensual:dM,deuAnual:dA,ahoMensual:aM,ahoAnual:aA,gastosMensual:gM,gastosAnual:gastosAnualM5Real,saldo});
+    // Recalcular provisiones y propagar a M3/M4
+    calcProvisiones();
+  }
+  
+  /* ═══════════════════════════════════════════════════════════
+     FONDO DE PROVISIONES — cálculos y sincronización
+     ═══════════════════════════════════════════════════════════ */
+  
+  /* Suma de TODOS los gastos anuales del M5 (frec NO ES TODOS LOS MESES) */
+  function getTotalGastosAnualesP5(){
+    let total = 0;
+    P5_GASTO_CATS.forEach(cat=>{
+      document.querySelectorAll('#p5-gas-'+cat.id+'-body .multi-row').forEach(r=>{
+        const frec = r.querySelector('select[data-f=frec]')?.value;
+        const monto = n(r.querySelector('input[data-f=monto]')?.value);
+        if(frec === 'NO ES TODOS LOS MESES') total += monto;
+      });
+    });
+    return total;
+  }
+  
+  /* Suma SOLO de los gastos anuales que el usuario marcó como "provisionar mensualmente" */
+  function getTotalGastosProvisionablesP5(){
+    let total = 0;
+    P5_GASTO_CATS.forEach(cat=>{
+      document.querySelectorAll('#p5-gas-'+cat.id+'-body .multi-row').forEach(r=>{
+        const frec = r.querySelector('select[data-f=frec]')?.value;
+        const monto = n(r.querySelector('input[data-f=monto]')?.value);
+        const provInput = r.querySelector('input[data-f=provisionar]');
+        const provisionar = provInput ? provInput.checked : true;
+        if(frec === 'NO ES TODOS LOS MESES' && provisionar) total += monto;
+      });
+    });
+    return total;
+  }
+  
+  /* Suma de gastos anuales que vencen en los próximos 90 días */
+  function getGastosProximos90Dias(opts){
+    opts = opts || {};
+    const soloProvisionables = !!opts.soloProvisionables;
+    const hoy = new Date();
+    const mesActual = hoy.getMonth() + 1;
+    const mesesProximos = [];
+    for(let i=0;i<3;i++){
+      const m = ((mesActual - 1 + i) % 12) + 1;
+      mesesProximos.push(String(m).padStart(2,'0'));
+    }
+    let total = 0;
+    P5_GASTO_CATS.forEach(cat=>{
+      document.querySelectorAll('#p5-gas-'+cat.id+'-body .multi-row').forEach(r=>{
+        const frec = r.querySelector('select[data-f=frec]')?.value;
+        const mes  = r.querySelector('select[data-f=mes]')?.value;
+        const monto = n(r.querySelector('input[data-f=monto]')?.value);
+        const provInput = r.querySelector('input[data-f=provisionar]');
+        const provisionar = provInput ? provInput.checked : true;
+        if(frec === 'NO ES TODOS LOS MESES' && mesesProximos.includes(mes)){
+          if(soloProvisionables && !provisionar) return;
+          total += monto;
+        }
+      });
+    });
+    return total;
+  }
+  
+  /* Aporte mensual sugerido al fondo de provisiones (solo gastos provisionables) */
+  function calcAporteProvisionesSugerido(){
+    const totalAnual = getTotalGastosProvisionablesP5();
+    return Math.ceil(totalAnual / 12 / 10000) * 10000; // redondeo a 10.000
+  }
+  
+  /* Recalcula todo lo de provisiones, actualiza UI y propaga a M3/M4 */
+  function calcProvisiones(){
+    const totalAnual = getTotalGastosAnualesP5();
+    const totalProvisionable = getTotalGastosProvisionablesP5();
+    const aporteMensual = calcAporteProvisionesSugerido();
+    // Para el índice de previsión, solo cuentan los gastos que el cliente sí va a provisionar
+    const proximos90 = getGastosProximos90Dias({soloProvisionables:true});
+    const proximos90Total = getGastosProximos90Dias({soloProvisionables:false});
+    const saldoActual = state.p5.fondoProvisiones || 0;
+    const indicePrev = proximos90 > 0 ? Math.min(saldoActual / proximos90, 1) : 1;
+  
+    // Actualizar UI del panel
+    const aporteEl = document.getElementById('prov-aporte-sugerido');
+    const aporteSubEl = document.getElementById('prov-aporte-sub');
+    const indiceEl = document.getElementById('prov-indice-prevision');
+    const alertEl = document.getElementById('prov-alert');
+  
+    if(aporteEl){
+      if(totalProvisionable > 0){
+        aporteEl.textContent = fmt(aporteMensual);
+        const noProvisionable = totalAnual - totalProvisionable;
+        const sufijo = noProvisionable > 0
+          ? ' anuales ÷ 12 · <span style="color:var(--warn)">' + fmt(noProvisionable) + ' sin provisionar</span>'
+          : ' anuales ÷ 12 meses';
+        aporteSubEl.innerHTML = fmt(totalProvisionable) + sufijo;
+      } else if(totalAnual > 0){
+        aporteEl.textContent = fmt(0);
+        aporteSubEl.innerHTML = '<span style="color:var(--warn)">Marcaste todos los gastos como "no provisionar". Asumes el riesgo de financiarlos.</span>';
+      } else {
+        aporteEl.textContent = '—';
+        aporteSubEl.textContent = 'Registra gastos anuales para calcular';
+      }
+    }
+  
+    if(indiceEl){
+      if(proximos90Total > 0){
+        indiceEl.textContent = pct(indicePrev);
+        indiceEl.style.color = indicePrev >= 1 ? 'var(--pos)' : indicePrev >= 0.6 ? 'var(--warn)' : 'var(--neg)';
+      } else {
+        indiceEl.textContent = '—';
+        indiceEl.style.color = '';
+      }
+    }
+  
+    if(alertEl){
+      if(totalAnual === 0){
+        alertEl.style.display = 'none';
+      } else if(proximos90 > saldoActual){
+        const faltante = proximos90 - saldoActual;
+        const costoFin = faltante * 0.28;
+        alertEl.className = 'alert warn';alertEl.style.display = 'flex';
+        alertEl.innerHTML = SVG_WARN + '<div><strong>En los próximos 90 días vencen ' + fmt(proximos90) + ' en gastos anuales y solo tienes ' + fmt(saldoActual) + ' provisionado.</strong> Si te toca financiar el faltante de ' + fmt(faltante) + ' con tarjeta a 28% anual, el costo extra sería de hasta <strong>' + fmt(costoFin) + '</strong>. Empezar a apartar el aporte mensual sugerido evita ese sobrecosto.</div>';
+      } else if(saldoActual >= totalAnual){
+        alertEl.className = 'alert pos';alertEl.style.display = 'flex';
+        alertEl.innerHTML = SVG_CHECK + '<div><strong>Fondo de provisiones completo.</strong> Tienes provisionado todo lo del año. Lo que aportes ahora puede destinarse al fondo de emergencias o a inversión.</div>';
+      } else {
+        alertEl.className = 'alert pos';alertEl.style.display = 'flex';
+        alertEl.innerHTML = SVG_CHECK + '<div><strong>Cobertura suficiente para el corto plazo.</strong> Tienes ' + fmt(saldoActual) + ' provisionados y los próximos 90 días requieren ' + fmt(proximos90) + '. Sigue aportando ' + fmt(aporteMensual) + ' mensuales para llegar al fondo anual completo.</div>';
+      }
+    }
+  
+    // Propagar a M3 (activo líquido sincronizado) y M4 (objetivo de ahorro sugerido)
+    if(typeof renderActivosTable === 'function'){renderActivosTable();calcM3();}
+    if(typeof renderAhorroTable === 'function'){renderAhorroTable();calcM4();}
+  
+    // Renderear calendario anual
+    renderCalendarioAnual();
+  }
+  
+  /* ═══════════════════════════════════════════════════════════
+     CALENDARIO ANUAL — Renderiza próximos 12 meses con eventos
+     ═══════════════════════════════════════════════════════════ */
+  function recolectarEventosAnuales(){
+    const eventos = [];
+  
+    P5_GASTO_CATS.forEach(cat=>{
+      document.querySelectorAll('#p5-gas-'+cat.id+'-body .multi-row').forEach(r=>{
+        const frec  = r.querySelector('select[data-f=frec]')?.value;
+        const mes   = r.querySelector('select[data-f=mes]')?.value;
+        const monto = n(r.querySelector('input[data-f=monto]')?.value);
+        const nombre = r.querySelector('input[data-f=nombre]')?.value || 'Sin nombre';
+        const provInput = r.querySelector('input[data-f=provisionar]');
+        const provisionar = provInput ? provInput.checked : true;
+        if(frec === 'NO ES TODOS LOS MESES' && mes && mes !== 'varia' && monto > 0){
+          eventos.push({tipo:'gasto', nombre:nombre, monto:monto, mes:parseInt(mes), provisionar:provisionar});
+        }
+      });
+    });
+  
+    document.querySelectorAll('#p5-ingresos-body .multi-row').forEach(r=>{
+      const frec  = r.querySelector('select[data-f=frec]')?.value;
+      const mes   = r.querySelector('select[data-f=mes]')?.value;
+      const monto = n(r.querySelector('input[data-f=monto]')?.value);
+      const nombre = r.querySelector('input[data-f=nombre]')?.value || 'Sin nombre';
+      if(frec === 'NO ES TODOS LOS MESES' && mes && mes !== 'varia' && monto > 0){
+        eventos.push({tipo:'ingreso', nombre:nombre, monto:monto, mes:parseInt(mes)});
+      }
+    });
+  
+    return eventos;
+  }
+  
+  function renderCalendarioAnual(){
+    const grid = document.getElementById('m5-calendar');
+    if(!grid) return;
+    grid.innerHTML = '';
+  
+    const eventos = recolectarEventosAnuales();
+    const hoy = new Date();
+    const mesActual = hoy.getMonth(); // 0-11
+    const yearActual = hoy.getFullYear();
+  
+    // Saldo del fondo de provisiones disponible (consumo simulado por orden cronológico)
+    let saldoDisponible = state.p5.fondoProvisiones || 0;
+    const aporteMensual = calcAporteProvisionesSugerido();
+  
+    let totalGastosAnio = 0, totalIngresosAnio = 0;
+    let mesesConWarn = 0;
+  
+    for(let i=0;i<12;i++){
+      const dMes = (mesActual + i) % 12;       // 0-11
+      const dYear = mesActual + i >= 12 ? yearActual+1 : yearActual;
+      const mesNum = dMes + 1;                  // 1-12
+  
+      // Eventos de este mes
+      const eventosDelMes = eventos.filter(e => e.mes === mesNum);
+      const ingresosMes = eventosDelMes.filter(e => e.tipo === 'ingreso');
+      const gastosMes = eventosDelMes.filter(e => e.tipo === 'gasto');
+  
+      // Sumar aporte mensual al saldo (simulación de provisión continua)
+      if(i > 0) saldoDisponible += aporteMensual;
+  
+      // Determinar para cada gasto si está provisionado
+      let gastoTotalMes = 0;
+      let ingresoTotalMes = 0;
+      let mesTieneWarn = false;
+      const eventosRender = [];
+  
+      ingresosMes.forEach(e => {
+        ingresoTotalMes += e.monto;
+        totalIngresosAnio += e.monto;
+        eventosRender.push({...e, claseDot:'ingreso'});
+      });
+  
+      gastosMes.forEach(e => {
+        gastoTotalMes += e.monto;
+        totalGastosAnio += e.monto;
+        if(e.provisionar === false){
+          // Cliente decidió no provisionar este gasto: siempre aparece como riesgo
+          eventosRender.push({...e, claseDot:'gasto-warn', sinProv:true, sinProvisionar:true});
+          mesTieneWarn = true;
+        } else {
+          const provisionado = saldoDisponible >= e.monto;
+          if(provisionado){
+            saldoDisponible -= e.monto;
+            eventosRender.push({...e, claseDot:'gasto-ok', sinProv:false});
+          } else {
+            eventosRender.push({...e, claseDot:'gasto-warn', sinProv:true});
+            mesTieneWarn = true;
+          }
+        }
+      });
+  
+      if(mesTieneWarn) mesesConWarn++;
+  
+      // HTML del mes
+      const mesEl = document.createElement('div');
+      mesEl.className = 'cal-mes';
+      if(eventosDelMes.length > 0) mesEl.classList.add('tiene-eventos');
+      if(mesTieneWarn) mesEl.classList.add('tiene-warn');
+      if(i === 0) mesEl.classList.add('is-current');
+  
+      const eventosHtml = eventosRender.length > 0
+        ? eventosRender.map(e => {
+            const tag = e.sinProvisionar ? ' <span class="cal-event-tag">no provisionar</span>' : '';
+            return '<div class="cal-event">'
+              + '<span class="cal-event-dot ' + e.claseDot + '"></span>'
+              + '<span class="cal-event-name" title="' + e.nombre + '">' + e.nombre + tag + '</span>'
+              + '<span class="cal-event-monto">' + fmtNum(e.monto) + '</span>'
+              + '</div>';
+          }).join('')
+        : '<div class="cal-empty">Sin eventos</div>';
+  
+      let totalHtml = '';
+      if(gastoTotalMes > 0 || ingresoTotalMes > 0){
+        const neto = ingresoTotalMes - gastoTotalMes;
+        totalHtml = '<div class="cal-mes-total"><span>Neto</span><span style="color:'
+          + (neto >= 0 ? 'var(--pos)' : 'var(--neg)') + '">'
+          + (neto >= 0 ? '+' : '') + fmtNum(neto) + '</span></div>';
+      }
+  
+      mesEl.innerHTML = '<div class="cal-mes-head">'
+        + '<span class="cal-mes-name">' + MES_NAMES_FULL[dMes] + '</span>'
+        + '<span class="cal-mes-year">' + dYear + '</span>'
+        + '</div>'
+        + '<div class="cal-mes-events">' + eventosHtml + '</div>'
+        + totalHtml;
+      grid.appendChild(mesEl);
+    }
+  
+    // Resumen al final, fuera del grid de meses
+    let summaryWrap = document.getElementById('m5-calendar-summary');
+    if(!summaryWrap){
+      summaryWrap = document.createElement('div');
+      summaryWrap.id = 'm5-calendar-summary';
+      summaryWrap.className = 'cal-summary';
+      grid.parentNode.insertBefore(summaryWrap, grid.nextSibling);
+    }
+    const costoFinanciamiento = mesesConWarn > 0
+      ? eventos.filter(e => e.tipo === 'gasto').reduce((a,e)=>a+e.monto,0) * 0.28 * (mesesConWarn/12)
+      : 0;
+    summaryWrap.innerHTML = ''
+      + '<div class="cal-summary-item"><span class="cal-summary-label">Ingresos anuales</span><span class="cal-summary-value" style="color:var(--pos)">' + fmt(totalIngresosAnio) + '</span></div>'
+      + '<div class="cal-summary-item"><span class="cal-summary-label">Gastos anuales</span><span class="cal-summary-value" style="color:var(--neg)">' + fmt(totalGastosAnio) + '</span></div>'
+      + '<div class="cal-summary-item"><span class="cal-summary-label">Meses con riesgo</span><span class="cal-summary-value" style="color:'+(mesesConWarn>0?'var(--warn)':'var(--pos)')+'">' + mesesConWarn + ' de 12</span></div>'
+      + '<div class="cal-summary-item"><span class="cal-summary-label">Costo financiación estimado</span><span class="cal-summary-value" style="color:'+(costoFinanciamiento>0?'var(--neg)':'var(--ink-3)')+'">' + (costoFinanciamiento>0?fmt(costoFinanciamiento):'—') + '</span></div>';
+  }
+  
+  /* ═══════════════════════════════════════════════════════════
+     RENDER — listas y filas
+     ═══════════════════════════════════════════════════════════ */
+  const GASTO_LABELS = {alimentacion:'Alimentación',vivienda:'Vivienda',transporte:'Transporte',salud:'Salud',entretenimiento:'Entretenimiento',comunicaciones:'Comunicaciones',otros:'Otros'};
+  
+  function makeMoneyInput(value, dataField, placeholder='0'){
+    const inp = document.createElement('input');
+    inp.className='money-input';
+    inp.type='text';
+    inp.inputMode='numeric';
+    inp.placeholder=placeholder;
+    inp.dataset.f=dataField;
+    inp.value = value && value>0 ? fmtInput(value) : '';
+    attachMoneyInput(inp);
+    return inp;
+  }
+  
+  function renderIngresosTable(){
+    const body=document.getElementById('ingresos-body');
+    body.innerHTML='';
+  
+    const mvarActive = state.varIncome && state.varIncome.active;
+    const salarioPersonal = mvarActive ? getSalarioPersonalActual() : 0;
+  
+    // Asegurar exactamente UNA línea marcada como variable cuando módulo activo
+    if(mvarActive){
+      const variableCount = state.ingresos.filter(x=>x.esVariable).length;
+      if(variableCount===0 && state.ingresos.length>0){
+        state.ingresos[0].esVariable = true;
+      } else if(variableCount>1){
+        let found=false;
+        state.ingresos.forEach(x=>{if(x.esVariable){if(found)x.esVariable=false;found=true;}});
+      }
+      state.ingresos.forEach(x=>{if(x.esVariable) x.monto = salarioPersonal;});
+    }
+  
+    state.ingresos.forEach((ing,i)=>{
+      const row=document.createElement('div');
+      row.className='item-row';
+      const isVariable = mvarActive && ing.esVariable;
+  
+      if(isVariable){
+        row.classList.add('item-row-locked');
+        row.innerHTML = '<div class="it-locked-wrap">'
+          + '<div class="it-locked-name">' + (ing.nombre||'Ingreso variable') + ' <span class="it-locked-badge">sincronizado</span></div>'
+          + '<div class="it-locked-sub">Salario personal del módulo de ingresos variables · <a href="#" class="it-locked-link" data-go-mvar>Ajustar allá</a></div>'
+          + '</div>'
+          + '<span class="it-prefix">' + currency + '</span>'
+          + '<span class="it-locked-amount num">' + (fmtInput(ing.monto||0) || '0') + '</span>'
+          + '<span class="it-empty"></span>';
+        body.appendChild(row);
+        const link = row.querySelector('[data-go-mvar]');
+        if(link) link.addEventListener('click',function(e){e.preventDefault();navigateTo('var');});
+      } else {
+        const toggleBtn = mvarActive
+          ? '<button class="it-var-toggle" title="Marcar como ingreso variable" data-mark-var><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 17l6-6 4 4 8-8"/><polyline points="14 7 21 7 21 14"/></svg></button>'
+          : '';
+        row.innerHTML = '<input type="text" class="it-name" data-f="nombre" value="' + (ing.nombre||'') + '" placeholder="Fuente de ingreso">'
+          + '<span class="it-prefix">' + currency + '</span>'
+          + '<input class="money-input" data-f="monto">'
+          + toggleBtn
+          + '<button class="it-del" title="Eliminar">' + SVG_X + '</button>';
+        body.appendChild(row);
+        const moneyInp = row.querySelector('.money-input');
+        moneyInp.value = ing.monto && ing.monto>0 ? fmtInput(ing.monto) : '';
+        moneyInp.placeholder='0';
+        attachMoneyInput(moneyInp);
+        row.querySelectorAll('input').forEach(inp=>inp.addEventListener('input',calcM1));
+        row.querySelector('.it-del').addEventListener('click',()=>{
+          if(state.ingresos.length<=1)return;
+          state.ingresos.splice(i,1);
+          renderIngresosTable();calcM1();
+        });
+        const tg = row.querySelector('[data-mark-var]');
+        if(tg) tg.addEventListener('click',()=>{
+          state.ingresos.forEach((x,j)=>{x.esVariable = (j===i);});
+          renderIngresosTable();calcM1();
+          showToast('Marcada como ingreso variable principal','success');
+        });
+      }
+    });
+  
+    // Grid: con toggle es 5 cols, sin toggle es 4
+    body.querySelectorAll('.item-row').forEach(r=>{
+      if(r.classList.contains('item-row-locked')){
+        r.style.gridTemplateColumns='1fr auto auto auto';
+      } else if(mvarActive){
+        r.style.gridTemplateColumns='1fr auto auto auto auto';
+      } else {
+        r.style.gridTemplateColumns='1fr auto auto auto';
+      }
+    });
+  
+    // Mostrar nota informativa si MVar activo
+    const noteEl = document.getElementById('m1-mvar-note');
+    if(noteEl) noteEl.style.display = mvarActive ? 'flex' : 'none';
+  }
+  
+  function renderGastosTable(){
+    const body=document.getElementById('gastos-body');
+    body.innerHTML='';
+    Object.entries(state.gastos).forEach(([k,v])=>{
+      const row=document.createElement('div');
+      row.className='item-row';
+      row.style.gridTemplateColumns='1fr auto auto';
+      row.innerHTML=`<span class="it-fixed-name">${GASTO_LABELS[k]}</span>
+        <span class="it-prefix">${currency}</span>
+        <input class="money-input" data-f="monto" data-key="${k}">`;
+      body.appendChild(row);
+      const inp = row.querySelector('.money-input');
+      inp.value = v && v>0 ? fmtInput(v) : '';
+      inp.placeholder='0';
+      attachMoneyInput(inp);
+      inp.addEventListener('input',function(){state.gastos[k]=n(this.value);calcM1();});
+    });
+  }
+  
+  function makeMultiRow(fields, opts={}){
+    const row=document.createElement('div');
+    row.className='multi-row';
+    let html=`<div class="mr-head"><input type="text" class="it-name" data-f="nombre" value="${fields.nombre||''}" placeholder="${opts.namePlaceholder||'Descripción'}">
+      <button class="it-del" title="Eliminar">${SVG_X}</button></div>
+      <div class="mr-grid">`;
+    opts.cells.forEach(c=>html+=c);
+    html+=`</div>`;
+    row.innerHTML=html;
+    return row;
+  }
+  
+  function renderDeudasTable(){
+    const body=document.getElementById('deudas-body');
+    body.innerHTML='';
+    if(state.deudas.length===0) addDeudaRow();
+    else state.deudas.forEach((_,i)=>addDeudaRowFromState(i));
+  }
+  function deudaCells(d){
+    return [
+      `<div class="mr-field"><label>Saldo total</label><input class="money-input" data-f="saldo" placeholder="0"></div>`,
+      `<div class="mr-field"><label>Cuota mensual</label><input class="money-input" data-f="cuota" placeholder="0"></div>`,
+      `<div class="mr-field"><label>Tasa anual %</label><input type="number" data-f="tasa" value="${((d.tasa_anual||0)*100).toFixed(1)}" min="0" max="200" step="0.1"></div>`,
+      `<div class="mr-field full"><label>Tipo de deuda</label><select data-f="tipo">${debtTypeOptions(d.tipo||'CONSUMO_TARJETA')}</select></div>`
+    ].join('');
+  }
+  function addDeudaRowFromState(i){
+    const d=state.deudas[i]||{nombre:'',saldo:0,cuota_mensual:0,tasa_anual:0,tipo:'CONSUMO_TARJETA'};
+    const body=document.getElementById('deudas-body');
+    const row=makeMultiRow(d,{cells:[deudaCells(d)],namePlaceholder:'Acreedor (Banco, entidad)'});
+    body.appendChild(row);
+    const sIn=row.querySelector('input[data-f=saldo]');  sIn.value=d.saldo>0?fmtInput(d.saldo):'';attachMoneyInput(sIn);
+    const cIn=row.querySelector('input[data-f=cuota]'); cIn.value=d.cuota_mensual>0?fmtInput(d.cuota_mensual):'';attachMoneyInput(cIn);
+    row.querySelectorAll('input,select').forEach(el=>el.addEventListener('input',calcM2));
+    row.querySelector('.it-del').addEventListener('click',()=>{row.remove();calcM2();});
+  }
+  function addDeudaRow(){
+    const cnt=document.querySelectorAll('#deudas-body .multi-row').length;
+    if(cnt>=15){showToast('Máximo 15 deudas','error');return;}
+    const d={nombre:'',saldo:0,cuota_mensual:0,tasa_anual:0,tipo:'CONSUMO_TARJETA'};
+    state.deudas.push(d);
+    addDeudaRowFromState(state.deudas.length-1);
+  }
+  
+  function renderActivosTable(){
+    const body=document.getElementById('activos-body');
+    body.innerHTML='';
+  
+    // 1. Fondo de estabilización (módulo de variables)
+    if(state.varIncome && state.varIncome.active){
+      const idx = state.activos.findIndex(a => a.linkedToFondo);
+      if(idx === -1){
+        state.activos.unshift({
+          nombre: 'Fondo de estabilización',
+          valor: state.varIncome.fondoActual||0,
+          tipo: 'LÍQUIDO',
+          linkedToFondo: true
+        });
+      } else {
+        state.activos[idx].valor = state.varIncome.fondoActual||0;
+        state.activos[idx].nombre = 'Fondo de estabilización';
+        state.activos[idx].tipo = 'LÍQUIDO';
+        if(idx !== 0){
+          const item = state.activos.splice(idx,1)[0];
+          state.activos.unshift(item);
+        }
+      }
+    } else {
+      state.activos.forEach(a => { if(a.linkedToFondo) delete a.linkedToFondo; });
+    }
+  
+    // 2. Fondo de provisiones (módulo M5) — solo si hay gastos anuales registrados
+    const totalAnualP5 = state.p5.gastosAnual || 0;
+    if(totalAnualP5 > 0 || (state.p5.fondoProvisiones||0) > 0){
+      const idx = state.activos.findIndex(a => a.linkedToProvisiones);
+      if(idx === -1){
+        // Insertar después del fondo de estabilización si existe, si no al inicio
+        const insertAt = state.activos.findIndex(a => a.linkedToFondo) === 0 ? 1 : 0;
+        state.activos.splice(insertAt, 0, {
+          nombre: 'Fondo de provisiones',
+          valor: state.p5.fondoProvisiones||0,
+          tipo: 'LÍQUIDO',
+          linkedToProvisiones: true
+        });
+      } else {
+        state.activos[idx].valor = state.p5.fondoProvisiones||0;
+        state.activos[idx].nombre = 'Fondo de provisiones';
+        state.activos[idx].tipo = 'LÍQUIDO';
+        // Asegurar que esté después del fondo de estabilización
+        const targetIdx = state.activos.findIndex(a => a.linkedToFondo) === 0 ? 1 : 0;
+        if(idx !== targetIdx){
+          const item = state.activos.splice(idx,1)[0];
+          state.activos.splice(targetIdx, 0, item);
+        }
+      }
+    } else {
+      state.activos.forEach(a => { if(a.linkedToProvisiones) delete a.linkedToProvisiones; });
+    }
+  
+    state.activos.forEach((_,i)=>addActivoRowFromState(i));
+  }
+  function activoCells(a){
+    return [
+      `<div class="mr-field"><label>Valor de mercado</label><input class="money-input" data-f="valor" placeholder="0"></div>`,
+      `<div class="mr-field"><label>Tipo</label><select data-f="tipo">
+        <option value="LÍQUIDO" ${a.tipo==='LÍQUIDO'?'selected':''}>Líquido</option>
+        <option value="NO LÍQUIDO" ${a.tipo==='NO LÍQUIDO'?'selected':''}>No líquido</option>
+       </select></div>`
+    ].join('');
+  }
+  function addActivoRowFromState(i){
+    const a=state.activos[i]||{nombre:'',valor:0,tipo:'NO LÍQUIDO'};
+    const body=document.getElementById('activos-body');
+  
+    if(a.linkedToFondo){
+      const row=document.createElement('div');
+      row.className='multi-row multi-row-locked';
+      row.innerHTML = '<div class="mr-head">'
+        + '<div class="multi-locked-name">' + a.nombre + ' <span class="it-locked-badge">sincronizado</span></div>'
+        + '<a href="#" class="it-locked-link" data-go-mvar>Ajustar saldo en módulo</a>'
+        + '</div>'
+        + '<div class="mr-grid">'
+        + '<div class="mr-field locked"><label>Valor sincronizado</label><div class="locked-value">' + fmt(a.valor||0) + '</div></div>'
+        + '<div class="mr-field locked"><label>Tipo</label><div class="locked-value">Líquido</div></div>'
+        + '</div>';
+      body.appendChild(row);
+      const link = row.querySelector('[data-go-mvar]');
+      if(link) link.addEventListener('click',function(e){e.preventDefault();navigateTo('var');});
+      return;
+    }
+  
+    if(a.linkedToProvisiones){
+      const row=document.createElement('div');
+      row.className='multi-row multi-row-locked';
+      row.innerHTML = '<div class="mr-head">'
+        + '<div class="multi-locked-name">' + a.nombre + ' <span class="it-locked-badge">sincronizado</span></div>'
+        + '<a href="#" class="it-locked-link" data-go-prov>Ajustar saldo en presupuesto anual</a>'
+        + '</div>'
+        + '<div class="mr-grid">'
+        + '<div class="mr-field locked"><label>Valor sincronizado</label><div class="locked-value">' + fmt(a.valor||0) + '</div></div>'
+        + '<div class="mr-field locked"><label>Tipo</label><div class="locked-value">Líquido</div></div>'
+        + '</div>';
+      body.appendChild(row);
+      const link = row.querySelector('[data-go-prov]');
+      if(link) link.addEventListener('click',function(e){e.preventDefault();navigateTo(5);});
+      return;
+    }
+  
+    const row=makeMultiRow(a,{cells:[activoCells(a)],namePlaceholder:'Nombre del activo'});
+    body.appendChild(row);
+    const vIn=row.querySelector('input[data-f=valor]'); vIn.value=a.valor>0?fmtInput(a.valor):'';attachMoneyInput(vIn);
+    row.querySelectorAll('input,select').forEach(el=>el.addEventListener('input',calcM3));
+    row.querySelector('.it-del').addEventListener('click',()=>{row.remove();calcM3();});
+  }
+  function addActivoRow(){
+    const cnt=document.querySelectorAll('#activos-body .multi-row').length;
+    if(cnt>=20){showToast('Máximo 20 activos','error');return;}
+    state.activos.push({nombre:'',valor:0,tipo:'NO LÍQUIDO'});
+    addActivoRowFromState(state.activos.length-1);
+  }
+  
+  function renderAhorroTable(){
+    const body=document.getElementById('ahorro-body');
+    body.innerHTML='';
+  
+    // 1. Aporte al fondo de estabilización (módulo de variables)
+    if(state.varIncome && state.varIncome.active){
+      const idx = state.ahorro.findIndex(a => a.linkedToFondoAporte);
+      const aporteSugerido = calcAporteFondoSugerido();
+      if(idx === -1){
+        state.ahorro.unshift({
+          nombre: 'Aporte al fondo de estabilización',
+          monto_mensual: aporteSugerido,
+          linkedToFondoAporte: true,
+          sugerido: aporteSugerido
+        });
+      } else {
+        state.ahorro[idx].sugerido = aporteSugerido;
+        if(idx !== 0){
+          const item = state.ahorro.splice(idx,1)[0];
+          state.ahorro.unshift(item);
+        }
+      }
+    } else {
+      state.ahorro.forEach(a => { if(a.linkedToFondoAporte) delete a.linkedToFondoAporte; });
+    }
+  
+    // 2. Aporte al fondo de provisiones (módulo M5)
+    const totalAnualP5 = state.p5.gastosAnual || 0;
+    if(totalAnualP5 > 0){
+      const idx = state.ahorro.findIndex(a => a.linkedToProvisionesAporte);
+      const aporteProv = calcAporteProvisionesSugerido();
+      if(idx === -1){
+        // Insertar después del aporte de estabilización si existe
+        const insertAt = state.ahorro.findIndex(a => a.linkedToFondoAporte) === 0 ? 1 : 0;
+        state.ahorro.splice(insertAt, 0, {
+          nombre: 'Aporte al fondo de provisiones',
+          monto_mensual: aporteProv,
+          linkedToProvisionesAporte: true,
+          sugerido: aporteProv
+        });
+      } else {
+        state.ahorro[idx].sugerido = aporteProv;
+        const targetIdx = state.ahorro.findIndex(a => a.linkedToFondoAporte) === 0 ? 1 : 0;
+        if(idx !== targetIdx){
+          const item = state.ahorro.splice(idx,1)[0];
+          state.ahorro.splice(targetIdx, 0, item);
+        }
+      }
+    } else {
+      state.ahorro.forEach(a => { if(a.linkedToProvisionesAporte) delete a.linkedToProvisionesAporte; });
+    }
+  
+    state.ahorro.forEach((_,i)=>addAhorroRowFromState(i));
+  }
+  function calcAporteFondoSugerido(){
+    const meta = getFondoMetaActual();
+    const actual = state.varIncome.fondoActual||0;
+    const faltante = Math.max(0, meta - actual);
+    if(faltante<=0) return 0;
+    return Math.ceil(faltante/18/50000)*50000;
+  }
+  function addAhorroRowFromState(i){
+    const a=state.ahorro[i]||{nombre:'',monto_mensual:0};
+    const monto = a.monto_mensual ?? a.monto ?? 0;
+    const body=document.getElementById('ahorro-body');
+    const row=document.createElement('div');
+    row.className='item-row';
+    row.style.gridTemplateColumns='1fr auto auto auto';
+  
+    if(a.linkedToFondoAporte || a.linkedToProvisionesAporte){
+      row.classList.add('item-row-suggested');
+      const sug = a.sugerido || 0;
+      let sugLabel;
+      if(a.linkedToFondoAporte){
+        sugLabel = sug>0
+          ? '<span class="it-suggest">Sugerido: ' + fmtInput(sug) + ' · cubre la meta en 18 meses</span>'
+          : '<span class="it-suggest">Tu fondo ya está completo</span>';
+      } else {
+        sugLabel = sug>0
+          ? '<span class="it-suggest">Sugerido: ' + fmtInput(sug) + ' · suma anual ÷ 12 meses</span>'
+          : '<span class="it-suggest">No hay gastos anuales registrados</span>';
+      }
+      row.innerHTML = '<div class="it-name-wrap">'
+        + '<input type="text" class="it-name" data-f="nombre" value="' + (a.nombre||'') + '" readonly>'
+        + sugLabel
+        + '</div>'
+        + '<span class="it-prefix">' + currency + '</span>'
+        + '<input class="money-input" data-f="monto">'
+        + '<span class="it-empty"></span>';
+      body.appendChild(row);
+      const mIn=row.querySelector('.money-input');
+      mIn.value=monto>0?fmtInput(monto):'';mIn.placeholder='0';
+      attachMoneyInput(mIn);
+      mIn.addEventListener('input',function(){
+        a.monto_mensual = n(this.value);
+        calcM4();
+      });
+      return;
+    }
+  
+    row.innerHTML=`<input type="text" class="it-name" data-f="nombre" value="${a.nombre||''}" placeholder="Para qué ahorras">
+      <span class="it-prefix">${currency}</span>
+      <input class="money-input" data-f="monto">
+      <button class="it-del" title="Eliminar">${SVG_X}</button>`;
+    body.appendChild(row);
+    const mIn=row.querySelector('.money-input');
+    mIn.value=monto>0?fmtInput(monto):'';mIn.placeholder='0';
+    attachMoneyInput(mIn);
+    row.querySelectorAll('input').forEach(el=>el.addEventListener('input',calcM4));
+    row.querySelector('.it-del').addEventListener('click',()=>{
+      if(state.ahorro.length<=1)return;
+      state.ahorro.splice(i,1);renderAhorroTable();calcM4();
+    });
+  }
+  function addAhorroRow(){
+    if(state.ahorro.length>=12){showToast('Máximo 12 objetivos','error');return;}
+    state.ahorro.push({nombre:'',monto_mensual:0});
+    addAhorroRowFromState(state.ahorro.length-1);
+  }
+  
+  /* ═══════════════════════════════════════════════════════════
+     MÓDULO 5 — Presupuesto Anual
+     ═══════════════════════════════════════════════════════════ */
+  const P5_GASTO_CATS = [
+    {id:'alimentacion',label:'Alimentación',items:['Mercado','Restaurantes','Domicilios']},
+    {id:'vivienda',label:'Vivienda',items:[
+      {nombre:'Arriendo / Hipoteca'},
+      {nombre:'Administración'},
+      {nombre:'Servicios públicos'},
+      {nombre:'Internet / TV'},
+      {nombre:'Predial', frec:'NO ES TODOS LOS MESES', mes:'02'},
+      {nombre:'Servicio doméstico'}
+    ]},
+    {id:'transporte',label:'Transporte',items:[
+      {nombre:'Gasolina'},
+      {nombre:'Mantenimiento del vehículo'},
+      {nombre:'Parqueaderos'},
+      {nombre:'Transporte público'},
+      {nombre:'Póliza de auto', frec:'NO ES TODOS LOS MESES', mes:''},
+      {nombre:'Impuesto del vehículo', frec:'NO ES TODOS LOS MESES', mes:'05'}
+    ]},
+    {id:'salud',label:'Salud',items:['EPS / Medicina prepagada','Medicamentos','Consultas','Odontología']},
+    {id:'educacion',label:'Educación',items:[
+      {nombre:'Pensión mensual del colegio'},
+      {nombre:'Matrícula del colegio', frec:'NO ES TODOS LOS MESES', mes:'01'},
+      {nombre:'Útiles y uniformes', frec:'NO ES TODOS LOS MESES', mes:'01'},
+      {nombre:'Cursos extracurriculares'}
+    ]},
+    {id:'comunicaciones',label:'Comunicaciones y ocio',items:['Plan celular','Streaming','Salidas / ocio']},
+    {id:'vestuario',label:'Vestuario y cuidado',items:['Ropa','Peluquería','Cuidado personal']},
+    {id:'mascotas',label:'Mascotas',items:['Alimento','Veterinario']},
+    {id:'seguros',label:'Seguros y compromisos anuales', items:[
+      {nombre:'Póliza de vida', frec:'NO ES TODOS LOS MESES', mes:''},
+      {nombre:'Póliza de auto', frec:'NO ES TODOS LOS MESES', mes:''},
+      {nombre:'Seguro de hogar', frec:'NO ES TODOS LOS MESES', mes:''},
+      {nombre:'Medicina prepagada anual', frec:'NO ES TODOS LOS MESES', mes:''},
+      {nombre:'Regalos y fechas especiales', frec:'NO ES TODOS LOS MESES', mes:'12'},
+      {nombre:'Donaciones'}
+    ]},
+    {id:'otros_gastos',label:'Otros',items:['Otro']}
+  ];
+  
+  /* Plantillas pre-cargadas de ingresos no mensuales según tipo de cliente */
+  function getP5IngresosPrecarga(tipo){
+    if(tipo === 'empleado' || tipo === 'mixto'){
+      return [
+        {nombre:'Prima legal de mitad de año', frec:'NO ES TODOS LOS MESES', mes:'06', monto:0},
+        {nombre:'Prima legal de fin de año', frec:'NO ES TODOS LOS MESES', mes:'12', monto:0},
+        {nombre:'Cesantías (consignación a fondo)', frec:'NO ES TODOS LOS MESES', mes:'02', monto:0},
+        {nombre:'Bonificación / participación de utilidades', frec:'NO ES TODOS LOS MESES', mes:'', monto:0},
+        {nombre:'Devolución de retención en la fuente', frec:'NO ES TODOS LOS MESES', mes:'09', monto:0}
+      ];
+    }
+    if(tipo === 'independiente'){
+      return [
+        {nombre:'Devolución de retención en la fuente', frec:'NO ES TODOS LOS MESES', mes:'09', monto:0},
+        {nombre:'Dividendos de mi empresa', frec:'NO ES TODOS LOS MESES', mes:'', monto:0},
+        {nombre:'Honorarios extraordinarios o bonos', frec:'NO ES TODOS LOS MESES', mes:'', monto:0}
+      ];
+    }
+    return [];
+  }
+  
+  function renderP5GastosAccordions(){
+    const container=document.getElementById('p5-gastos-accordions');
+    container.innerHTML='';
+    P5_GASTO_CATS.forEach(cat=>{
+      const saved=state.p5.gastos[cat.id]||[];
+      const div=document.createElement('div');
+      div.className='acc';
+      div.dataset.acc=cat.id;
+      div.innerHTML=`<div class="acc-head" onclick="toggleAcc(this)">
+          <h4>${cat.label}</h4>
+          <div class="acc-meta"><span id="acc-gas-${cat.id}-m">— mensual</span><span id="acc-gas-${cat.id}-a">— anual</span></div>
+          <div class="acc-chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="6 9 12 15 18 9"/></svg></div>
+        </div>
+        <div class="acc-body">
+          <div id="p5-gas-${cat.id}-body"></div>
+          <button class="btn-add" onclick="addP5GastoRow('${cat.id}')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Agregar gasto
+          </button>
+        </div>`;
+      container.appendChild(div);
+      if(saved.length>0) saved.forEach(item=>addP5GastoRowData(cat.id,item));
+      else cat.items.forEach(item=>{
+        const data = typeof item === 'string'
+          ? {nombre:item, frec:'TODOS LOS MESES', monto:0, mes:'', pertenece:'', obs:''}
+          : Object.assign({nombre:'', frec:'TODOS LOS MESES', monto:0, mes:'', pertenece:'', obs:''}, item);
+        addP5GastoRowData(cat.id, data);
+      });
+    });
+  }
+  
+  const MESES_OPCIONES = [
+    {v:'',l:'— Selecciona el mes —'},
+    {v:'01',l:'Enero'},{v:'02',l:'Febrero'},{v:'03',l:'Marzo'},{v:'04',l:'Abril'},
+    {v:'05',l:'Mayo'},{v:'06',l:'Junio'},{v:'07',l:'Julio'},{v:'08',l:'Agosto'},
+    {v:'09',l:'Septiembre'},{v:'10',l:'Octubre'},{v:'11',l:'Noviembre'},{v:'12',l:'Diciembre'},
+    {v:'varia',l:'Varía año a año'}
+  ];
+  
+  function p5Cells(d, sociosArr, opts){
+    const s = sociosArr || getSocios();
+    opts = opts || {};
+    const isPoliza = !!opts.isPoliza;
+    const isGasto  = !!opts.isGasto;  // sólo gastos muestran formaPago, yaEnM1, provisionar
+    const frec = d.frec || 'TODOS LOS MESES';
+    const isAnual = frec === 'NO ES TODOS LOS MESES';
+    const provisionar = d.provisionar === undefined ? true : !!d.provisionar;
+    const formaPago = d.formaPago || 'contado';
+    const yaEnM1 = !!d.yaEnM1;
+  
+    let cells = [];
+    cells.push('<div class="mr-field"><label>Frecuencia</label><select data-f="frec">'
+      + '<option value="TODOS LOS MESES"'+(frec==='TODOS LOS MESES'?' selected':'')+'>Todos los meses</option>'
+      + '<option value="NO ES TODOS LOS MESES"'+(frec==='NO ES TODOS LOS MESES'?' selected':'')+'>No todos los meses</option>'
+      + '</select></div>');
+    cells.push('<div class="mr-field"><label>Monto</label><input class="money-input" data-f="monto" placeholder="0"></div>');
+  
+    // Campo MES (visible solo si frecuencia no mensual)
+    const mesOpts = MESES_OPCIONES.map(m=>'<option value="'+m.v+'"'+(d.mes===m.v?' selected':'')+'>'+m.l+'</option>').join('');
+    const mesClass = isAnual ? 'mr-field' : 'mr-field hide';
+    const mesValue = d.mes || '';
+    const mesWarning = isAnual && !mesValue ? '<div class="field-warn">Selecciona el mes para activar el calendario</div>' : '';
+    cells.push('<div class="'+mesClass+'" data-mes-cell><label>Mes esperado</label><select data-f="mes">'+mesOpts+'</select>'+mesWarning+'</div>');
+  
+    // Forma de pago, ya-en-M1 y provisionar — sólo aplican a gastos anuales
+    if(isGasto){
+      // Forma de pago (visible solo si anual)
+      const formaPagoClass = isAnual ? 'mr-field' : 'mr-field hide';
+      cells.push('<div class="'+formaPagoClass+'" data-forma-cell>'
+        + '<label>Forma de pago</label>'
+        + '<select data-f="formaPago">'
+        + '<option value="contado"'+(formaPago==='contado'?' selected':'')+'>Anual al contado</option>'
+        + '<option value="cuotas"'+(formaPago==='cuotas'?' selected':'')+'>Cuotas mensuales</option>'
+        + '</select>'
+        + '</div>');
+  
+      // Pregunta "¿ya está en el M1?" (visible solo si anual + cuotas)
+      const yaEnM1Visible = isAnual && formaPago === 'cuotas';
+      const yaEnM1Class = yaEnM1Visible ? 'mr-field full ya-en-m1-cell' : 'mr-field full ya-en-m1-cell hide';
+      cells.push('<div class="'+yaEnM1Class+'" data-ya-m1-cell>'
+        + '<div class="ya-m1-row">'
+        + '<label class="ya-m1-toggle">'
+        + '<input type="checkbox" data-f="yaEnM1" ' + (yaEnM1?'checked':'') + '>'
+        + '<span class="ya-m1-track"></span>'
+        + '<span class="ya-m1-text">Ya lo registré como gasto mensual en el Módulo 1</span>'
+        + '</label>'
+        + '</div>'
+        + '<div class="ya-m1-hint">'
+        + 'Marca esta casilla si la cuota mensual ya está sumada en tus gastos del Módulo 1, '
+        + 'para no contarla dos veces. <strong>El gasto sigue contando como anual</strong> '
+        + 'porque es un compromiso financiado, y se sugiere provisionar para romper el ciclo de cuotas.'
+        + '</div>'
+        + '<div class="sobrecosto-info" data-sobrecosto>'
+        + '</div>'
+        + '</div>');
+  
+      // Toggle "Provisionar mensualmente" (visible solo si es anual)
+      const provClass = isAnual ? 'mr-field provision-toggle-cell' : 'mr-field provision-toggle-cell hide';
+      cells.push('<div class="'+provClass+'" data-prov-cell>'
+        + '<label class="provision-toggle">'
+        + '<input type="checkbox" data-f="provisionar" ' + (provisionar?'checked':'') + '>'
+        + '<span class="provision-track"></span>'
+        + '<span class="provision-text">Provisionar mensualmente</span>'
+        + '</label>'
+        + '<div class="provision-hint">Apartar mes a mes el equivalente</div>'
+        + '</div>');
+    }
+  
+    cells.push('<div class="mr-field"><label>Pertenece a</label><select data-f="pertenece">'
+      + '<option value="">—</option>'
+      + '<option value="socio1"'+(d.pertenece==='socio1'?' selected':'')+'>'+(s[0]||'Socio 01')+'</option>'
+      + '<option value="socio2"'+(d.pertenece==='socio2'?' selected':'')+'>'+(s[1]||'Socio 02')+'</option>'
+      + '<option value="ambos"'+(d.pertenece==='ambos'?' selected':'')+'>Ambos</option>'
+      + '</select></div>');
+  
+    if(isPoliza){
+      cells.push('<div class="mr-field"><label>Compañía actual</label><input type="text" data-f="compania" value="'+(d.compania||'')+'" placeholder="Ej: Sura, Bolívar"></div>');
+    }
+  
+    cells.push('<div class="mr-field full"><label>Observaciones</label><input type="text" data-f="obs" value="'+(d.obs||'')+'" placeholder="Opcional"></div>');
+  
+    return cells.join('');
+  }
+  
+  function wireP5Row(row, isPoliza){
+    const mIn = row.querySelector('input[data-f=monto]');
+    if(mIn){
+      if(!mIn.value) mIn.value = '';
+      if(!mIn.dataset.money) attachMoneyInput(mIn);
+    }
+    row.querySelectorAll('input,select').forEach(el=>el.addEventListener('input',calcP5Totals));
+    row.querySelector('.it-del').addEventListener('click',()=>{row.remove();calcP5Totals();});
+  
+    const frecSel = row.querySelector('select[data-f=frec]');
+    const mesCell = row.querySelector('[data-mes-cell]');
+    const provCell = row.querySelector('[data-prov-cell]');
+    const formaCell = row.querySelector('[data-forma-cell]');
+    const yaM1Cell = row.querySelector('[data-ya-m1-cell]');
+    const formaSel = row.querySelector('select[data-f=formaPago]');
+    const yaM1Input = row.querySelector('input[data-f=yaEnM1]');
+    const sobrecostoEl = row.querySelector('[data-sobrecosto]');
+  
+    function refreshAnualUI(){
+      const isAnual = frecSel && frecSel.value === 'NO ES TODOS LOS MESES';
+      const isCuotas = formaSel && formaSel.value === 'cuotas';
+  
+      if(mesCell){
+        if(isAnual) mesCell.classList.remove('hide');
+        else {
+          mesCell.classList.add('hide');
+          const mesSel = mesCell.querySelector('select[data-f=mes]');
+          if(mesSel) mesSel.value = '';
+        }
+      }
+      if(provCell) isAnual ? provCell.classList.remove('hide') : provCell.classList.add('hide');
+      if(formaCell) isAnual ? formaCell.classList.remove('hide') : formaCell.classList.add('hide');
+      if(yaM1Cell){
+        if(isAnual && isCuotas) yaM1Cell.classList.remove('hide');
+        else yaM1Cell.classList.add('hide');
+      }
+  
+      // Calcular y mostrar sobrecosto si paga en cuotas
+      if(sobrecostoEl){
+        if(isAnual && isCuotas){
+          const monto = n(mIn?.value);
+          if(monto > 0){
+            // 12% de sobrecosto típico en pólizas financiadas
+            const valorContado = Math.round(monto / 1.12);
+            const sobrecosto = monto - valorContado;
+            sobrecostoEl.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> '
+              + 'Pagando en cuotas estás financiando aproximadamente <strong>' + fmt(sobrecosto) + ' al año</strong> en intereses '
+              + '(esta póliza al contado costaría cerca de ' + fmt(valorContado) + '). '
+              + 'Si provisionas mensualmente este año, el próximo vencimiento puedes pagarla al contado y ahorrar ese sobrecosto.';
+            sobrecostoEl.style.display = 'block';
+          } else {
+            sobrecostoEl.style.display = 'none';
+          }
+        } else {
+          sobrecostoEl.style.display = 'none';
+        }
+      }
+  
+      const mesSel = mesCell ? mesCell.querySelector('select[data-f=mes]') : null;
+      const existing = mesCell ? mesCell.querySelector('.field-warn') : null;
+      if(mesCell && isAnual && mesSel && !mesSel.value){
+        if(!existing){
+          const w = document.createElement('div');
+          w.className = 'field-warn';
+          w.textContent = 'Selecciona el mes para activar el calendario';
+          mesCell.appendChild(w);
+        }
+      } else if(existing){
+        existing.remove();
+      }
+    }
+    if(frecSel) frecSel.addEventListener('change', refreshAnualUI);
+    if(formaSel) formaSel.addEventListener('change', refreshAnualUI);
+    const mesSel = mesCell ? mesCell.querySelector('select[data-f=mes]') : null;
+    if(mesSel) mesSel.addEventListener('change', refreshAnualUI);
+    // Re-calcular sobrecosto cuando cambia el monto
+    if(mIn) mIn.addEventListener('input', refreshAnualUI);
+    const provInput = row.querySelector('input[data-f=provisionar]');
+    if(provInput){
+      provInput.addEventListener('change', function(){
+        calcP5Totals();
+      });
+    }
+    if(yaM1Input){
+      yaM1Input.addEventListener('change', function(){
+        calcP5Totals();
+      });
+    }
+    refreshAnualUI();
+  }
+  
+  function addP5GastoRowData(catId,data){
+    const body=document.getElementById('p5-gas-'+catId+'-body');
+    if(!body) return;
+    const isPoliza = catId === 'seguros';
+    const row=makeMultiRow(data,{cells:[p5Cells(data,null,{isPoliza, isGasto:true})],namePlaceholder:'Concepto'});
+    body.appendChild(row);
+    const mIn=row.querySelector('input[data-f=monto]'); mIn.value=data.monto>0?fmtInput(data.monto):'';
+    wireP5Row(row, isPoliza);
+  }
+  function addP5GastoRow(catId){addP5GastoRowData(catId,{nombre:'',frec:'TODOS LOS MESES',monto:0,mes:'',pertenece:'',obs:''});calcP5Totals();}
+  
+  function addP5Row(type){
+    const body=document.getElementById('p5-'+type+'-body');
+    const data={nombre:'',frec:'TODOS LOS MESES',monto:0,mes:'',pertenece:'',obs:''};
+    const row=makeMultiRow(data,{cells:[p5Cells(data)],namePlaceholder:'Descripción'});
+    body.appendChild(row);
+    const mIn=row.querySelector('input[data-f=monto]');mIn.value='';
+    wireP5Row(row, false);
+  }
+  function populateP5Section(bodyId,rows){
+    const body=document.getElementById(bodyId);
+    if(!body||!rows) return;
+    body.innerHTML='';
+    rows.forEach(d=>{
+      const row=makeMultiRow(d,{cells:[p5Cells(d)],namePlaceholder:'Descripción'});
+      body.appendChild(row);
+      const mIn=row.querySelector('input[data-f=monto]'); mIn.value=d.monto>0?fmtInput(d.monto):'';
+      wireP5Row(row, false);
+    });
+  }
+  function getSocios(){return [
+    document.getElementById('socio1')?.value||'Socio 01',
+    document.getElementById('socio2')?.value||'Socio 02'
+  ];}
+  function collectP5Rows(bodyId){
+    const rows=[];
+    document.querySelectorAll('#'+bodyId+' .multi-row').forEach(r=>{
+      const provInput = r.querySelector('input[data-f=provisionar]');
+      const yaM1Input = r.querySelector('input[data-f=yaEnM1]');
+      rows.push({
+        nombre:r.querySelector('input[data-f=nombre]')?.value||'',
+        frec:r.querySelector('select[data-f=frec]')?.value||'TODOS LOS MESES',
+        monto:n(r.querySelector('input[data-f=monto]')?.value),
+        mes:r.querySelector('select[data-f=mes]')?.value||'',
+        formaPago:r.querySelector('select[data-f=formaPago]')?.value||'contado',
+        yaEnM1: yaM1Input ? yaM1Input.checked : false,
+        provisionar: provInput ? provInput.checked : true,
+        compania:r.querySelector('input[data-f=compania]')?.value||'',
+        pertenece:r.querySelector('select[data-f=pertenece]')?.value||'',
+        obs:r.querySelector('input[data-f=obs]')?.value||''
+      });
+    });
+    return rows;
+  }
+  
+  /* ═══════════════════════════════════════════════════════════
+     TABLERO + CHARTS
+     ═══════════════════════════════════════════════════════════ */
+  let chartMensual=null,chartActivos=null,chartDeuda=null;
+  
+  function renderTablero(){
+    const {totalIng,totalGas}=calcM1();
+    const {totalDeuda,totalPagos,pagosConsumo,totConsumo,totApal,ratioConsumo,ratioApal}=calcM2();
+    const {totalActivos,totalLiquido,totalNoLiquido,pctL,pctNL}=calcM3();
+    const {totalAhorro}=calcM4();
+    const ingresoAnual = totalIng*12 + (state.p5.ingAnual||0);
+    const pctAho = totalIng>0 ? totalAhorro/totalIng : 0;
+    const pctDeu = totalIng>0 ? totalPagos/totalIng  : 0;
+    const pctGas2= totalIng>0 ? totalGas/totalIng    : 0;
+    const pctTotal = pctAho+pctDeu+pctGas2;
+    const tbl=state.tablero;
+  
+    const exceso=document.getElementById('t6-aviso-exceso');
+    if(pctTotal>1){
+      exceso.innerHTML=`<div class="alert warn">${SVG_WARN}<div>La suma de gastos + deudas + ahorro supera el 100% de tus ingresos. Revisa los números.</div></div>`;
+    } else exceso.innerHTML='';
+  
+    document.getElementById('t6-uso-mensual').innerHTML = `
+      <div class="use-row head">
+        <span>Concepto</span><span>Valor</span><span>%</span><span>Mi meta</span>
+      </div>
+      ${useRow('Ingresos mensuales', totalIng, 1, tbl.meta_ingresos, 'meta_ingresos', true)}
+      ${useRow('Ahorro mensual',     totalAhorro, pctAho, tbl.meta_ahorro,  'meta_ahorro')}
+      ${useRow('Pago a deudas',      totalPagos,  pctDeu, tbl.meta_deudas,  'meta_deudas')}
+      ${useRow('Gastos mensuales',   totalGas,    pctGas2,tbl.meta_gastos,  'meta_gastos')}
+      <div class="use-row total">
+        <span class="ur-name"><strong>Total</strong></span>
+        <span class="ur-amount">${fmt(totalAhorro+totalPagos+totalGas)}</span>
+        <span class="ur-pct">${pct(pctTotal)}</span>
+        <span></span>
+      </div>`;
+    bindMetaInputs();
+  
+    const ingAnual=state.p5.ingAnual||0;
+    const ahoAnual=state.p5.ahoAnual||0;
+    const deuAnual=state.p5.deuAnual||0;
+    const gasAnual=state.p5.gastosAnual||0;
+    document.getElementById('t6-anuales').innerHTML = `
+      <div class="use-row head"><span>Concepto</span><span>Valor</span><span>%</span><span>Mi meta</span></div>
+      ${useRow('Otros ingresos',    ingAnual, ingresoAnual>0?ingAnual/ingresoAnual:0, tbl.meta_otros_ingresos,'meta_otros_ingresos')}
+      ${useRow('Otro ahorro',       ahoAnual, ingresoAnual>0?ahoAnual/ingresoAnual:0, tbl.meta_otro_ahorro,   'meta_otro_ahorro')}
+      ${useRow('Otros pagos deuda', deuAnual, ingresoAnual>0?deuAnual/ingresoAnual:0, tbl.meta_otros_deudas,  'meta_otros_deudas')}
+      ${useRow('Otros gastos',      gasAnual, ingresoAnual>0?gasAnual/ingresoAnual:0, tbl.meta_otros_gastos,  'meta_otros_gastos')}`;
+    bindMetaInputs();
+  
+    const saldo=state.p5.saldo||0;
+    document.getElementById('t6-saldo-anual').innerHTML = saldo>=0
+      ? `<div class="alert pos">${SVG_CHECK}<div>Saldo anual positivo: <strong>${fmt(saldo)}</strong> — Tu presupuesto cierra bien.</div></div>`
+      : `<div class="alert neg">${SVG_WARN}<div>Saldo anual negativo: <strong>${fmt(saldo)}</strong> — Ajusta ingresos, gastos o ahorro.</div></div>`;
+  
+    /* Indicators */
+    const solvencia  = totalDeuda>0 ? totalActivos/totalDeuda : 0;
+    const totalGastosM = Object.values(state.gastos).reduce((a,b)=>a+b,0);
+    const fondoEmerg = totalGastosM>0 ? totalLiquido/totalGastosM : 0;
+    const pctConsumoIng = totalIng>0 ? pagosConsumo/totalIng : 0;
+  
+    const indicators=[
+      {label:'Pagos a deuda de consumo',desc:'% del ingreso mensual en cuotas de consumo',val:pct(pctConsumoIng),bar:Math.min(pctConsumoIng/.5,1),color:pctConsumoIng<.2?'var(--pos)':pctConsumoIng<.3?'var(--warn)':'var(--neg)',metaKey:'meta_consumo',meta:tbl.meta_consumo||0,money:true},
+      {label:'Deuda total',desc:'Saldo agregado de tus deudas',val:fmt(totalDeuda),bar:0,color:'var(--accent)',metaKey:'meta_deuda_total',meta:tbl.meta_deuda_total||0,money:true},
+      {label:'Ratio deuda consumo',desc:'% de tu deuda total que es de consumo (meta &lt;40%)',val:pct(ratioConsumo),bar:Math.min(ratioConsumo,1),color:ratioConsumo<.4?'var(--pos)':ratioConsumo<.6?'var(--warn)':'var(--neg)',metaKey:'meta_ratio_consumo',meta:tbl.meta_ratio_consumo||0},
+      {label:'Ratio apalancamiento',tipKey:'apalancamiento',desc:'% de tu deuda total que genera activos (más es mejor)',val:pct(ratioApal),bar:Math.min(ratioApal,1),color:ratioApal>.5?'var(--pos)':ratioApal>.25?'var(--warn)':'var(--neg)',metaKey:'meta_ratio_apal',meta:tbl.meta_ratio_apal||0},
+      {label:'% Activos líquidos',tipKey:'activo_liquido',desc:'Activos convertibles fácilmente en dinero',val:pct(pctL),bar:pctL,color:pctL>.3?'var(--pos)':'var(--warn)',metaKey:'meta_pct_liquidos',meta:tbl.meta_pct_liquidos||0},
+      {label:'Fondo de emergencias',tipKey:'fondo_emergencias',desc:'Meses de gastos cubiertos · meta &gt;6',val:fondoEmerg.toFixed(1)+' meses',bar:Math.min(fondoEmerg/12,1),color:fondoEmerg>6?'var(--pos)':fondoEmerg>=3?'var(--warn)':'var(--neg)',metaKey:'meta_fondo_emerg',meta:tbl.meta_fondo_emerg||0},
+      {label:'Nivel de solvencia',desc:'Veces que activos cubren deudas · meta &gt;1',val:solvencia.toFixed(2)+'×',bar:Math.min(solvencia/3,1),color:solvencia>1.5?'var(--pos)':solvencia>=1?'var(--warn)':'var(--neg)',metaKey:'meta_solvencia',meta:tbl.meta_solvencia||0}
+    ];
+  
+    // Indicadores adicionales del M5 (presupuesto anual)
+    const totalGastosAnualesM5 = state.p5.gastosAnual || 0;
+    const totalIngresosM = state.p5.ingMensual || 0;
+    if(totalGastosAnualesM5 > 0 || totalIngresosM > 0){
+      // Costo de vida real = gastos mensuales (M1) + provisión mensual de gastos anuales (M5/12)
+      const provisionMensual = totalGastosAnualesM5 / 12;
+      const costoVidaReal = totalGastosM + provisionMensual;
+      const sobreingreso = totalIng > 0 ? costoVidaReal/totalIng : 0;
+      indicators.push({
+        label:'Costo de vida real', tipKey:'costo_vida_real',
+        desc:'Gastos mensuales + provisión mensual de gastos anuales · ' + (sobreingreso<0.7?'sostenible':sobreingreso<0.9?'ajustado':'comprometido'),
+        val:fmt(costoVidaReal),
+        bar:Math.min(sobreingreso,1),
+        color:sobreingreso<0.7?'var(--pos)':sobreingreso<0.9?'var(--warn)':'var(--neg)',
+        metaKey:'meta_costo_vida_real',meta:tbl.meta_costo_vida_real||0,money:true
+      });
+  
+      // Índice de previsión = saldo provisiones / gastos próximos 90 días
+      const proximos90 = (function(){
+        const hoy = new Date();
+        const mesActual = hoy.getMonth() + 1;
+        const mesesProximos = [];
+        for(let i=0;i<3;i++){
+          const m = ((mesActual - 1 + i) % 12) + 1;
+          mesesProximos.push(String(m).padStart(2,'0'));
+        }
+        let total = 0;
+        P5_GASTO_CATS.forEach(cat=>{
+          document.querySelectorAll('#p5-gas-'+cat.id+'-body .multi-row').forEach(r=>{
+            const frec = r.querySelector('select[data-f=frec]')?.value;
+            const mes  = r.querySelector('select[data-f=mes]')?.value;
+            const monto = n(r.querySelector('input[data-f=monto]')?.value);
+            if(frec === 'NO ES TODOS LOS MESES' && mesesProximos.includes(mes)) total += monto;
+          });
+        });
+        return total;
+      })();
+      const saldoProv = state.p5.fondoProvisiones || 0;
+      const indicePrev = proximos90 > 0 ? Math.min(saldoProv/proximos90, 1) : 1;
+      if(proximos90 > 0){
+        indicators.push({
+          label:'Índice de previsión', tipKey:'indice_prevision',
+          desc:'% de gastos anuales próximos a vencer ya provisionados · meta 100%',
+          val:pct(indicePrev),
+          bar:indicePrev,
+          color:indicePrev>=0.9?'var(--pos)':indicePrev>=0.6?'var(--warn)':'var(--neg)',
+          metaKey:'meta_indice_prev',meta:tbl.meta_indice_prev||0
+        });
+      }
+  
+      // Saldo proyectado de fin de año (basado en M5)
+      const saldoAnual = state.p5.saldo || 0;
+      indicators.push({
+        label:'Saldo proyectado fin de año',
+        desc:'Resultado neto del presupuesto anual completo · ingresos − gastos − ahorros − deudas',
+        val:fmt(saldoAnual),
+        bar:saldoAnual >= 0 ? 1 : 0,
+        color:saldoAnual>=0?'var(--pos)':'var(--neg)',
+        metaKey:'meta_saldo_anual',meta:tbl.meta_saldo_anual||0,money:true
+      });
+    }
+  
+    // Indicadores adicionales si MVar activo
+    if(state.varIncome && state.varIncome.active){
+      const v = state.varIncome;
+      const mesesConDatos = (v.meses||[]).filter(m=>(m.bruto||0)>0);
+      const netos = mesesConDatos.map(m=>Math.max(0,(m.bruto||0)-(m.costos||0)-(m.tributo||0)));
+  
+      if(netos.length>=3){
+        const promNeto = vMean(netos);
+        const variabilidad = promNeto>0 ? vStdDev(netos)/promNeto : 0;
+        const salarioP = getSalarioPersonalActual();
+        const fondoMeses = salarioP>0 ? v.fondoActual/salarioP : 0;
+        const mesesMetaFondo = variabilidad>=0.5 ? 12 : variabilidad>=0.25 ? 9 : 6;
+  
+        indicators.push({
+          label:'Variabilidad de tu ingreso', tipKey:'variabilidad',
+          desc:'Cuánto cambia tu ingreso mes a mes · ' + (variabilidad<0.25?'estable':variabilidad<0.5?'variable':'muy volátil'),
+          val:pct(variabilidad),bar:Math.min(variabilidad/.7,1),
+          color:variabilidad<0.25?'var(--pos)':variabilidad<0.5?'var(--warn)':'var(--neg)',
+          metaKey:'meta_variabilidad',meta:tbl.meta_variabilidad||0
+        });
+        indicators.push({
+          label:'Fondo de estabilización', tipKey:'fondo_estabilizacion',
+          desc:'Meses de salario personal cubiertos · meta '+mesesMetaFondo+' meses',
+          val:fondoMeses.toFixed(1)+' meses',bar:Math.min(fondoMeses/mesesMetaFondo,1),
+          color:fondoMeses>=mesesMetaFondo?'var(--pos)':fondoMeses>=3?'var(--warn)':'var(--neg)',
+          metaKey:'meta_fondo_estab',meta:tbl.meta_fondo_estab||0,money:true
+        });
+  
+        const cumplenSal = netos.filter(x=>x>=salarioP).length;
+        const sostenibilidad = netos.length>0 ? cumplenSal/netos.length : 0;
+        if(salarioP>0){
+          indicators.push({
+            label:'Sostenibilidad del salario personal', tipKey:'salario_personal',
+            desc:'% de meses históricos donde tu ingreso supera tu salario fijo · meta &gt;75%',
+            val:pct(sostenibilidad),bar:sostenibilidad,
+            color:sostenibilidad>=0.75?'var(--pos)':sostenibilidad>=0.6?'var(--warn)':'var(--neg)',
+            metaKey:'meta_sostenibilidad',meta:tbl.meta_sostenibilidad||0
+          });
+        }
+      }
+  
+      let totalDebido=0, totalReservado=0;
+      (v.meses||[]).forEach(m=>{
+        totalDebido    += m.tributoSugerido || 0;
+        totalReservado += m.tributo || 0;
+      });
+      const deficit = Math.max(0, totalDebido - totalReservado);
+      const cobTrib = totalDebido>0 ? totalReservado/totalDebido : 1;
+      indicators.push({
+        label:'Reserva tributaria', tipKey:'reserva_tributaria',
+        desc:'Cobertura sobre lo que debiste apartar · ' + (deficit>0?'déficit '+fmt(deficit):'al día'),
+        val:pct(cobTrib),bar:Math.min(cobTrib,1),
+        color:cobTrib>=1?'var(--pos)':cobTrib>=0.7?'var(--warn)':'var(--neg)',
+        metaKey:'meta_reserva_trib',meta:tbl.meta_reserva_trib||0
+      });
+    }
+  
+    document.getElementById('t6-indicadores').innerHTML = indicators.map((ind,i)=>`
+      <div class="ind-row">
+        <div>
+          <div class="ind-name">${ind.label}${ind.tipKey?(' '+tip(ind.tipKey)):''}</div>
+          <div class="ind-desc">${ind.desc}</div>
+        </div>
+        <div class="ind-val">${ind.val}</div>
+        <div class="ind-bar"><div class="ind-bar-fill" style="width:${Math.max(0,Math.min(100,ind.bar*100))}%;background:${ind.color}"></div></div>
+        <div class="ind-meta">
+          <span class="ind-meta-label">Mi meta</span>
+          <input class="ind-meta-input ${ind.money?'money-input':''}" data-meta-key="${ind.metaKey}" placeholder="0">
+        </div>
+      </div>`).join('');
+  
+    // Initialize meta input values + handlers
+    document.querySelectorAll('.ind-meta-input').forEach(inp=>{
+      const key=inp.dataset.metaKey;
+      const val=tbl[key]||0;
+      if(inp.classList.contains('money-input')){
+        inp.value = val>0 ? fmtInput(val) : '';
+        attachMoneyInput(inp);
+        inp.addEventListener('input',()=>{state.tablero[key]=n(inp.value);});
+      } else {
+        inp.value = val||'';
+        inp.addEventListener('input',()=>{state.tablero[key]=parseFloat(inp.value)||0;});
+      }
+    });
+  
+    /* Objectives */
+    const cols=[{title:'A 30 días',start:0},{title:'A 90 días',start:5},{title:'A 360 días',start:10}];
+    document.getElementById('t6-objetivos').innerHTML = cols.map(col=>`
+      <div>
+        <div class="obj-col-title">${col.title}</div>
+        ${Array.from({length:5},(_,j)=>{const idx=col.start+j;return`<textarea class="obj-input" placeholder="Objetivo ${idx+1}" data-obj-idx="${idx}">${tbl.objetivos[idx]||''}</textarea>`;}).join('')}
+      </div>`).join('');
+    document.querySelectorAll('.obj-input').forEach(ta=>{
+      ta.addEventListener('input',()=>{state.tablero.objetivos[parseInt(ta.dataset.objIdx)]=ta.value;});
+    });
+  
+    document.getElementById('t6-plan').value = tbl.plan||'';
+    document.getElementById('t6-plan').oninput = function(){state.tablero.plan=this.value;};
+  }
+  
+  function useRow(name, value, pctValue, meta, metaKey, isHead){
+    return `<div class="use-row${isHead?' head':''}" style="${isHead?'background:var(--surface-soft);font-weight:600':''}">
+      <span class="ur-name">${isHead?'<strong>'+name+'</strong>':name}</span>
+      <span class="ur-amount">${isHead?'<strong>'+fmt(value)+'</strong>':fmt(value)}</span>
+      <span class="ur-pct">${pct(pctValue)}</span>
+      <span class="ur-meta"><span class="ur-meta-label">Meta</span><input class="ur-meta-input money-input" data-meta-key="${metaKey}" placeholder="0"></span>
+    </div>`;
+  }
+  
+  function bindMetaInputs(){
+    document.querySelectorAll('.ur-meta-input').forEach(inp=>{
+      const key=inp.dataset.metaKey;
+      if(!key||inp.dataset.bound)return;
+      inp.dataset.bound='1';
+      const val=state.tablero[key]||0;
+      inp.value = val>0 ? fmtInput(val) : '';
+      attachMoneyInput(inp);
+      inp.addEventListener('input',()=>{state.tablero[key]=n(inp.value);});
+    });
+  }
+  
+  function renderCharts(){
+    const {totalIng,totalGas}=calcM1();
+    const {totalPagos,totConsumo,totApal}=calcM2();
+    const {totalLiquido,totalNoLiquido}=calcM3();
+    const {totalAhorro}=calcM4();
+    const libre=Math.max(0,totalIng-totalAhorro-totalPagos-totalGas);
+    const totOtroD=Math.max(0,state.deudas.reduce((a,d)=>a+d.saldo,0)-totConsumo-totApal);
+  
+    const C={
+      ink:'#0c0c0d',
+      accent:'#0e4d3a',
+      accent2:'#1a6b54',
+      pos:'#0e4d3a',
+      posLt:'#5a8a73',
+      neg:'#8a1f1c',
+      negLt:'#bf6663',
+      warn:'#8a5a14',
+      neutral:'#a8a59e',
+      border:'#fff'
+    };
+    const opts = {
+      responsive:true,maintainAspectRatio:true,
+      plugins:{
+        legend:{position:'bottom',labels:{font:{family:'Geist',size:11,weight:'500'},boxWidth:10,boxHeight:10,padding:14,color:'#2b2b2e',usePointStyle:true,pointStyle:'circle'}},
+        tooltip:{
+          backgroundColor:'#0c0c0d',titleColor:'#fff',bodyColor:'#fff',
+          padding:12,cornerRadius:10,displayColors:false,
+          titleFont:{family:'Geist',weight:'600',size:12},
+          bodyFont:{family:'JetBrains Mono',size:12},
+          callbacks:{label:ctx=>' '+fmt(ctx.parsed)}
+        }
+      }
+    };
+  
+    if(chartMensual) chartMensual.destroy();
+    chartMensual=new Chart(document.getElementById('chart-donut-mensual').getContext('2d'),{
+      type:'doughnut',
+      data:{
+        labels:['Ahorro','Deudas','Gastos','Libre'],
+        datasets:[{data:[totalAhorro,totalPagos,totalGas,libre],
+          backgroundColor:[C.accent,C.neg,C.ink,C.posLt],
+          borderWidth:3,borderColor:C.border,hoverOffset:8,borderRadius:2}]
+      },
+      options:{...opts,cutout:'70%'}
+    });
+  
+    if(chartActivos) chartActivos.destroy();
+    chartActivos=new Chart(document.getElementById('chart-donut-activos').getContext('2d'),{
+      type:'doughnut',
+      data:{
+        labels:['Líquidos','No líquidos'],
+        datasets:[{data:[totalLiquido,totalNoLiquido],
+          backgroundColor:[C.accent,C.warn],
+          borderWidth:3,borderColor:C.border,hoverOffset:8}]
+      },
+      options:{...opts,cutout:'70%'}
+    });
+  
+    if(chartDeuda) chartDeuda.destroy();
+    chartDeuda=new Chart(document.getElementById('chart-donut-deuda').getContext('2d'),{
+      type:'doughnut',
+      data:{
+        labels:['Consumo','Apalancamiento','Otro'],
+        datasets:[{data:[totConsumo,totApal,totOtroD],
+          backgroundColor:[C.neg,C.accent,C.neutral],
+          borderWidth:3,borderColor:C.border,hoverOffset:8}]
+      },
+      options:{...opts,cutout:'70%'}
+    });
+  }
+  
+  /* ═══════════════════════════════════════════════════════════
+     PERSISTENCIA
+     ═══════════════════════════════════════════════════════════ */
+  async function saveModule(name,data){
+    if(!firestoreAvailable||!userId){
+      localStorage.setItem(`abba_${userId}_${name}`,JSON.stringify(data));
+      return;
+    }
+    try{
+      await db.collection('clientes').doc(userId).collection('modulos').doc(name)
+        .set({...data,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
+    }catch(e){
+      localStorage.setItem(`abba_${userId}_${name}`,JSON.stringify(data));
+    }
+  }
+  async function loadModule(name){
+    if(!firestoreAvailable||!userId){
+      const d=localStorage.getItem(`abba_${userId}_${name}`);
+      return d?JSON.parse(d):null;
+    }
+    try{
+      const doc=await db.collection('clientes').doc(userId).collection('modulos').doc(name).get();
+      return doc.exists?doc.data():null;
+    }catch(e){
+      const d=localStorage.getItem(`abba_${userId}_${name}`);
+      return d?JSON.parse(d):null;
+    }
+  }
+  
+  /* Perfil del cliente: vive en clientes/{uid} (raíz, no en una subcolección) */
+  async function savePerfil(uid, perfilData){
+    if(!firestoreAvailable||!uid){
+      localStorage.setItem(`abba_${uid}_perfil`, JSON.stringify(perfilData));
+      return;
+    }
+    try{
+      await db.collection('clientes').doc(uid).set({
+        ...perfilData,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, {merge:true});
+    }catch(e){
+      console.warn('savePerfil falló, fallback a localStorage:', e);
+      localStorage.setItem(`abba_${uid}_perfil`, JSON.stringify(perfilData));
+    }
+  }
+  async function loadPerfil(uid){
+    if(!firestoreAvailable||!uid){
+      const d=localStorage.getItem(`abba_${uid}_perfil`);
+      return d?JSON.parse(d):null;
+    }
+    try{
+      const doc=await db.collection('clientes').doc(uid).get();
+      return doc.exists?doc.data():null;
+    }catch(e){
+      const d=localStorage.getItem(`abba_${uid}_perfil`);
+      return d?JSON.parse(d):null;
+    }
+  }
+  async function loadAllData(){
+    showToast('Cargando tus datos…','info');
+    const [m1,m2,m3,m4,m5,m6,mVar] = await Promise.all(
+      ['ingresos_gastos','endeudamiento','activos','ahorro','presupuesto_anual','tablero','ingresos_variables']
+      .map(m=>loadModule(m))
+    );
+    if(m1){
+      if(m1.fuentes_ingreso) state.ingresos=m1.fuentes_ingreso;
+      if(m1.gastos) Object.assign(state.gastos,m1.gastos);
+      if(m1.tipoIngreso) state.profile.tipoIngreso = m1.tipoIngreso;
+      completedModules.add(1);
+    }
+    if(m2){if(m2.deudas) state.deudas=m2.deudas;completedModules.add(2);}
+    if(m3){if(m3.activos) state.activos=m3.activos;completedModules.add(3);}
+    if(m4){if(m4.objetivos_ahorro) state.ahorro=m4.objetivos_ahorro;completedModules.add(4);}
+    if(m5){state.p5={...state.p5,...m5};completedModules.add(5);}
+    if(m6){Object.assign(state.tablero,m6);completedModules.add(6);}
+    if(mVar){Object.assign(state.varIncome, mVar);if(mVar.active)completedModules.add('var');}
+    renderIngresosTable();calcM1();
+    renderGastosTable();
+    renderDeudasTable();calcM2();
+    renderActivosTable();calcM3();
+    renderAhorroTable();calcM4();
+    initP5();updateProgress();updateNavStatus();
+    showToast('Datos cargados','success');
+  }
+  function initP5(){
+    const s=state.p5;
+    if(s.socio1) document.getElementById('socio1').value=s.socio1;
+    if(s.socio2) document.getElementById('socio2').value=s.socio2;
+  
+    // Wire del saldo del fondo de provisiones
+    const provInput = document.getElementById('prov-saldo-actual');
+    if(provInput){
+      provInput.value = s.fondoProvisiones>0 ? fmtInput(s.fondoProvisiones) : '';
+      if(!provInput.dataset.money) attachMoneyInput(provInput);
+      if(!provInput.dataset.bound){
+        provInput.addEventListener('input', function(){
+          state.p5.fondoProvisiones = n(this.value);
+          calcProvisiones();
+        });
+        provInput.dataset.bound = '1';
+      }
+    }
+  
+    // Pre-carga inteligente de ingresos no mensuales según tipo de cliente
+    if(s.ingresos && s.ingresos.length){
+      populateP5Section('p5-ingresos-body',s.ingresos);
+    } else if(state.profile && state.profile.tipoIngreso){
+      const precarga = getP5IngresosPrecarga(state.profile.tipoIngreso);
+      if(precarga.length){
+        populateP5Section('p5-ingresos-body', precarga);
+      }
+    }
+  
+    if(s.deudas?.length)   populateP5Section('p5-deudas-body',s.deudas);
+    if(s.ahorro?.length)   populateP5Section('p5-ahorro-body',s.ahorro);
+    renderP5GastosAccordions();calcP5Totals();
+  
+    // Sincronizar el select de tipo de ingreso con el state al cargar
+    const tipoSel = document.getElementById('tipo-ingreso');
+    if(tipoSel && state.profile && state.profile.tipoIngreso){
+      tipoSel.value = state.profile.tipoIngreso;
+    }
+  }
+  
+  /* Re-pre-cargar ingresos cuando cambia el tipo (si están vacíos) */
+  function refreshP5IngresosPrecarga(){
+    // Solo pre-carga si la sección de ingresos no mensuales está vacía
+    const body = document.getElementById('p5-ingresos-body');
+    if(!body) return;
+    const existing = collectP5Rows('p5-ingresos-body');
+    // Si el usuario ya escribió algo (montos > 0 o nombres custom), no sobrescribimos
+    const hasUserData = existing.some(r => r.monto > 0 || (r.nombre && r.nombre.length > 3));
+    if(hasUserData) return;
+    const precarga = getP5IngresosPrecarga(state.profile.tipoIngreso);
+    if(precarga.length){
+      populateP5Section('p5-ingresos-body', precarga);
+      calcP5Totals();
+      showToast('Ingresos no mensuales pre-cargados','info');
+    }
+  }
+  function collectP5State(){
+    state.p5.socio1=document.getElementById('socio1').value;
+    state.p5.socio2=document.getElementById('socio2').value;
+    state.p5.ingresos=collectP5Rows('p5-ingresos-body');
+    state.p5.deudas  =collectP5Rows('p5-deudas-body');
+    state.p5.ahorro  =collectP5Rows('p5-ahorro-body');
+    const g={};P5_GASTO_CATS.forEach(cat=>{g[cat.id]=collectP5Rows('p5-gas-'+cat.id+'-body');});
+    state.p5.gastos=g;
+  }
+  function updateProgress(){
+    document.getElementById('progress-bar').style.width = (completedModules.size/6*100)+'%';
+  }
+  function updateNavStatus(){
+    [1,2,3,4,5,6,'var'].forEach(i=>{
+      const sbItem=document.querySelector(`.sb-item[data-module="${i}"]`);
+      const bbItem=document.querySelector(`.bb-item[data-module="${i}"]`);
+      if(completedModules.has(i)){
+        sbItem?.classList.add('done');bbItem?.classList.add('done');
+      }else{
+        sbItem?.classList.remove('done');bbItem?.classList.remove('done');
+      }
+    });
+  }
+  
+  /* ═══════════════════════════════════════════════════════════
+     SAVE HANDLERS
+     ═══════════════════════════════════════════════════════════ */
+  async function saveM1(){
+    const {totalIng,totalGas}=calcM1();
+    // calcM1 ya actualizó state.ingresos correctamente (incluye filas locked)
+    const fuentes = state.ingresos.map(ing => ({
+      nombre: ing.nombre,
+      monto: ing.monto,
+      esVariable: ing.esVariable || false
+    }));
+    await saveModule('ingresos_gastos',{
+      fuentes_ingreso:fuentes,
+      gastos:state.gastos,
+      tipoIngreso: state.profile.tipoIngreso,
+      total_ingresos:totalIng,
+      total_gastos:totalGas
+    });
+    completedModules.add(1);updateProgress();updateNavStatus();
+    showModal('Módulo guardado','Tus ingresos y gastos se guardaron correctamente.');showToast('Guardado','success');
+  }
+  async function saveM2(){
+    calcM2();
+    await saveModule('endeudamiento',{deudas:state.deudas});
+    completedModules.add(2);updateProgress();updateNavStatus();
+    showModal('Módulo guardado','Tus deudas se guardaron correctamente.');showToast('Guardado','success');
+  }
+  async function saveM3(){
+    calcM3();
+    await saveModule('activos',{activos:state.activos});
+    completedModules.add(3);updateProgress();updateNavStatus();
+    showModal('Módulo guardado','Tus activos se guardaron correctamente.');showToast('Guardado','success');
+  }
+  async function saveM4(){
+    calcM4();
+    await saveModule('ahorro',{objetivos_ahorro:state.ahorro});
+    completedModules.add(4);updateProgress();updateNavStatus();
+    showModal('Módulo guardado','Tu ahorro se guardó correctamente.');showToast('Guardado','success');
+  }
+  async function saveM5(){
+    collectP5State();calcP5Totals();
+    await saveModule('presupuesto_anual',state.p5);
+    completedModules.add(5);updateProgress();updateNavStatus();
+    await regenerateEventosCliente();
+    showModal('Módulo guardado','Tu presupuesto anual se guardó correctamente.');showToast('Guardado','success');
+  }
+  async function saveM6(){
+    await saveModule('tablero',state.tablero);
+    completedModules.add(6);updateProgress();updateNavStatus();
+    showModal('Tablero guardado','Tu tablero de control se guardó correctamente.');showToast('Guardado','success');
+  }
+  
+  /* ═══════════════════════════════════════════════════════════
+     GENERACIÓN DE EVENTOS — Vista materializada para el dashboard
+     ═══════════════════════════════════════════════════════════ */
+  
+  /* Mapea nombre de gasto a tipo de evento según patrones */
+  function clasificarTipoEvento(nombre){
+    const n = (nombre||'').toLowerCase();
+    if(n.includes('póliza de auto') || n.includes('todo riesgo') || n.includes('seguro de vehíc')) return 'renovacion_poliza_auto';
+    if(n.includes('póliza de vida') || n.includes('seguro de vida')) return 'renovacion_poliza_vida';
+    if(n.includes('seguro de hogar') || n.includes('póliza de hogar')) return 'renovacion_poliza_hogar';
+    if(n.includes('medicina prepagada')) return 'renovacion_prepagada';
+    if(n.includes('soat')) return 'vencimiento_soat';
+    if(n.includes('predial')) return 'vencimiento_predial';
+    if(n.includes('matrícula') || n.includes('matricula')) return 'matricula_colegio';
+    if(n.includes('prima')) return 'prima_legal';
+    if(n.includes('cesantía') || n.includes('cesantias')) return 'cesantias';
+    if(n.includes('dividendos')) return 'dividendos';
+    if(n.includes('devolución') || n.includes('retención')) return 'devolucion_retencion';
+    if(n.includes('bonificación') || n.includes('utilidades')) return 'bonificacion';
+    return 'otro_compromiso_anual';
+  }
+  
+  /* Calcula la fecha esperada del próximo evento de un mes dado (1-12) */
+  function calcularProximaFecha(mesNum){
+    if(!mesNum || mesNum < 1 || mesNum > 12) return null;
+    const hoy = new Date();
+    const mesActual = hoy.getMonth() + 1;
+    const yearTarget = (mesNum >= mesActual) ? hoy.getFullYear() : hoy.getFullYear() + 1;
+    // Día 15 del mes como aproximación
+    return new Date(yearTarget, mesNum - 1, 15);
+  }
+  
+  /* Borra los eventos previos del cliente y genera los nuevos */
+  async function regenerateEventosCliente(){
+    if(!firestoreAvailable || !userId) return;
+    // Si es un demo, NO escribir a Firestore
+    if(userId.startsWith('demo_')) return;
+    // Si el cliente no autorizó recomendaciones, no generar eventos comerciales
+    const consRec = state.profile?.consentimientoRecomendaciones;
+    if(!consRec || !consRec.aceptado) return;
+  
+    try {
+      // 1. Borrar eventos previos del cliente (mejor reemplazar que mergear, simple y consistente)
+      const prev = await db.collection('eventos').where('clienteUid','==',userId).get();
+      const batch = db.batch();
+      prev.forEach(doc => batch.delete(doc.ref));
+  
+      // 2. Recolectar gastos anuales del M5 con mes definido
+      const eventos = [];
+      const perfilDenorm = {
+        clienteUid: userId,
+        clienteNombre: state.profile?.nombre || '',
+        clienteEmail: state.profile?.email || '',
+        clienteWhatsapp: state.profile?.whatsapp || '',
+        clienteTipoIngreso: state.profile?.tipoIngreso || ''
+      };
+  
+      const gastosM5 = state.p5.gastos || {};
+      Object.entries(gastosM5).forEach(([catId, items]) => {
+        (items||[]).forEach(item => {
+          if(item.frec !== 'NO ES TODOS LOS MESES') return;
+          if(!item.mes || item.mes === 'varia' || item.mes === '') return;
+          if(!item.monto || item.monto <= 0) return;
+          const tipo = clasificarTipoEvento(item.nombre);
+          const fechaEsperada = calcularProximaFecha(parseInt(item.mes));
+          if(!fechaEsperada) return;
+          eventos.push({
+            ...perfilDenorm,
+            tipo: tipo,
+            categoriaM5: catId,
+            concepto: item.nombre || '',
+            fechaEsperada: firebase.firestore.Timestamp.fromDate(fechaEsperada),
+            monto: item.monto,
+            companiaActual: item.compania || '',
+            formaPago: item.formaPago || 'contado',
+            provisionado: !!item.provisionar,
+            estado: 'pendiente',
+            notasInternas: '',
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+          });
+        });
+      });
+  
+      // 3. Eventos especiales (no atados a un mes específico)
+      // Déficit tributario detectado en el módulo de variables
+      if(state.varIncome && state.varIncome.active && state.varIncome.meses){
+        let totalDebido = 0, totalReservado = 0;
+        state.varIncome.meses.forEach(m => {
+          totalDebido += m.tributoSugerido || 0;
+          totalReservado += m.tributo || 0;
+        });
+        const deficit = Math.max(0, totalDebido - totalReservado);
+        if(deficit > 500000){
+          // Apuntar al próximo abril (declaración de renta)
+          const hoy = new Date();
+          const abrilProx = hoy.getMonth() + 1 >= 4 ? hoy.getFullYear() + 1 : hoy.getFullYear();
+          eventos.push({
+            ...perfilDenorm,
+            tipo: 'deficit_tributario',
+            concepto: 'Déficit tributario acumulado',
+            fechaEsperada: firebase.firestore.Timestamp.fromDate(new Date(abrilProx, 3, 15)),
+            monto: deficit,
+            estado: 'pendiente',
+            notasInternas: '',
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+          });
+        }
+      }
+  
+      // Fondo de emergencias bajo (< 3 meses de gastos)
+      const totalLiquido = (state.activos||[]).filter(a=>a.tipo==='LÍQUIDO' && !a.linkedToFondo && !a.linkedToProvisiones).reduce((s,a)=>s+(a.valor||0),0);
+      const totalGastosM = Object.values(state.gastos||{}).reduce((a,b)=>a+(b||0),0);
+      const fondoMeses = totalGastosM>0 ? totalLiquido/totalGastosM : 0;
+      if(totalGastosM > 0 && fondoMeses < 3){
+        const hoy = new Date();
+        eventos.push({
+          ...perfilDenorm,
+          tipo: 'fondo_emergencia_bajo',
+          concepto: 'Fondo de emergencias por debajo de 3 meses',
+          fechaEsperada: firebase.firestore.Timestamp.fromDate(hoy),
+          monto: totalGastosM * 6 - totalLiquido,
+          estado: 'pendiente',
+          notasInternas: '',
+          createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      }
+  
+      // 4. Escribir todos los eventos
+      eventos.forEach(ev => {
+        const ref = db.collection('eventos').doc();
+        batch.set(ref, ev);
+      });
+  
+      await batch.commit();
+      console.log(`Eventos regenerados para ${userId}: ${eventos.length}`);
+    } catch(err){
+      console.warn('No se pudieron regenerar eventos:', err);
+    }
+  }
+  
+  /* ═══════════════════════════════════════════════════════════
+     EVENTS
+     ═══════════════════════════════════════════════════════════ */
+  /* ═══════════════════════════════════════════════════════════
+     ONBOARDING — Captura inicial del perfil
+     ═══════════════════════════════════════════════════════════ */
+  let _onboardingUser = null;
+  
+  function showOnboardingPerfil(user){
+    _onboardingUser = user;
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app').classList.remove('show');
+    document.getElementById('onboarding-screen').style.display = 'flex';
+  
+    // Pre-llenar datos del Auth
+    const nombreInput = document.getElementById('ob-nombre');
+    const emailInput = document.getElementById('ob-email');
+    if(user.displayName) nombreInput.value = user.displayName;
+    if(user.email) emailInput.value = user.email;
+    // Foco en el primer campo vacío
+    setTimeout(()=>{ nombreInput.focus(); }, 100);
+  }
+  
+  /* Validar WhatsApp colombiano: 10 dígitos, comienza con 3 */
+  function validateWhatsApp(value){
+    const cleaned = (value||'').replace(/\D/g,'');
+    if(cleaned.length === 0) return {ok:false, msg:'Ingresa tu número de WhatsApp'};
+    if(cleaned.length !== 10) return {ok:false, msg:'El número debe tener 10 dígitos'};
+    if(!cleaned.startsWith('3')) return {ok:false, msg:'En Colombia los celulares empiezan con 3'};
+    return {ok:true, value:cleaned};
+  }
+  
+  /* Format inline mientras escribe: agrupa 3-3-4 */
+  document.getElementById('ob-whatsapp').addEventListener('input', function(e){
+    let v = this.value.replace(/\D/g,'').slice(0,10);
+    this.value = v;
+    // Limpia error si existía
+    document.getElementById('ob-whatsapp-error').style.display = 'none';
+  });
+  
+  document.getElementById('btn-onboarding-continuar').addEventListener('click', async function(){
+    const nombre = document.getElementById('ob-nombre').value.trim();
+    const email = document.getElementById('ob-email').value.trim();
+    const whatsapp = document.getElementById('ob-whatsapp').value.trim();
+    const consTratamiento = document.getElementById('ob-consent-tratamiento').checked;
+    const consRecomendaciones = document.getElementById('ob-consent-recomendaciones').checked;
+    const errorEl = document.getElementById('ob-error');
+    const wppErrorEl = document.getElementById('ob-whatsapp-error');
+  
+    errorEl.style.display = 'none';
+    wppErrorEl.style.display = 'none';
+  
+    if(!nombre){
+      errorEl.textContent = 'Ingresa tu nombre completo.';
+      errorEl.style.display = 'block';
+      return;
+    }
+  
+    const wppCheck = validateWhatsApp(whatsapp);
+    if(!wppCheck.ok){
+      wppErrorEl.textContent = wppCheck.msg;
+      wppErrorEl.style.display = 'flex';
+      return;
+    }
+  
+    if(!consTratamiento){
+      errorEl.textContent = 'Para usar la app necesitas autorizar el tratamiento de tus datos personales.';
+      errorEl.style.display = 'block';
+      return;
+    }
+  
+    this.disabled = true;
+    this.innerHTML = 'Guardando…';
+  
+    const now = new Date().toISOString();
+    const perfilData = {
+      uid: _onboardingUser.uid,
+      nombre: nombre,
+      email: email,
+      whatsapp: wppCheck.value,
+      tipoIngreso: '',
+      consentimientoTratamiento: {
+        aceptado: true,
+        fecha: now,
+        version: '1.0'
+      },
+      consentimientoRecomendaciones: {
+        aceptado: consRecomendaciones,
+        fecha: now
+      },
+      createdAt: now
+    };
+  
+    try {
+      await savePerfil(_onboardingUser.uid, perfilData);
+      state.profile = Object.assign(state.profile||{}, {
+        nombre: nombre,
+        email: email,
+        whatsapp: wppCheck.value,
+        consentimientoTratamiento: perfilData.consentimientoTratamiento,
+        consentimientoRecomendaciones: perfilData.consentimientoRecomendaciones
+      });
+      document.getElementById('user-display').textContent = nombre;
+      document.getElementById('user-avatar').textContent = nombre.charAt(0).toUpperCase();
+      document.getElementById('onboarding-screen').style.display = 'none';
+      document.getElementById('app').classList.add('show');
+      await loadAllData();
+      showToast('¡Bienvenido a ABBA!', 'success');
+    } catch(err){
+      errorEl.textContent = 'No pudimos guardar tu perfil. ' + (err.message || 'Intenta de nuevo.');
+      errorEl.style.display = 'block';
+      this.disabled = false;
+      this.innerHTML = 'Continuar <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>';
+    }
+  });
+  
+  document.getElementById('link-aviso-privacidad').addEventListener('click', function(e){
+    e.preventDefault();
+    showModal('Aviso de privacidad',
+      '<p style="font-size:13px;line-height:1.6;margin-bottom:12px"><strong>Responsable del tratamiento:</strong> ABBA Asesoría Financiera, con sede en Medellín, Colombia.</p>'
+      +'<p style="font-size:13px;line-height:1.6;margin-bottom:12px"><strong>Finalidad:</strong> ABBA recolecta tus datos financieros para ofrecerte un análisis personalizado de tu situación, identificar oportunidades concretas de productos y servicios financieros relevantes para ti, y comunicarte cuando aplique.</p>'
+      +'<p style="font-size:13px;line-height:1.6;margin-bottom:12px"><strong>Derechos:</strong> En cualquier momento puedes acceder, rectificar, actualizar o suprimir tus datos, así como revocar las autorizaciones que has dado, escribiéndonos al correo de contacto.</p>'
+      +'<p style="font-size:13px;line-height:1.6;margin-bottom:12px"><strong>Compartición de datos:</strong> ABBA no comparte tus datos con terceros sin una autorización adicional específica.</p>'
+      +'<p style="font-size:13px;line-height:1.6"><strong>Marco legal:</strong> Este tratamiento se rige por la Ley 1581 de 2012 y el Decreto 1377 de 2013 de Colombia.</p>'
+    );
+  });
+  
+  function showAuthPane(name){
+    ['login','register','forgot'].forEach(p => {
+      const el = document.getElementById('pane-'+p);
+      if(el) el.style.display = (p===name) ? 'flex' : 'none';
+    });
+    // Limpiar mensajes de error al cambiar de pantalla
+    ['auth-login-error','auth-register-error','auth-forgot-msg'].forEach(id=>{
+      const el = document.getElementById(id);
+      if(el){el.style.display='none';el.textContent='';el.classList.remove('is-success');}
+    });
+  }
+  
+  function setAuthError(elementId, message, isSuccess){
+    const el = document.getElementById(elementId);
+    if(!el) return;
+    el.textContent = message;
+    el.style.display = 'block';
+    el.classList.toggle('is-success', !!isSuccess);
+  }
+  
+  /* Bootstrap principal: cuando cambia el estado de auth, decide qué mostrar */
+  async function onAuthStateChange(user){
+    if(!user){
+      // No hay sesión: mostrar pantalla de login
+      document.getElementById('login-screen').style.display = 'flex';
+      document.getElementById('app').classList.remove('show');
+      showAuthPane('login');
+      return;
+    }
+    // Usuario autenticado
+    userId = user.uid;
+    currency = 'COP $';
+  
+    // Cargar perfil para decidir si debe ir al onboarding o a la app
+    let perfil = null;
+    try {
+      perfil = await loadPerfil(user.uid);
+    } catch(e){ console.warn('Error cargando perfil:', e); }
+  
+    if(!perfil || !perfil.consentimientoTratamiento || !perfil.consentimientoTratamiento.aceptado){
+      // Primer login: mostrar onboarding de perfil
+      showOnboardingPerfil(user);
+      return;
+    }
+  
+    // Aplicar info del perfil al UI
+    state.profile = Object.assign(state.profile||{}, {
+      nombre: perfil.nombre || user.displayName || user.email,
+      email: perfil.email || user.email,
+      whatsapp: perfil.whatsapp || '',
+      tipoIngreso: perfil.tipoIngreso || '',
+      consentimientoTratamiento: perfil.consentimientoTratamiento,
+      consentimientoRecomendaciones: perfil.consentimientoRecomendaciones || {aceptado:false}
+    });
+  
+    document.getElementById('user-display').textContent = state.profile.nombre;
+    document.getElementById('user-avatar').textContent = (state.profile.nombre||'U').charAt(0).toUpperCase();
+  
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app').classList.add('show');
+    await loadAllData();
+  }
+  
+  /* Login con email/password */
+  document.getElementById('btn-login').addEventListener('click', async function(){
+    const email = document.getElementById('auth-email').value.trim();
+    const password = document.getElementById('auth-password').value;
+    if(!email || !password){
+      setAuthError('auth-login-error', 'Completa correo y contraseña.');
+      return;
+    }
+    this.disabled = true;
+    this.textContent = 'Iniciando sesión…';
+    try {
+      await authService.loginEmail(email, password);
+      // onAuthStateChange se dispara automáticamente
+    } catch(err){
+      setAuthError('auth-login-error', authService.prettyError(err));
+      this.disabled = false;
+      this.innerHTML = 'Iniciar sesión <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>';
+    }
+  });
+  
+  /* Login con Google */
+  document.getElementById('btn-google-login').addEventListener('click', async function(){
+    this.disabled = true;
+    try {
+      await authService.loginGoogle();
+    } catch(err){
+      setAuthError('auth-login-error', authService.prettyError(err));
+      this.disabled = false;
+    }
+  });
+  
+  /* Registro con email/password */
+  document.getElementById('btn-register').addEventListener('click', async function(){
+    const email = document.getElementById('reg-email').value.trim();
+    const password = document.getElementById('reg-password').value;
+    if(!email || !password){
+      setAuthError('auth-register-error', 'Completa correo y contraseña.');
+      return;
+    }
+    if(password.length < 8){
+      setAuthError('auth-register-error', 'La contraseña debe tener al menos 8 caracteres.');
+      return;
+    }
+    this.disabled = true;
+    this.textContent = 'Creando cuenta…';
+    try {
+      await authService.registerEmail(email, password);
+      // onAuthStateChange disparará el onboarding del perfil
+    } catch(err){
+      setAuthError('auth-register-error', authService.prettyError(err));
+      this.disabled = false;
+      this.innerHTML = 'Crear cuenta <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>';
+    }
+  });
+  
+  /* Registro con Google */
+  document.getElementById('btn-google-register').addEventListener('click', async function(){
+    this.disabled = true;
+    try {
+      await authService.loginGoogle();
+    } catch(err){
+      setAuthError('auth-register-error', authService.prettyError(err));
+      this.disabled = false;
+    }
+  });
+  
+  /* Recuperar contraseña */
+  document.getElementById('btn-forgot').addEventListener('click', async function(){
+    const email = document.getElementById('forgot-email').value.trim();
+    if(!email){
+      setAuthError('auth-forgot-msg', 'Ingresa tu correo electrónico.');
+      return;
+    }
+    this.disabled = true;
+    this.textContent = 'Enviando…';
+    try {
+      await authService.sendPasswordReset(email);
+      setAuthError('auth-forgot-msg', 'Te enviamos un correo para restablecer tu contraseña. Revisa tu bandeja de entrada.', true);
+      this.disabled = false;
+      this.textContent = 'Enviar enlace de recuperación';
+    } catch(err){
+      setAuthError('auth-forgot-msg', authService.prettyError(err));
+      this.disabled = false;
+      this.textContent = 'Enviar enlace de recuperación';
+    }
+  });
+  
+  /* Navegación entre paneles de auth */
+  document.getElementById('link-to-register').addEventListener('click', function(e){e.preventDefault();showAuthPane('register');});
+  document.getElementById('link-to-login').addEventListener('click', function(e){e.preventDefault();showAuthPane('login');});
+  document.getElementById('link-forgot').addEventListener('click', function(e){e.preventDefault();showAuthPane('forgot');});
+  document.getElementById('link-back-to-login').addEventListener('click', function(e){e.preventDefault();showAuthPane('login');});
+  
+  /* Enter en los campos dispara los botones */
+  document.getElementById('auth-password').addEventListener('keypress', e => {if(e.key==='Enter') document.getElementById('btn-login').click();});
+  document.getElementById('reg-password').addEventListener('keypress', e => {if(e.key==='Enter') document.getElementById('btn-register').click();});
+  document.getElementById('forgot-email').addEventListener('keypress', e => {if(e.key==='Enter') document.getElementById('btn-forgot').click();});
+  
+  /* Iniciar el listener de cambios de auth */
+  authService.onChange(onAuthStateChange);
+  
+  /* Menú de usuario */
+  document.getElementById('user-avatar').addEventListener('click', function(e){
+    e.stopPropagation();
+    const dd = document.getElementById('user-dropdown');
+    dd.style.display = dd.style.display === 'block' ? 'none' : 'block';
+  });
+  document.addEventListener('click', function(e){
+    if(!e.target.closest('#topbar-user-menu')){
+      document.getElementById('user-dropdown').style.display = 'none';
+    }
+  });
+  document.getElementById('dd-logout').addEventListener('click', async function(e){
+    e.preventDefault();
+    if(!confirm('¿Cerrar sesión?')) return;
+    // Limpiar state local antes de logout
+    completedModules.clear();
+    await authService.logout();
+    // onAuthStateChange se dispara y muestra login
+    // Recargar la página para asegurar estado limpio
+    setTimeout(()=>window.location.reload(), 200);
+  });
+  document.getElementById('dd-perfil').addEventListener('click', function(e){
+    e.preventDefault();
+    document.getElementById('user-dropdown').style.display = 'none';
+    showToast('La pantalla de perfil estará disponible próximamente', 'info');
+  });
+  document.querySelectorAll('.sb-item, .bb-item').forEach(item=>{
+    item.addEventListener('click',function(e){
+      e.preventDefault();
+      const m = this.dataset.module;
+      navigateTo(isNaN(m) ? m : parseInt(m));
+    });
+  });
+  document.getElementById('save-m1').addEventListener('click',saveM1);
+  document.getElementById('save-m2').addEventListener('click',saveM2);
+  document.getElementById('save-m3').addEventListener('click',saveM3);
+  document.getElementById('save-m4').addEventListener('click',saveM4);
+  document.getElementById('save-m5').addEventListener('click',saveM5);
+  document.getElementById('save-m6').addEventListener('click',saveM6);
+  document.getElementById('add-ingreso').addEventListener('click',function(){
+    if(state.ingresos.length>=15){showToast('Máximo 15 fuentes','error');return;}
+    state.ingresos.push({nombre:'',monto:0});
+    renderIngresosTable();calcM1();
+  });
+  document.getElementById('add-deuda').addEventListener('click',addDeudaRow);
+  document.getElementById('add-activo').addEventListener('click',addActivoRow);
+  document.getElementById('add-ahorro').addEventListener('click',addAhorroRow);
+  document.getElementById('socio1').addEventListener('input',calcP5Totals);
+  document.getElementById('socio2').addEventListener('input',calcP5Totals);
+  
+  document.getElementById('tipo-ingreso').addEventListener('change', function(){
+    state.profile.tipoIngreso = this.value;
+    // Si MVar está activo y ahora se marca empleado, dar advertencia suave
+    if(this.value === 'empleado' && state.varIncome.active){
+      showToast('Si tu ingreso es estable, tal vez no necesites el módulo de variables','info');
+    }
+    // Re-renderear M5 si está visible (afecta pre-cargas de ingresos no mensuales)
+    if(typeof refreshP5IngresosPrecarga === 'function'){
+      refreshP5IngresosPrecarga();
+    }
+  });
+  
+  /* INIT */
+  renderIngresosTable();calcM1();
+  renderGastosTable();
+  renderDeudasTable();calcM2();
+  renderActivosTable();calcM3();
+  renderAhorroTable();calcM4();
+  renderP5GastosAccordions();calcP5Totals();
+  
+  /* ═══════════════════════════════════════════════════════════
+     MÓDULO INGRESOS VARIABLES — Para independientes
+     ═══════════════════════════════════════════════════════════ */
+  
+  let chartMVar = null;
+  
+  function generateRecent12Months(){
+    const today = new Date();
+    const months = [];
+    for(let i=11;i>=0;i--){
+      const d = new Date(today.getFullYear(), today.getMonth()-i, 1);
+      const label = MES_NAMES_ES[d.getMonth()] + ' ' + d.getFullYear();
+      months.push({label, bruto:0, costos:0, tributo:0, neto:0, monthIdx:d.getMonth()});
+    }
+    return months;
+  }
+  
+  function vMean(arr){if(!arr.length) return 0; return arr.reduce((a,b)=>a+b,0)/arr.length;}
+  function vMedian(arr){
+    if(!arr.length) return 0;
+    const s = [...arr].sort((a,b)=>a-b);
+    const m = Math.floor(s.length/2);
+    return s.length%2 ? s[m] : (s[m-1]+s[m])/2;
+  }
+  function vPercentile(arr, p){
+    if(!arr.length) return 0;
+    const s = [...arr].sort((a,b)=>a-b);
+    const idx = (p/100) * (s.length-1);
+    const lo = Math.floor(idx), hi = Math.ceil(idx);
+    if(lo===hi) return s[lo];
+    return s[lo] + (s[hi]-s[lo]) * (idx-lo);
+  }
+  function vStdDev(arr){
+    if(arr.length<2) return 0;
+    const m = vMean(arr);
+    const sq = arr.reduce((a,b)=>a + (b-m)*(b-m), 0);
+    return Math.sqrt(sq / (arr.length-1));
+  }
+  function vTrend(arr){
+    if(arr.length<3) return 0;
+    const n = arr.length;
+    const xMean = (n-1)/2;
+    const yMean = vMean(arr);
+    let num=0, den=0;
+    for(let i=0;i<n;i++){
+      num += (i-xMean)*(arr[i]-yMean);
+      den += (i-xMean)*(i-xMean);
+    }
+    const slope = den ? num/den : 0;
+    return yMean ? slope*n/yMean : 0;
+  }
+  
+  /* Salario personal sugerido (P25 redondeado a 50.000 abajo) */
+  function getSalarioPersonalActual(){
+    const v = state.varIncome;
+    if(!v || !v.active) return 0;
+    if(v.salarioOverride && v.salarioPersonal>0) return v.salarioPersonal;
+    const meses = (v.meses||[]).filter(m => (m.bruto||0) > 0);
+    if(meses.length<3) return v.salarioPersonal||0;
+    const netos = meses.map(m => Math.max(0,(m.bruto||0)-(m.costos||0)-(m.tributo||0)));
+    const p25 = vPercentile(netos, 25);
+    return p25 > 0 ? Math.floor(p25/50000)*50000 : 0;
+  }
+  
+  /* Meta del fondo de estabilización según variabilidad */
+  function getFondoMetaActual(){
+    const v = state.varIncome;
+    if(!v || !v.active) return 0;
+    const salario = getSalarioPersonalActual();
+    if(salario<=0) return 0;
+    const meses = (v.meses||[]).filter(m => (m.bruto||0) > 0);
+    if(meses.length<3) return salario*6;
+    const netos = meses.map(m => Math.max(0,(m.bruto||0)-(m.costos||0)-(m.tributo||0)));
+    const promedio = vMean(netos);
+    const variabilidad = promedio>0 ? vStdDev(netos)/promedio : 0;
+    const mesesMeta = variabilidad>=0.5 ? 12 : variabilidad>=0.25 ? 9 : 6;
+    return salario * mesesMeta;
+  }
+  
+  /* Recalcular neto y campos teóricos del mes */
+  function recalcMesNeto(mes){
+    const tribPctSugerido = (state.varIncome.tributoPct||0)/100;
+    const tributoReal = Math.max(0, mes.tributo||0);
+    mes.tributoSugerido = Math.round((mes.bruto||0) * tribPctSugerido);
+    mes.tributoDeficit  = Math.max(0, mes.tributoSugerido - tributoReal);
+    mes.neto = Math.max(0, (mes.bruto||0) - (mes.costos||0) - tributoReal);
+    return mes.neto;
+  }
+  
+  /* Render principal */
+  function renderMVar(){
+    const v = state.varIncome;
+    const activeEl = document.getElementById('mvar-active');
+    if(!activeEl) return;
+    activeEl.checked = v.active;
+    document.getElementById('mvar-content').style.display = v.active ? 'block' : 'none';
+    if(!v.active) return;
+  
+    const actividadEl = document.getElementById('mvar-actividad');
+    const tributoEl = document.getElementById('mvar-tributo-pct');
+    const fondoEl = document.getElementById('mvar-fondo-actual');
+    if(actividadEl.value !== v.actividad) actividadEl.value = v.actividad;
+    if(document.activeElement !== tributoEl) tributoEl.value = v.tributoPct || '';
+    if(document.activeElement !== fondoEl) fondoEl.value = v.fondoActual>0 ? fmtInput(v.fondoActual) : '';
+    if(!fondoEl.dataset.money) attachMoneyInput(fondoEl);
+  
+    renderMVarMeses();
+    renderMVarStats();
+  }
+  
+  function renderMVarMeses(){
+    const body = document.getElementById('mvar-meses-body');
+    const v = state.varIncome;
+    body.innerHTML = '';
+    if(!v.meses.length){
+      body.innerHTML = '<div class="mvar-empty">'
+        + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>'
+        + '<p>Aún no has registrado meses.<br>Usa <strong>"Crear 12 meses recientes"</strong> para empezar.</p>'
+        + '</div>';
+      document.getElementById('mvar-meses-count').textContent = '0 meses';
+      return;
+    }
+    v.meses.forEach((mes,i)=>{
+      recalcMesNeto(mes);
+      const sug = mes.tributoSugerido || 0;
+      const def = mes.tributoDeficit || 0;
+      const real = mes.tributo || 0;
+      let hint = '';
+      if(mes.bruto > 0){
+        if(real === 0) hint = '<span class="trib-hint trib-hint-bad">No apartaste nada · sugerido: ' + fmt(sug) + '</span>';
+        else if(def > 0) hint = '<span class="trib-hint trib-hint-warn">Insuficiente · faltaron ' + fmt(def) + '</span>';
+        else hint = '<span class="trib-hint trib-hint-ok">Reserva suficiente</span>';
+      } else {
+        hint = '<span class="trib-hint">Sugerido: ' + (state.varIncome.tributoPct||0) + '% del bruto</span>';
+      }
+  
+      const row = document.createElement('div');
+      row.className = 'mvar-mes-row';
+      row.innerHTML = '<div class="mvar-mes-head">'
+        + '<div class="mvar-mes-label"><input type="text" data-f="label" value="' + (mes.label||'') + '" placeholder="Ej: Ene 2025"></div>'
+        + '<span class="mvar-mes-neto" data-neto>' + fmt(mes.neto||0) + '</span>'
+        + '<button class="it-del" title="Eliminar">' + SVG_X + '</button>'
+        + '</div>'
+        + '<div class="mvar-mes-grid">'
+        + '<div class="mr-field"><label>Ingreso bruto</label><input class="money-input" data-f="bruto" placeholder="0"></div>'
+        + '<div class="mr-field"><label>Costos del negocio</label><input class="money-input" data-f="costos" placeholder="0"></div>'
+        + '<div class="mr-field full"><label>Reserva tributaria · lo que apartaste</label><input class="money-input" data-f="tributo" placeholder="0"><div data-trib-hint>' + hint + '</div></div>'
+        + '</div>';
+      body.appendChild(row);
+  
+      const brutoIn = row.querySelector('input[data-f=bruto]');
+      const costosIn = row.querySelector('input[data-f=costos]');
+      const tribIn = row.querySelector('input[data-f=tributo]');
+      brutoIn.value = mes.bruto>0 ? fmtInput(mes.bruto) : '';
+      costosIn.value = mes.costos>0 ? fmtInput(mes.costos) : '';
+      tribIn.value = real>0 ? fmtInput(real) : '';
+      [brutoIn,costosIn,tribIn].forEach(attachMoneyInput);
+  
+      const updateRow = function(){
+        mes.label = row.querySelector('input[data-f=label]').value;
+        mes.bruto = n(brutoIn.value);
+        mes.costos = n(costosIn.value);
+        mes.tributo = n(tribIn.value);
+        recalcMesNeto(mes);
+        row.querySelector('[data-neto]').textContent = fmt(mes.neto);
+        const hintEl = row.querySelector('[data-trib-hint]');
+        const sg = mes.tributoSugerido||0;
+        const df = mes.tributoDeficit||0;
+        const rl = mes.tributo||0;
+        if(mes.bruto>0){
+          if(rl===0) hintEl.innerHTML = '<span class="trib-hint trib-hint-bad">No apartaste nada · sugerido: ' + fmt(sg) + '</span>';
+          else if(df>0) hintEl.innerHTML = '<span class="trib-hint trib-hint-warn">Insuficiente · faltaron ' + fmt(df) + '</span>';
+          else hintEl.innerHTML = '<span class="trib-hint trib-hint-ok">Reserva suficiente</span>';
+        } else {
+          hintEl.innerHTML = '<span class="trib-hint">Sugerido: ' + (state.varIncome.tributoPct||0) + '% del bruto</span>';
+        }
+        renderMVarStats();
+        propagateMVarChanges();
+      };
+      row.querySelectorAll('input').forEach(inp=>inp.addEventListener('input',updateRow));
+      row.querySelector('.it-del').addEventListener('click',function(){
+        v.meses.splice(i,1);
+        renderMVarMeses();
+        renderMVarStats();
+        propagateMVarChanges();
+      });
+    });
+    document.getElementById('mvar-meses-count').textContent = v.meses.length + (v.meses.length===1?' mes':' meses');
+  }
+  
+  function renderMVarStats(){
+    const v = state.varIncome;
+    const meses = v.meses.filter(m => (m.bruto||0) > 0);
+    const netos = meses.map(m => m.neto);
+  
+    const promedio = vMean(netos);
+    const mediana  = vMedian(netos);
+    const ingresoBaseSeguro = vPercentile(netos, 25);
+    const ingresoPesimista  = vPercentile(netos, 10);
+    const desviacion = vStdDev(netos);
+    const variabilidad = promedio>0 ? desviacion/promedio : 0;
+    const tendencia = vTrend(netos);
+    const minNeto = netos.length ? Math.min(...netos) : 0;
+    const maxNeto = netos.length ? Math.max(...netos) : 0;
+  
+    const salarioSugerido = ingresoBaseSeguro > 0 ? Math.floor(ingresoBaseSeguro/50000)*50000 : 0;
+    const salarioActual = v.salarioOverride && v.salarioPersonal>0 ? v.salarioPersonal : salarioSugerido;
+  
+    renderMVarTributario(meses);
+  
+    const kpisEl = document.getElementById('mvar-kpis');
+    if(meses.length < 3){
+      kpisEl.innerHTML = '<div class="kpi span-2 is-warn">'
+        + '<div class="kpi-label">Datos insuficientes</div>'
+        + '<div class="kpi-value" style="font-size:18px">Registra al menos 3 meses</div>'
+        + '<div class="kpi-sub">Necesitas mínimo 3 meses para análisis básico, idealmente 6 a 12 para recomendaciones sólidas.</div>'
+        + '</div>';
+      document.getElementById('mvar-salary-display').textContent = '—';
+      renderMVarChart([],[],0);
+      document.getElementById('mvar-recos').innerHTML = '<div class="mvar-empty"><p>Las recomendaciones aparecerán cuando tengas al menos 3 meses con datos.</p></div>';
+      document.getElementById('mvar-stacion-card').style.display = 'none';
+      renderMVarFondo(salarioActual, variabilidad);
+      return;
+    }
+  
+    const varClass = variabilidad<0.25 ? 'is-pos' : variabilidad<0.5 ? 'is-warn' : 'is-neg';
+    const varLabel = variabilidad<0.25 ? 'Estable' : variabilidad<0.5 ? 'Variable' : 'Muy volátil';
+    const varTag   = variabilidad<0.25 ? 'pos' : variabilidad<0.5 ? 'warn' : 'neg';
+    const tendClass = tendencia>0.1 ? 'is-pos' : tendencia<-0.1 ? 'is-neg' : 'is-info';
+    const tendLabel = tendencia>0.1 ? '↑ Creciente' : tendencia<-0.1 ? '↓ Decreciente' : '→ Estable';
+  
+    kpisEl.innerHTML = '<div class="kpi is-info">'
+      + '<div class="kpi-label">Promedio mensual neto</div>'
+      + '<div class="kpi-value">' + fmt(promedio) + '</div>'
+      + '<div class="kpi-sub">Suma ÷ ' + meses.length + ' meses</div>'
+      + '</div>'
+      + '<div class="kpi"><div class="kpi-label">Mediana mensual neta</div><div class="kpi-value">' + fmt(mediana) + '</div><div class="kpi-sub">El mes "típico"</div></div>'
+      + '<div class="kpi is-pos"><div class="kpi-label">Ingreso base seguro ' + tip('ingreso_base_seguro') + '</div><div class="kpi-value">' + fmt(ingresoBaseSeguro) + '</div><div class="kpi-sub">3 de cada 4 meses superan este nivel</div></div>'
+      + '<div class="kpi is-neg"><div class="kpi-label">Escenario pesimista</div><div class="kpi-value">' + fmt(ingresoPesimista) + '</div><div class="kpi-sub">Solo 1 de cada 10 meses cae bajo este nivel</div></div>'
+      + '<div class="kpi ' + varClass + '"><div class="kpi-label">Variabilidad de tu ingreso ' + tip('variabilidad') + '</div><div class="kpi-value">' + pct(variabilidad) + '</div><div class="kpi-tag ' + varTag + '">' + (variabilidad<0.25?SVG_CHECK:SVG_WARN) + varLabel + '</div></div>'
+      + '<div class="kpi ' + tendClass + '"><div class="kpi-label">Tendencia de los últimos meses</div><div class="kpi-value" style="font-size:22px">' + tendLabel + '</div><div class="kpi-sub">' + (tendencia>0.1?'Tu ingreso viene subiendo':tendencia<-0.1?'Tu ingreso viene bajando':'Sin tendencia clara') + '</div></div>'
+      + '<div class="kpi span-2"><div class="kpi-label">Rango histórico</div><div class="kpi-value" style="font-size:18px"><span style="color:var(--neg)">' + fmt(minNeto) + '</span> <span style="color:var(--ink-3);font-size:14px;margin:0 8px">a</span> <span style="color:var(--pos)">' + fmt(maxNeto) + '</span></div><div class="kpi-sub">Diferencia entre mejor y peor mes: ' + fmt(maxNeto-minNeto) + '</div></div>';
+  
+    const salaryDisp = document.getElementById('mvar-salary-display');
+    const salaryMeta = document.getElementById('mvar-salary-meta');
+    const salaryInput = document.getElementById('mvar-salary-input');
+    const salaryPrefix = document.getElementById('mvar-salary-prefix');
+    salaryPrefix.textContent = currency;
+    salaryDisp.textContent = fmt(salarioActual);
+  
+    const mesesQueCumplen = netos.filter(x => x >= salarioActual).length;
+    const cobertura = meses.length>0 ? mesesQueCumplen/meses.length : 0;
+    salaryMeta.innerHTML = v.salarioOverride && v.salarioPersonal>0
+      ? 'Tu valor personalizado · <strong>' + pct(cobertura) + ' de meses</strong> históricos lo soportan' + (cobertura<0.6?' — ⚠ riesgo alto':cobertura<0.75?' — atención':'')
+      : 'Sugerido según tu ingreso base seguro · <strong>' + pct(cobertura) + ' de meses</strong> históricos lo soportan sin tocar el fondo';
+  
+    if(document.activeElement !== salaryInput){
+      salaryInput.value = salarioActual>0 ? fmtInput(salarioActual) : '';
+      if(!salaryInput.dataset.money) attachMoneyInput(salaryInput);
+    }
+  
+    renderMVarChart(meses, netos, salarioActual);
+  
+    // Estacionalidad
+    const stacionCard = document.getElementById('mvar-stacion-card');
+    const byMonth = {};
+    meses.forEach(m=>{
+      if(m.monthIdx==null) return;
+      if(!byMonth[m.monthIdx]) byMonth[m.monthIdx] = [];
+      byMonth[m.monthIdx].push(m.neto);
+    });
+    const desviaciones = [];
+    Object.entries(byMonth).forEach(function(entry){
+      const idx = entry[0]; const arr = entry[1];
+      if(arr.length<1) return;
+      const avgMes = vMean(arr);
+      const delta = promedio>0 ? (avgMes-promedio)/promedio : 0;
+      if(Math.abs(delta) >= 0.15){
+        desviaciones.push({idx:parseInt(idx), delta:delta, avg:avgMes});
+      }
+    });
+    if(desviaciones.length && meses.length>=8){
+      desviaciones.sort((a,b)=>a.delta-b.delta);
+      const html = desviaciones.map(function(d){
+        const cls = d.delta<0 ? 'low' : 'high';
+        const sign = d.delta>0 ? '+' : '';
+        return '<div class="season-row ' + cls + '">'
+          + '<span class="season-month">' + MES_NAMES_FULL[d.idx] + '</span>'
+          + '<span style="color:var(--ink-3);font-size:12.5px">' + fmt(d.avg) + '</span>'
+          + '<span class="season-delta">' + sign + (d.delta*100).toFixed(0) + '% vs promedio</span>'
+          + '</div>';
+      }).join('');
+      document.getElementById('mvar-stacion-body').innerHTML = html
+        + '<p class="mvar-hint" style="margin-top:14px">En los meses bajos, el fondo de estabilización debe absorber la caída. Aprovecha los meses altos para reforzarlo antes de los bajos.</p>';
+      stacionCard.style.display = 'block';
+    } else {
+      stacionCard.style.display = 'none';
+    }
+  
+    renderMVarFondo(salarioActual, variabilidad);
+    renderMVarRecos({
+      promedio:promedio, mediana:mediana,
+      ingresoBaseSeguro:ingresoBaseSeguro, ingresoPesimista:ingresoPesimista,
+      variabilidad:variabilidad, tendencia:tendencia,
+      salario:salarioActual, fondo:v.fondoActual,
+      tributoPct:v.tributoPct, mesesCount:meses.length,
+      cobertura:cobertura, meses:meses
+    });
+  }
+  
+  function renderMVarTributario(meses){
+    const card = document.getElementById('mvar-tributario-card');
+    if(!meses.length){card.style.display='none';return;}
+    card.style.display='block';
+  
+    let totalBruto=0, totalDebido=0, totalReservado=0;
+    let mesesSinReserva=0, mesesInsuficiente=0, mesesOk=0;
+    meses.forEach(function(m){
+      const reserva = m.tributo || 0;
+      const debido = m.tributoSugerido || 0;
+      totalBruto      += m.bruto || 0;
+      totalDebido     += debido;
+      totalReservado  += reserva;
+      if(m.bruto>0){
+        if(reserva===0) mesesSinReserva++;
+        else if(reserva < debido) mesesInsuficiente++;
+        else mesesOk++;
+      }
+    });
+    const deficit = Math.max(0, totalDebido - totalReservado);
+    const cobertura = totalDebido>0 ? totalReservado/totalDebido : 0;
+  
+    let estadoClass='is-pos', estadoLabel='Al día';
+    if(deficit>0 && cobertura<0.5){estadoClass='is-neg';estadoLabel='Déficit alto';}
+    else if(deficit>0){estadoClass='is-warn';estadoLabel='Déficit parcial';}
+  
+    let html = '<div class="tributario-grid">'
+      + '<div class="tributario-stat"><div class="tributario-label">Ingreso bruto del periodo</div><div class="tributario-value">' + fmt(totalBruto) + '</div><div class="tributario-sub">' + meses.length + ' meses · todo lo facturado</div></div>'
+      + '<div class="tributario-stat"><div class="tributario-label">Lo que debiste apartar</div><div class="tributario-value">' + fmt(totalDebido) + '</div><div class="tributario-sub">' + (state.varIncome.tributoPct||0) + '% del bruto</div></div>'
+      + '<div class="tributario-stat ' + estadoClass + '"><div class="tributario-label">Lo que efectivamente apartaste</div><div class="tributario-value">' + fmt(totalReservado) + '</div><div class="tributario-sub">' + pct(cobertura) + ' de lo debido · ' + estadoLabel + '</div></div>'
+      + '</div>';
+  
+    if(deficit>0){
+      html += '<div class="tributario-deficit">'
+        + '<div class="tributario-deficit-icon">' + SVG_WARN + '</div>'
+        + '<div class="tributario-deficit-body">'
+        + '<div class="tributario-deficit-label">Déficit tributario acumulado</div>'
+        + '<div class="tributario-deficit-value">' + fmt(deficit) + '</div>'
+        + '<div class="tributario-deficit-text">En algún momento te tocará pagarlo. Si no lo apartas y te llega la declaración o un cobro, puedes verte obligado a endeudarte para cumplir. La recomendación es empezar a apartar <strong>' + fmt(Math.ceil(deficit/Math.max(meses.length,6))) + '</strong> mensual adicional mientras pones al día tu reserva corriente.</div>'
+        + '</div></div>';
+    } else {
+      html += '<div class="alert pos" style="margin-top:14px">' + SVG_CHECK + '<div><strong>Reserva al día.</strong> Has apartado lo suficiente para cubrir tu deber tributario teórico.</div></div>';
+    }
+  
+    html += '<div class="tributario-breakdown">'
+      + '<div class="tb-item ok"><span class="tb-dot"></span><strong>' + mesesOk + '</strong> meses con reserva suficiente</div>'
+      + '<div class="tb-item warn"><span class="tb-dot"></span><strong>' + mesesInsuficiente + '</strong> meses con reserva insuficiente</div>'
+      + '<div class="tb-item bad"><span class="tb-dot"></span><strong>' + mesesSinReserva + '</strong> meses sin reservar nada</div>'
+      + '</div>'
+      + '<div style="margin-top:14px"><button class="btn-ghost" id="btn-aplicar-reserva-sug">'
+      + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4"/><path d="M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9c2.5 0 4.77 1.02 6.4 2.66"/></svg>'
+      + 'Aplicar la reserva sugerida (' + (state.varIncome.tributoPct||0) + '%) a todos los meses'
+      + '</button></div>';
+  
+    document.getElementById('mvar-tributario-content').innerHTML = html;
+  
+    const btn = document.getElementById('btn-aplicar-reserva-sug');
+    if(btn){
+      btn.onclick = function(){
+        if(!confirm('Esto sobrescribirá la reserva tributaria de todos los meses con la sugerencia (' + state.varIncome.tributoPct + '% del bruto). ¿Continuar?')) return;
+        state.varIncome.meses.forEach(function(m){
+          if(m.bruto > 0) m.tributo = Math.round(m.bruto * (state.varIncome.tributoPct||0)/100);
+        });
+        renderMVarMeses();
+        renderMVarStats();
+        propagateMVarChanges();
+        showToast('Reservas actualizadas','success');
+      };
+    }
+  }
+  
+  function renderMVarChart(meses, netos, salario){
+    const ctx = document.getElementById('mvar-chart').getContext('2d');
+    if(chartMVar){chartMVar.destroy();chartMVar=null;}
+    if(!meses.length) return;
+  
+    const labels = meses.map(m => m.label || '—');
+    const colors = netos.map(v => v>=salario ? '#0e4d3a' : '#8a1f1c');
+  
+    chartMVar = new Chart(ctx, {
+      data: {
+        labels:labels,
+        datasets: [
+          {type:'bar',label:'Ingreso neto',data:netos,
+            backgroundColor:colors.map(c=>c+'cc'),borderColor:colors,
+            borderWidth:0,borderRadius:6,maxBarThickness:36},
+          {type:'line',label:'Salario personal',data:netos.map(()=>salario),
+            borderColor:'#0c0c0d',borderWidth:2,borderDash:[6,4],
+            pointRadius:0,fill:false,tension:0}
+        ]
+      },
+      options:{
+        responsive:true,maintainAspectRatio:false,
+        plugins:{
+          legend:{display:false},
+          tooltip:{
+            backgroundColor:'#0c0c0d',titleColor:'#fff',bodyColor:'#fff',
+            padding:12,cornerRadius:10,
+            titleFont:{family:'Geist',weight:'600',size:12},
+            bodyFont:{family:'JetBrains Mono',size:12},
+            callbacks:{label:function(ctx){return ' '+ctx.dataset.label+': '+fmt(ctx.parsed.y);}}
+          }
+        },
+        scales:{
+          x:{ticks:{color:'#6f6e6a',font:{family:'Geist',size:11}},grid:{display:false},border:{color:'#e6dfd0'}},
+          y:{ticks:{color:'#6f6e6a',font:{family:'JetBrains Mono',size:10.5},
+              callback:function(v){return v>=1000000 ? (v/1000000).toFixed(1)+'M' : v>=1000 ? (v/1000).toFixed(0)+'k' : v;}},
+            grid:{color:'#efe9da',drawBorder:false},border:{display:false}}
+        }
+      }
+    });
+  }
+  
+  function renderMVarFondo(salario, variabilidad){
+    const v = state.varIncome;
+    const mesesMeta = variabilidad>=0.5 ? 12 : variabilidad>=0.25 ? 9 : 6;
+    const meta = salario * mesesMeta;
+    const cobertura = salario>0 ? v.fondoActual/salario : 0;
+    const pctMeta = meta>0 ? Math.min(v.fondoActual/meta, 1) : 0;
+  
+    document.getElementById('fondo-actual-val').textContent = fmt(v.fondoActual);
+    document.getElementById('fondo-meta-val').textContent = fmt(meta);
+    document.getElementById('fondo-meta-sub').textContent = mesesMeta + ' meses de salario · variabilidad ' + pct(variabilidad);
+    document.getElementById('fondo-cobertura-val').textContent = cobertura.toFixed(1) + ' meses';
+    document.getElementById('fondo-progress').style.width = (pctMeta*100) + '%';
+    document.getElementById('fondo-progress-meta').innerHTML = '<span>' + fmt(v.fondoActual) + '</span><span>' + pct(pctMeta) + ' de la meta · ' + fmt(meta) + '</span>';
+  
+    const alertEl = document.getElementById('fondo-alert');
+    if(salario<=0){
+      alertEl.style.display = 'none';
+    } else if(cobertura < 1){
+      alertEl.className = 'alert neg';alertEl.style.display = 'flex';
+      alertEl.innerHTML = SVG_WARN + '<div><strong>Prioridad máxima.</strong> Tu fondo no cubre ni un mes de salario. Si tienes un mes bajo ahora mismo, no tienes colchón. Empieza por aquí antes que cualquier otro objetivo financiero.</div>';
+    } else if(cobertura < 3){
+      alertEl.className = 'alert warn';alertEl.style.display = 'flex';
+      alertEl.innerHTML = SVG_WARN + '<div><strong>Estás empezando a construirlo.</strong> Tu fondo cubre ' + cobertura.toFixed(1) + ' meses. La meta inmediata son <strong>3 meses</strong> antes de pensar en otras inversiones.</div>';
+    } else if(cobertura < mesesMeta){
+      alertEl.className = 'alert warn';alertEl.style.display = 'flex';
+      alertEl.innerHTML = SVG_INFO + '<div>Vas bien. Te faltan <strong>' + fmt(meta-v.fondoActual) + '</strong> para llegar a la meta de ' + mesesMeta + ' meses, que es la apropiada para tu nivel de variabilidad.</div>';
+    } else {
+      alertEl.className = 'alert pos';alertEl.style.display = 'flex';
+      alertEl.innerHTML = SVG_CHECK + '<div><strong>Fondo completo.</strong> Tienes la cobertura adecuada. El excedente que entre en meses buenos ya puede ir a inversión, pago de deuda cara, o aportes a pensión voluntaria.</div>';
+    }
+  }
+  
+  function renderMVarRecos(s){
+    const recos = [];
+  
+    if(s.variabilidad >= 0.5){
+      recos.push({type:'warn',title:'Tu ingreso es muy volátil',
+        text:'Tu ingreso varía un ' + pct(s.variabilidad) + ' mes a mes en promedio. Eso significa que cualquier mes puede alejarse mucho de lo típico. <strong>Necesitas un fondo de 9 a 12 meses</strong> de salario, no los 6 estándar. Considera diversificar tu ingreso (más clientes pequeños en lugar de uno grande) para reducir la volatilidad estructural.'});
+    } else if(s.variabilidad >= 0.25){
+      recos.push({type:'info',title:'Tu ingreso varía dentro de un rango esperable',
+        text:'Tu ingreso varía un ' + pct(s.variabilidad) + ' mes a mes. Un fondo de 6 a 9 meses es razonable para tu caso. Lo más importante: nunca subas tu salario personal en un mes bueno. La disciplina del salario fijo es lo que te protege.'});
+    } else {
+      recos.push({type:'pos',title:'Tu ingreso es relativamente estable',
+        text:'Tu ingreso solo varía un ' + pct(s.variabilidad) + ' mes a mes, lo que indica un negocio bastante predecible. Puedes operar con 6 meses de fondo y enfocar más recursos a inversión y construcción de patrimonio.'});
+    }
+  
+    if(s.tendencia < -0.1){
+      recos.push({type:'neg',title:'Tu ingreso viene bajando · revisar precios y clientes',
+        text:'En los últimos meses tu ingreso viene en descenso. No esperes a que sea crítico. Antes de ajustar tu salario hacia abajo, pregúntate: ¿es algo estacional o estructural? Si llevas 4 meses o más bajando, considera revisar tarifas, dejar clientes que no pagan bien, o agregar líneas de servicio.'});
+    } else if(s.tendencia > 0.15){
+      recos.push({type:'pos',title:'Tu ingreso viene subiendo · momento de fortalecer reservas',
+        text:'Tu ingreso viene creciendo. <strong>No subas el salario personal todavía</strong>. Mantenlo igual por al menos 6 meses más, y dirige el excedente a llenar el fondo y a inversión. El error típico del independiente es subir el estilo de vida apenas mejora el negocio.'});
+    }
+  
+    if(s.meses && s.meses.length){
+      let totalDebido=0, totalReservado=0, mesesSinReserva=0;
+      s.meses.forEach(function(m){
+        totalDebido    += m.tributoSugerido || 0;
+        totalReservado += m.tributo || 0;
+        if(m.bruto>0 && (m.tributo||0)===0) mesesSinReserva++;
+      });
+      const deficit = Math.max(0, totalDebido - totalReservado);
+      const cob = totalDebido>0 ? totalReservado/totalDebido : 1;
+  
+      if(deficit > 0 && cob < 0.5){
+        recos.push({type:'neg',title:'Tienes un déficit tributario importante',
+          text:'Has apartado solo ' + pct(cob) + ' de lo que deberías para impuestos. Eso es una <strong>deuda silenciosa de ' + fmt(deficit) + '</strong> con la DIAN que en algún momento te toca pagar. Lo más urgente: empieza a apartar el ' + s.tributoPct + '% sugerido de cada nuevo ingreso, y aparta extra mensualmente para cerrar el atraso. Si la declaración te llega y no tienes la plata, terminas endeudándote a tasa cara para cumplirle al Estado.'});
+      } else if(deficit > 0){
+        recos.push({type:'warn',title:'Reserva tributaria parcial',
+          text:'Has apartado ' + pct(cob) + ' de lo que deberías. Te falta <strong>' + fmt(deficit) + '</strong> para estar al día. Empieza a apartar la diferencia mensualmente; mejor tener tributo de más que de menos.'});
+      } else if(mesesSinReserva > s.meses.length/3){
+        recos.push({type:'warn',title:'Hay meses sin reserva tributaria',
+          text:'En ' + mesesSinReserva + ' de tus ' + s.meses.length + ' meses no apartaste nada para impuestos. Aunque al final del periodo el total cuadra, la disciplina importa: aparta el porcentaje sugerido de <em>cada</em> ingreso, idealmente a una cuenta separada que no toques.'});
+      }
+    }
+  
+    if(s.tributoPct < 8){
+      recos.push({type:'warn',title:'Tu porcentaje de reserva está bajo',
+        text:'Configuraste solo ' + s.tributoPct + '% de reserva tributaria. Para un independiente en régimen ordinario en Colombia, esto suele ser insuficiente. <strong>Sugerido: 10 % a 15 %</strong>. Si te llega una declaración alta sin reserva, terminas pagando con deuda.'});
+    }
+  
+    if(s.fondo < s.salario){
+      recos.push({type:'neg',title:'Construir el fondo es la prioridad número uno',
+        text:'Sin fondo, un mes malo te obliga a endeudarte o recortar gastos básicos. <strong>Antes de ahorrar para retiro, antes de invertir, antes de pagar deuda no urgente</strong>: junta al menos un mes de salario. Es la decisión financiera de mayor impacto en tu calidad de vida.'});
+    } else if(s.fondo < s.salario*3){
+      recos.push({type:'info',title:'Continúa la acumulación del fondo',
+        text:'Tienes una base. La siguiente meta es <strong>3 meses de salario</strong>. En este punto puedes empezar a destinar una parte pequeña (10 a 20 % del excedente) a otras prioridades como deuda cara, sin descuidar el fondo.'});
+    }
+  
+    if(s.cobertura < 0.6 && s.mesesCount >= 6){
+      recos.push({type:'warn',title:'Tu salario personal es muy alto frente al historial',
+        text:'Solo el ' + pct(s.cobertura) + ' de tus meses históricos soportan el salario que te asignaste. Eso significa que casi la mitad del tiempo el fondo está drenándose. <strong>Considera bajar el salario al ingreso base seguro sugerido</strong> y redirigir el excedente al fondo. Mejor un sueldo modesto sostenible que uno alto que te genere ansiedad.'});
+    }
+  
+    if(!recos.length){
+      recos.push({type:'pos',title:'Buena posición financiera',text:'Tus indicadores principales están en rangos saludables para un independiente. Sigue ejecutando la disciplina del salario fijo y el fondo de estabilización.'});
+    }
+  
+    document.getElementById('mvar-recos').innerHTML = recos.map(function(r){
+      const icon = r.type==='neg'?SVG_WARN:r.type==='warn'?SVG_WARN:r.type==='pos'?SVG_CHECK:SVG_INFO;
+      return '<div class="reco-item"><div class="reco-icon ' + r.type + '">' + icon + '</div>'
+        + '<div class="reco-body"><div class="reco-title">' + r.title + '</div>'
+        + '<div class="reco-text">' + r.text + '</div></div></div>';
+    }).join('');
+  }
+  
+  /* Propagación cruzada */
+  function propagateMVarChanges(){
+    renderIngresosTable();calcM1();
+    renderActivosTable();calcM3();
+    renderAhorroTable();calcM4();
+  }
+  
+  /* Event handlers MVar */
+  document.getElementById('mvar-active').addEventListener('change', function(){
+    state.varIncome.active = this.checked;
+    renderMVar();
+    propagateMVarChanges();
+  });
+  document.getElementById('mvar-actividad').addEventListener('change', function(){
+    state.varIncome.actividad = this.value;
+  });
+  document.getElementById('mvar-tributo-pct').addEventListener('input', function(){
+    state.varIncome.tributoPct = parseFloat(this.value)||0;
+    state.varIncome.meses.forEach(function(m){recalcMesNeto(m);});
+    renderMVarMeses();renderMVarStats();propagateMVarChanges();
+  });
+  document.getElementById('mvar-fondo-actual').addEventListener('input', function(){
+    state.varIncome.fondoActual = n(this.value);
+    renderMVarStats();propagateMVarChanges();
+  });
+  document.getElementById('mvar-add-mes').addEventListener('click', function(){
+    if(state.varIncome.meses.length >= 24){showToast('Máximo 24 meses','error');return;}
+    const today = new Date();
+    const lastIdx = state.varIncome.meses.length;
+    const d = new Date(today.getFullYear(), today.getMonth()-lastIdx, 1);
+    state.varIncome.meses.push({
+      label:MES_NAMES_ES[d.getMonth()]+' '+d.getFullYear(),
+      bruto:0,costos:0,tributo:0,neto:0,monthIdx:d.getMonth()
+    });
+    renderMVarMeses();renderMVarStats();
+  });
+  document.getElementById('mvar-fill-12').addEventListener('click', function(){
+    if(state.varIncome.meses.length>0){
+      if(!confirm('Esto reemplazará los meses actuales. ¿Continuar?'))return;
+    }
+    state.varIncome.meses = generateRecent12Months();
+    renderMVarMeses();renderMVarStats();propagateMVarChanges();
+  });
+  document.getElementById('mvar-clear').addEventListener('click', function(){
+    if(!state.varIncome.meses.length)return;
+    if(!confirm('¿Borrar todo el historial? No se puede deshacer.'))return;
+    state.varIncome.meses = [];
+    renderMVarMeses();renderMVarStats();propagateMVarChanges();
+  });
+  document.getElementById('mvar-salary-input').addEventListener('input', function(){
+    const val = n(this.value);
+    state.varIncome.salarioPersonal = val;
+    state.varIncome.salarioOverride = val>0;
+    renderMVarStats();propagateMVarChanges();
+  });
+  document.getElementById('mvar-salary-reset').addEventListener('click', function(){
+    state.varIncome.salarioOverride = false;
+    state.varIncome.salarioPersonal = 0;
+    renderMVarStats();propagateMVarChanges();
+  });
+  
+  async function saveMVar(){
+    await saveModule('ingresos_variables', state.varIncome);
+    completedModules.add('var');updateProgress();updateNavStatus();
+    showModal('Módulo guardado','Tu análisis de ingresos variables se guardó correctamente.');
+    showToast('Guardado','success');
+  }
+  document.getElementById('save-mvar').addEventListener('click',saveMVar);
+  
+  /* DEMO DATA — Carlos Mendoza */
+  function loadDemoIndependent(){
+    state.profile.tipoIngreso = 'independiente';
+    state.varIncome = {
+      active:true, actividad:'comisiones', tributoPct:11,
+      fondoActual:8500000, salarioPersonal:0, salarioOverride:false, meses:[]
+    };
+    const today = new Date();
+    const dataReal = [
+      {bruto:5200000, costos:380000, tributo:572000},
+      {bruto:8400000, costos:520000, tributo:924000},
+      {bruto:6900000, costos:410000, tributo:500000},
+      {bruto:4800000, costos:350000, tributo:0},
+      {bruto:9200000, costos:580000, tributo:600000},
+      {bruto:7100000, costos:440000, tributo:0},
+      {bruto:5800000, costos:390000, tributo:0},
+      {bruto:8800000, costos:510000, tributo:800000},
+      {bruto:6400000, costos:420000, tributo:700000},
+      {bruto:7800000, costos:470000, tributo:858000},
+      {bruto:11200000,costos:680000, tributo:1232000},
+      {bruto:4200000, costos:340000, tributo:0}
+    ];
+    for(let i=0;i<12;i++){
+      const d = new Date(today.getFullYear(), today.getMonth()-12+i, 1);
+      const item = dataReal[i];
+      const mes = {
+        label:MES_NAMES_ES[d.getMonth()]+' '+d.getFullYear(),
+        bruto:item.bruto, costos:item.costos, tributo:item.tributo,
+        neto:0, monthIdx:d.getMonth()
+      };
+      recalcMesNeto(mes);
+      state.varIncome.meses.push(mes);
+    }
+  
+    state.ingresos = [
+      {nombre:'Comisiones de seguros (variable)', monto:0, esVariable:true},
+      {nombre:'Renovaciones (recurrente)', monto:1200000, esVariable:false},
+      {nombre:'Bonos de aseguradoras', monto:500000, esVariable:false}
+    ];
+    state.gastos = {
+      alimentacion:1800000, vivienda:2400000, transporte:950000,
+      salud:680000, entretenimiento:450000, comunicaciones:220000, otros:380000
+    };
+    state.deudas = [
+      {nombre:'Tarjeta Bancolombia', saldo:8500000, cuota_mensual:850000, tasa_anual:0.288, tipo:'CONSUMO_TARJETA', grupo:'consumo'},
+      {nombre:'Crédito vehicular Davivienda', saldo:32000000, cuota_mensual:980000, tasa_anual:0.158, tipo:'OTRO_VEHICULO', grupo:'otro'}
+    ];
+    state.activos = [
+      {nombre:'Cuenta de ahorros Bancolombia', valor:4200000, tipo:'LÍQUIDO'},
+      {nombre:'CDT a 6 meses', valor:6000000, tipo:'LÍQUIDO'},
+      {nombre:'Apartamento (cuota inicial pagada)', valor:95000000, tipo:'NO LÍQUIDO'},
+      {nombre:'Vehículo Mazda CX-5', valor:78000000, tipo:'NO LÍQUIDO'},
+      {nombre:'Pensión voluntaria Skandia', valor:12500000, tipo:'NO LÍQUIDO'}
+    ];
+    state.ahorro = [
+      {nombre:'Fondo de emergencias', monto_mensual:400000},
+      {nombre:'Pensión voluntaria', monto_mensual:600000},
+      {nombre:'Educación de los hijos', monto_mensual:350000},
+      {nombre:'Vacaciones familiares', monto_mensual:200000}
+    ];
+  
+    // M5 — presupuesto anual de Carlos con calendario lleno
+    state.p5 = {
+      socio1:'Carlos', socio2:'Andrea',
+      fondoProvisiones: 3200000, // tiene parte provisionado, no todo
+      ingresos: [
+        {nombre:'Devolución de retención en la fuente', frec:'NO ES TODOS LOS MESES', mes:'09', monto:1800000, pertenece:'socio1', obs:''},
+        {nombre:'Dividendos de mi empresa', frec:'NO ES TODOS LOS MESES', mes:'04', monto:4500000, pertenece:'socio1', obs:'Reparto anual de utilidades'},
+        {nombre:'Honorarios extraordinarios o bonos', frec:'NO ES TODOS LOS MESES', mes:'', monto:0, pertenece:'', obs:''}
+      ],
+      deudas:[],
+      ahorro:[],
+      gastos:{
+        vivienda:[
+          {nombre:'Predial', frec:'NO ES TODOS LOS MESES', mes:'02', monto:1850000, pertenece:'ambos', obs:'Apartamento El Poblado'}
+        ],
+        transporte:[
+          {nombre:'Impuesto del vehículo', frec:'NO ES TODOS LOS MESES', mes:'05', monto:1450000, pertenece:'socio1', obs:''}
+        ],
+        educacion:[
+          {nombre:'Matrícula del colegio', frec:'NO ES TODOS LOS MESES', mes:'01', monto:4200000, pertenece:'ambos', obs:'2 hijos · Colegio Marymount'},
+          {nombre:'Útiles y uniformes', frec:'NO ES TODOS LOS MESES', mes:'01', monto:1100000, pertenece:'ambos', obs:''}
+        ],
+        seguros:[
+          {nombre:'Póliza de vida', frec:'NO ES TODOS LOS MESES', mes:'06', monto:2400000, compania:'Sura', pertenece:'socio1', obs:'Vence jun · cliente desde 2018'},
+          {nombre:'Póliza de auto', frec:'NO ES TODOS LOS MESES', mes:'08', monto:4200000, compania:'Bolívar', pertenece:'socio1', obs:'Todo riesgo · Mazda CX-5 · vence 15 ago'},
+          {nombre:'Seguro de hogar', frec:'NO ES TODOS LOS MESES', mes:'11', monto:1100000, compania:'Mapfre', pertenece:'ambos', obs:''},
+          {nombre:'Medicina prepagada anual', frec:'NO ES TODOS LOS MESES', mes:'03', monto:6800000, compania:'Sura', pertenece:'ambos', obs:'4 personas en póliza'},
+          {nombre:'Regalos y fechas especiales', frec:'NO ES TODOS LOS MESES', mes:'12', monto:2200000, pertenece:'ambos', obs:''}
+        ]
+      }
+    };
+  
+    renderIngresosTable();
+    renderGastosTable();
+    calcM1();
+    renderDeudasTable();calcM2();
+    renderActivosTable();calcM3();
+    renderAhorroTable();calcM4();
+    initP5();calcP5Totals();
+  
+    // Marcar select de tipo en M1
+    const tipoSel = document.getElementById('tipo-ingreso');
+    if(tipoSel) tipoSel.value = 'independiente';
+  
+    completedModules.add(1);completedModules.add(2);
+    completedModules.add(3);completedModules.add(4);completedModules.add(5);
+    completedModules.add('var');
+    updateProgress();updateNavStatus();
+    showToast('Datos demo cargados · Carlos Mendoza (independiente)','success');
+    setTimeout(function(){navigateTo('var');}, 600);
+  }
+  
+  function loadDemoEmpleada(){
+    state.profile.tipoIngreso = 'empleado';
+    state.varIncome = {
+      active:false, actividad:'servicios', tributoPct:11,
+      fondoActual:0, salarioPersonal:0, salarioOverride:false, meses:[]
+    };
+  
+    // María, 34 años, Coordinadora de marketing en una multinacional
+    state.ingresos = [
+      {nombre:'Salario neto mensual', monto:5800000, esVariable:false},
+      {nombre:'Auxilio de movilización', monto:280000, esVariable:false}
+    ];
+    state.gastos = {
+      alimentacion:1450000, vivienda:1800000, transporte:550000,
+      salud:280000, entretenimiento:380000, comunicaciones:180000, otros:240000
+    };
+    state.deudas = [
+      {nombre:'Tarjeta Davivienda', saldo:4200000, cuota_mensual:520000, tasa_anual:0.305, tipo:'CONSUMO_TARJETA', grupo:'consumo'},
+      {nombre:'Libranza educativa', saldo:12500000, cuota_mensual:380000, tasa_anual:0.165, tipo:'LIBRANZA', grupo:'consumo'}
+    ];
+    state.activos = [
+      {nombre:'Cuenta de ahorros Bancolombia', valor:2800000, tipo:'LÍQUIDO'},
+      {nombre:'Fondo voluntario Protección', valor:18500000, tipo:'NO LÍQUIDO'},
+      {nombre:'Cesantías acumuladas', valor:6200000, tipo:'NO LÍQUIDO'},
+      {nombre:'Apartamento (heredado, sin hipoteca)', valor:185000000, tipo:'NO LÍQUIDO'}
+    ];
+    state.ahorro = [
+      {nombre:'Fondo de emergencias', monto_mensual:300000},
+      {nombre:'Pensión voluntaria (Skandia)', monto_mensual:450000},
+      {nombre:'Vacaciones', monto_mensual:200000}
+    ];
+  
+    // M5 — presupuesto anual de María con primas legales y pólizas
+    state.p5 = {
+      socio1:'María', socio2:'',
+      fondoProvisiones: 1500000,
+      ingresos: [
+        {nombre:'Prima legal de mitad de año', frec:'NO ES TODOS LOS MESES', mes:'06', monto:3050000, pertenece:'socio1', obs:'Salario integral / 2'},
+        {nombre:'Prima legal de fin de año', frec:'NO ES TODOS LOS MESES', mes:'12', monto:3050000, pertenece:'socio1', obs:''},
+        {nombre:'Cesantías (consignación a fondo)', frec:'NO ES TODOS LOS MESES', mes:'02', monto:6100000, pertenece:'socio1', obs:'Para imprevistos o estudio'},
+        {nombre:'Bonificación / participación de utilidades', frec:'NO ES TODOS LOS MESES', mes:'04', monto:2200000, pertenece:'socio1', obs:'Variable según resultados'},
+        {nombre:'Devolución de retención en la fuente', frec:'NO ES TODOS LOS MESES', mes:'09', monto:1400000, pertenece:'socio1', obs:''}
+      ],
+      deudas:[],
+      ahorro:[],
+      gastos:{
+        vivienda:[
+          {nombre:'Predial', frec:'NO ES TODOS LOS MESES', mes:'02', monto:1240000, pertenece:'socio1', obs:'Apartamento heredado'}
+        ],
+        transporte:[
+          {nombre:'Impuesto del vehículo', frec:'NO ES TODOS LOS MESES', mes:'05', monto:480000, pertenece:'socio1', obs:''}
+        ],
+        educacion:[],
+        seguros:[
+          {nombre:'Póliza de vida', frec:'NO ES TODOS LOS MESES', mes:'07', monto:1200000, compania:'Bolívar', pertenece:'socio1', obs:'Tomada por la empresa, María paga complemento'},
+          {nombre:'Póliza de auto', frec:'NO ES TODOS LOS MESES', mes:'10', monto:2400000, compania:'Allianz', pertenece:'socio1', obs:'Todo riesgo · sedán pequeño'},
+          {nombre:'Medicina prepagada anual', frec:'NO ES TODOS LOS MESES', mes:'03', monto:2800000, compania:'Colsanitas', pertenece:'socio1', obs:''},
+          {nombre:'Regalos y fechas especiales', frec:'NO ES TODOS LOS MESES', mes:'12', monto:1500000, pertenece:'socio1', obs:''}
+        ]
+      }
+    };
+  
+    renderIngresosTable();
+    renderGastosTable();
+    calcM1();
+    renderDeudasTable();calcM2();
+    renderActivosTable();calcM3();
+    renderAhorroTable();calcM4();
+    initP5();calcP5Totals();
+  
+    const tipoSel = document.getElementById('tipo-ingreso');
+    if(tipoSel) tipoSel.value = 'empleado';
+  
+    completedModules.add(1);completedModules.add(2);
+    completedModules.add(3);completedModules.add(4);completedModules.add(5);
+    updateProgress();updateNavStatus();
+    showToast('Datos demo cargados · María Restrepo (empleada)','success');
+    setTimeout(function(){navigateTo(5);}, 600);
+  }
+  
+  document.getElementById('btn-demo-carlos').addEventListener('click', function(){
+    userId = 'demo_carlos';
+    currency = 'COP $';
+    state.profile = state.profile || {};
+    state.profile.nombre = 'Carlos Mendoza';
+    state.profile.email = 'carlos@demo.com';
+    state.profile.whatsapp = '3001234567';
+    state.profile.consentimientoTratamiento = {aceptado:true, fecha:new Date().toISOString()};
+    document.getElementById('user-display').textContent = 'Carlos Mendoza';
+    document.getElementById('user-avatar').textContent = 'C';
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app').classList.add('show');
+    loadDemoIndependent();
+  });
+  document.getElementById('btn-demo-maria').addEventListener('click', function(){
+    userId = 'demo_maria';
+    currency = 'COP $';
+    state.profile = state.profile || {};
+    state.profile.nombre = 'María Restrepo';
+    state.profile.email = 'maria@demo.com';
+    state.profile.whatsapp = '3009876543';
+    state.profile.consentimientoTratamiento = {aceptado:true, fecha:new Date().toISOString()};
+    document.getElementById('user-display').textContent = 'María Restrepo';
+    document.getElementById('user-avatar').textContent = 'M';
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app').classList.add('show');
+    loadDemoEmpleada();
+  });
+  
+  (function autoDemo(){
+    const params = new URLSearchParams(window.location.search);
+    const which = params.get('demo');
+    if(which==='1' || which==='carlos'){
+      setTimeout(function(){
+        userId = 'demo_carlos';
+        currency = 'COP $';
+        document.getElementById('user-display').textContent = 'Carlos Mendoza';
+        document.getElementById('user-avatar').textContent = 'C';
+        document.getElementById('login-screen').style.display = 'none';
+        document.getElementById('app').classList.add('show');
+        loadDemoIndependent();
+      }, 100);
+    } else if(which==='maria'){
+      setTimeout(function(){
+        userId = 'demo_maria';
+        currency = 'COP $';
+        document.getElementById('user-display').textContent = 'María Restrepo';
+        document.getElementById('user-avatar').textContent = 'M';
+        document.getElementById('login-screen').style.display = 'none';
+        document.getElementById('app').classList.add('show');
+        loadDemoEmpleada();
+      }, 100);
+    }
+  })();
+  
+  /* ═══════════════════════════════════════════════════════════
+     SISTEMA DE DEFINICIONES (tooltips informativos)
+     ═══════════════════════════════════════════════════════════ */
+  const DEFINITIONS = {
+    fondo_estabilizacion: {
+      title: 'Fondo de estabilización',
+      text: 'Cuenta separada que cubre los meses bajos de un ingreso variable. <strong>Distinto al fondo de emergencias</strong>: este suaviza tu negocio mes a mes, no eventos imprevistos. Meta: 6 a 12 meses de salario personal según tu nivel de variabilidad.'
+    },
+    fondo_provisiones: {
+      title: 'Fondo de provisiones',
+      text: 'Cuenta donde apartas mes a mes el dinero para gastos anuales conocidos (matrícula, predial, póliza de auto, primas de seguros). <strong>No es ahorro</strong> — es dinero asignado a un futuro pago. Cuando llega el mes del gasto, la plata ya está y evitas endeudarte.'
+    },
+    fondo_emergencias: {
+      title: 'Fondo de emergencias',
+      text: 'Reserva para eventos <strong>imprevistos y urgentes</strong>: una enfermedad, una reparación mayor, perder el ingreso. Meta: 6 meses de gastos. No se toca para nada planeable. Para gastos planeables existe el fondo de provisiones.'
+    },
+    ingreso_base_seguro: {
+      title: 'Ingreso base seguro',
+      text: 'Es el percentil 25 de tus ingresos netos históricos: el nivel que <strong>3 de cada 4 meses superan</strong>. Sirve de base para fijar tu salario personal porque es lo que tu negocio sostiene la mayor parte del tiempo, sin contar los meses excepcionalmente buenos.'
+    },
+    variabilidad: {
+      title: 'Variabilidad de tu ingreso',
+      text: 'Cuánto cambia tu ingreso mes a mes en promedio. Bajo 25 % es estable, entre 25 % y 50 % es variable, sobre 50 % es muy volátil. A más variabilidad, más grande debe ser tu fondo de estabilización.'
+    },
+    reserva_tributaria: {
+      title: 'Reserva tributaria',
+      text: 'Porcentaje de cada ingreso bruto que apartas para impuestos (renta, retenciones, IVA si aplica). Para independientes en régimen ordinario en Colombia, suele ser entre 10 % y 15 %. Si no apartas, en abril te toca pagar con deuda.'
+    },
+    apalancamiento: {
+      title: 'Deuda de apalancamiento',
+      text: 'Deuda que <strong>genera un activo o ingreso</strong>: hipotecaria, crédito de inversión, préstamo para un negocio. Es deuda "que trabaja". Lo opuesto es la deuda de consumo (tarjeta, libranza), que solo financia gasto y reduce tu capacidad económica.'
+    },
+    activo_liquido: {
+      title: 'Activo líquido',
+      text: 'Lo que puedes convertir en dinero rápido y sin perder valor: cuenta de ahorros, fondos de inversión líquidos, CDTs cortos. Lo no líquido (casa, carro, fondos de pensión) tiene valor pero no lo puedes usar inmediatamente.'
+    },
+    salario_personal: {
+      title: 'Salario personal',
+      text: 'Monto fijo que un independiente se paga a sí mismo cada mes, sin importar lo que haya facturado. <strong>Convierte un ingreso volátil en uno predecible</strong>. Cuando ganas más, el excedente va al fondo. Cuando ganas menos, el fondo cubre la diferencia.'
+    },
+    indice_prevision: {
+      title: 'Índice de previsión',
+      text: 'Porcentaje de los gastos anuales próximos a vencer que ya tienes provisionados. <strong>100 % significa que no necesitas endeudarte</strong> para cumplirlos. Es la mejor medida de qué tan organizada está tu vida financiera.'
+    },
+    costo_vida_real: {
+      title: 'Costo de vida real',
+      text: 'Tus gastos mensuales más el equivalente mensual de los gastos anuales (matrícula, predial, primas, etc., divididos en 12). Es lo que <strong>realmente</strong> te cuesta vivir cada mes, no solo lo que paga la tarjeta debit este mes.'
+    }
+  };
+  
+  /* Crea HTML de un info-tip dado un key de DEFINITIONS */
+  function tip(defKey){
+    if(!DEFINITIONS[defKey]) return '';
+    return '<span class="info-tip" data-def="' + defKey + '" tabindex="0">i</span>';
+  }
+  
+  /* Sistema global de popover */
+  let activeTipPopover = null;
+  function showTipPopover(triggerEl, defKey){
+    closeTipPopover();
+    const def = DEFINITIONS[defKey];
+    if(!def) return;
+    const pop = document.createElement('div');
+    pop.className = 'info-tip-popover';
+    pop.innerHTML = '<span class="tip-title">' + def.title + '</span>' + def.text;
+    document.body.appendChild(pop);
+  
+    const rect = triggerEl.getBoundingClientRect();
+    const popRect = pop.getBoundingClientRect();
+    const margin = 10;
+  
+    // Posicionar: preferir debajo, si no cabe, arriba
+    let top = rect.bottom + margin;
+    let placement = 'below';
+    if(top + popRect.height > window.innerHeight - 20){
+      top = rect.top - popRect.height - margin;
+      placement = 'above';
+    }
+    let left = rect.left + rect.width/2 - popRect.width/2;
+    // Mantener dentro de la pantalla
+    if(left < 12) left = 12;
+    if(left + popRect.width > window.innerWidth - 12) left = window.innerWidth - popRect.width - 12;
+    pop.style.top = top + 'px';
+    pop.style.left = left + 'px';
+    pop.classList.add(placement);
+    setTimeout(()=>pop.classList.add('show'), 10);
+  
+    activeTipPopover = pop;
+    triggerEl.classList.add('open');
+  
+    // Cerrar al hacer click fuera
+    setTimeout(()=>{
+      document.addEventListener('click', closeTipPopoverOnClickOutside, {once:true});
+    }, 50);
+  }
+  function closeTipPopover(){
+    if(activeTipPopover){
+      activeTipPopover.remove();
+      activeTipPopover = null;
+    }
+    document.querySelectorAll('.info-tip.open').forEach(el=>el.classList.remove('open'));
+  }
+  function closeTipPopoverOnClickOutside(e){
+    if(e.target.closest('.info-tip-popover')) return;
+    if(e.target.closest('.info-tip')) return;
+    closeTipPopover();
+  }
+  
+  /* Delegación global de clicks en cualquier .info-tip */
+  document.addEventListener('click', function(e){
+    const tip = e.target.closest('.info-tip');
+    if(!tip) return;
+    e.stopPropagation();
+    if(tip.classList.contains('open')){
+      closeTipPopover();
+    } else {
+      showTipPopover(tip, tip.dataset.def);
+    }
+  });
+  window.addEventListener('resize', closeTipPopover);
+  window.addEventListener('scroll', closeTipPopover, true);
