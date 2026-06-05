@@ -16,6 +16,207 @@
 <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <link rel="stylesheet" href="styles.css">
+<style>
+/* ═══ Simulador de Deuda (Módulo 7) ═══ */
+#modulo-7 .ds-hint{font-size:13px;line-height:1.5;color:rgba(0,0,0,.55);margin:0 0 14px}
+.ds-cap-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;align-items:end}
+.ds-cap-stat{background:rgba(0,0,0,.03);border:1px solid rgba(0,0,0,.06);border-radius:12px;padding:12px 14px}
+.ds-cap-label{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:rgba(0,0,0,.5);margin-bottom:6px}
+.ds-cap-value{font-family:'JetBrains Mono',monospace;font-size:17px;font-weight:500;color:var(--ink,#0c0c0d)}
+/* Debt rows */
+.ds-deuda-row{border:1px solid rgba(0,0,0,.08);border-radius:14px;padding:14px;margin-bottom:12px;background:rgba(255,255,255,.5)}
+.ds-dr-head{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+.ds-dr-head .it-name{flex:1;font-weight:500}
+.ds-dr-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;align-items:end}
+.ds-cons-check{display:flex;align-items:center;gap:7px;font-size:13px;color:rgba(0,0,0,.6);cursor:pointer;padding:8px 10px;border:1px dashed rgba(0,0,0,.18);border-radius:10px;height:fit-content;transition:.2s}
+.ds-cons-check input{width:17px;height:17px;accent-color:var(--accent,#0e4d3a)}
+#modulo-7.ds-cons-mode .ds-cons-check{border-color:var(--accent,#0e4d3a);background:rgba(14,77,58,.06);color:var(--accent,#0e4d3a);font-weight:500}
+#modulo-7:not(.ds-cons-mode) .ds-cons-check{opacity:.4}
+.ds-dr-flag{display:none;gap:8px;align-items:flex-start;margin-top:10px;font-size:12.5px;line-height:1.45;padding:9px 11px;border-radius:10px}
+.ds-dr-flag svg{width:16px;height:16px;flex-shrink:0;margin-top:1px}
+.ds-dr-flag.warn{background:rgba(138,31,28,.07);color:#8a1f1c}
+.ds-dr-flag.hot{background:rgba(138,90,20,.09);color:#8a5a14}
+/* Strategy selector */
+.ds-strat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+.ds-strat-btn{text-align:left;background:rgba(0,0,0,.02);border:1.5px solid rgba(0,0,0,.1);border-radius:14px;padding:14px;cursor:pointer;transition:.18s;font-family:inherit}
+.ds-strat-btn strong{display:block;font-size:14.5px;color:var(--ink,#0c0c0d);margin-bottom:5px}
+.ds-strat-btn span{display:block;font-size:12.5px;line-height:1.45;color:rgba(0,0,0,.55)}
+.ds-strat-btn:hover{border-color:rgba(14,77,58,.4)}
+.ds-strat-btn.active{border-color:var(--accent,#0e4d3a);background:rgba(14,77,58,.07);box-shadow:0 2px 12px rgba(14,77,58,.1)}
+.ds-strat-btn.active strong{color:var(--accent,#0e4d3a)}
+.ds-cons-config{margin-top:16px;padding-top:16px;border-top:1px solid rgba(0,0,0,.08)}
+/* Comparison */
+.ds-cmp{display:flex;flex-direction:column;gap:2px}
+.ds-cmp-row{display:grid;grid-template-columns:1.6fr 1fr 1fr;gap:10px;padding:11px 12px;border-radius:10px;font-size:13.5px;align-items:center}
+.ds-cmp-row span:not(:first-child){font-family:'JetBrains Mono',monospace;text-align:right}
+.ds-cmp-row.head{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:rgba(0,0,0,.45);padding-bottom:4px}
+.ds-cmp-row.head span:not(:first-child){font-family:inherit}
+.ds-cmp-row:not(.head):nth-child(even){background:rgba(0,0,0,.03)}
+.ds-cmp-row.best{background:rgba(14,77,58,.08);font-weight:500}
+.ds-cmp-row.best span:first-child{color:var(--accent,#0e4d3a)}
+/* Order of attack */
+.ds-order{display:flex;flex-direction:column;gap:8px}
+.ds-order-item{display:flex;align-items:center;gap:12px;padding:11px 12px;background:rgba(0,0,0,.03);border-radius:11px}
+.ds-order-num{width:26px;height:26px;flex-shrink:0;border-radius:50%;background:var(--accent,#0e4d3a);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;font-family:'JetBrains Mono',monospace}
+.ds-order-item.pend .ds-order-num{background:#8a1f1c}
+.ds-order-body{flex:1;min-width:0}
+.ds-order-name{font-size:14px;font-weight:500;color:var(--ink,#0c0c0d)}
+.ds-order-meta{font-size:12px;color:rgba(0,0,0,.5);font-family:'JetBrains Mono',monospace}
+/* Advice */
+.ds-advice{display:flex;flex-direction:column;gap:10px}
+.ds-advice-item{display:flex;gap:10px;align-items:flex-start;font-size:13.5px;line-height:1.5;color:rgba(0,0,0,.7)}
+.ds-advice-item svg{width:18px;height:18px;flex-shrink:0;margin-top:1px;color:var(--accent,#0e4d3a)}
+.ds-empty{text-align:center;padding:26px 16px;color:rgba(0,0,0,.45);font-size:14px}
+/* Categoría de gasto personalizada (Módulo 1) */
+.it-cat-name{border:none;border-bottom:1px solid rgba(0,0,0,.18);background:transparent;font-family:inherit;font-size:14px;color:var(--ink,#0c0c0d);padding:4px 2px;width:100%;outline:none}
+.it-cat-name:focus{border-bottom-color:var(--accent,#0e4d3a)}
+.it-cat-name::placeholder{color:rgba(0,0,0,.35)}
+/* Orden personalizado · arrastre (Módulo 7) */
+.ds-prio{display:none;width:24px;height:24px;flex-shrink:0;border-radius:50%;background:var(--accent,#0e4d3a);color:#fff;font-size:12px;font-weight:600;font-family:'JetBrains Mono',monospace;align-items:center;justify-content:center}
+.ds-drag-handle{display:none;flex-shrink:0;width:30px;height:30px;align-items:center;justify-content:center;background:transparent;border:none;border-radius:8px;color:rgba(0,0,0,.4);cursor:grab;touch-action:none;padding:0}
+.ds-drag-handle svg{width:20px;height:20px}
+.ds-drag-handle:active{cursor:grabbing;background:rgba(0,0,0,.05)}
+#modulo-7.ds-personal-mode .ds-prio{display:flex}
+#modulo-7.ds-personal-mode .ds-drag-handle{display:flex}
+.ds-order-item{position:relative;transition:background .15s}
+.ds-order-item.ds-drag-row .ds-order-num{transition:none}
+.ds-deuda-row.ds-dragging,.ds-order-item.ds-dragging{opacity:.95;box-shadow:0 10px 30px rgba(0,0,0,.18);transform:scale(1.01);background:#fff;z-index:5}
+#modulo-7:not(.ds-personal-mode) .ds-personal-only{display:none}
+/* M5: nota de sincronización de deudas */
+.p5-sync-note,.p5-deudas-empty{font-size:13px;line-height:1.5;color:rgba(0,0,0,.6);background:rgba(14,77,58,.05);border:1px solid rgba(14,77,58,.12);border-radius:10px;padding:11px 13px;margin-bottom:12px}
+.p5-deudas-empty a,.p5-sync-note a{color:var(--accent,#0e4d3a);font-weight:500}
+/* M6: resumen del plan del simulador */
+.t6-sim-head{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:14px}
+.t6-sim-kpi{background:rgba(0,0,0,.03);border:1px solid rgba(0,0,0,.06);border-radius:12px;padding:12px 14px}
+.t6-sim-label{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:rgba(0,0,0,.5);margin-bottom:5px}
+.t6-sim-strong{font-family:'Fraunces',serif;font-size:18px;color:var(--ink,#0c0c0d)}
+.t6-sim-sub{font-size:12px;color:rgba(0,0,0,.5);font-family:'JetBrains Mono',monospace;margin-top:2px}
+.t6-sim-order{display:flex;flex-direction:column;gap:6px;margin-bottom:6px}
+.t6-sim-step{display:flex;align-items:center;gap:10px;padding:9px 11px;background:rgba(0,0,0,.03);border-radius:9px;font-size:13.5px}
+.t6-sim-num{width:22px;height:22px;flex-shrink:0;border-radius:50%;background:var(--accent,#0e4d3a);color:#fff;font-size:12px;font-weight:600;font-family:'JetBrains Mono',monospace;display:flex;align-items:center;justify-content:center}
+.t6-sim-name{flex:1;min-width:0;color:var(--ink,#0c0c0d)}
+.t6-sim-date{font-family:'JetBrains Mono',monospace;font-size:12px;color:rgba(0,0,0,.55)}
+.t6-sim-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:12px}
+.t6-sim-empty{font-size:13.5px;line-height:1.5;color:rgba(0,0,0,.55);text-align:center;padding:18px}
+.t6-sim-empty a{color:var(--accent,#0e4d3a);font-weight:500}
+/* Módulo 8 · Metas y Proyección */
+.meta-card{border:1px solid rgba(0,0,0,.08);border-radius:14px;padding:14px;margin-bottom:12px;background:rgba(255,255,255,.5)}
+.meta-head{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+.meta-head .it-name{flex:1;font-weight:500}
+.meta-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;align-items:end}
+.meta-grid .mr-field.hide{display:none}
+.meta-progress{margin-top:12px}
+.meta-bar-wrap{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.meta-bar{flex:1;height:9px;border-radius:6px;background:rgba(0,0,0,.08);overflow:hidden}
+.meta-bar-fill{height:100%;border-radius:6px;transition:width .35s ease}
+.meta-pct{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;color:var(--ink,#0c0c0d);min-width:48px;text-align:right}
+.meta-stats{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:rgba(0,0,0,.6)}
+.meta-stats strong{color:var(--ink,#0c0c0d);font-weight:600}
+.meta-estado{font-weight:500}
+.meta-estado.pos{color:var(--pos,#0e4d3a)}
+.meta-estado.warn{color:#8a5a14}
+.meta-estado.neg{color:#8a1f1c}
+.meta-chips{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin:4px 0 12px}
+.meta-chips-label{font-size:12px;color:rgba(0,0,0,.45)}
+.meta-chip{font-size:12.5px;padding:6px 12px;border-radius:20px;border:1px solid rgba(0,0,0,.14);background:rgba(0,0,0,.02);color:var(--ink,#0c0c0d);cursor:pointer;font-family:inherit;transition:.15s}
+.meta-chip:hover{border-color:var(--accent,#0e4d3a);background:rgba(14,77,58,.06);color:var(--accent,#0e4d3a)}
+.meta-empty{text-align:center;padding:22px 16px;color:rgba(0,0,0,.45);font-size:14px}
+.meta-proy-nota{display:flex;gap:9px;align-items:flex-start;font-size:12.5px;line-height:1.5;color:rgba(0,0,0,.55);background:rgba(0,0,0,.03);border-radius:10px;padding:11px 13px;margin-top:12px}
+.meta-proy-nota svg{width:17px;height:17px;flex-shrink:0;margin-top:1px;color:rgba(0,0,0,.4)}
+/* ═══ Pulido visual (consistencia de inputs y arrastre) ═══ */
+/* Arrastre: sin selección de texto, agarre inmediato */
+#ds-order-list,.ds-order-item,.ds-drag-handle{-webkit-user-select:none;user-select:none}
+.ds-drag-handle{cursor:grab;-webkit-touch-callout:none}
+.ds-drag-handle:active,.ds-order-item.ds-dragging .ds-drag-handle{cursor:grabbing}
+.ds-order-item.ds-drag-row{touch-action:pan-y}
+#modulo-7.ds-personal-mode .ds-order-item{cursor:default}
+/* Campo de nombre (simulador y metas): borde suave y consistente */
+.ds-dr-head .it-name,.meta-head .it-name{
+  border:1px solid rgba(0,0,0,.12);border-radius:10px;background:#fff;
+  padding:9px 12px;font-family:inherit;font-size:14px;color:var(--ink,#0c0c0d);
+  width:100%;outline:none;transition:border-color .15s,box-shadow .15s}
+.ds-dr-head .it-name:focus,.meta-head .it-name:focus{
+  border-color:var(--accent,#0e4d3a);box-shadow:0 0 0 3px rgba(14,77,58,.12)}
+.ds-dr-head .it-name::placeholder,.meta-head .it-name::placeholder{color:rgba(0,0,0,.35)}
+/* Selects e inputs numéricos/fecha: estilo uniforme con flecha personalizada */
+.mr-field select,select[data-f],#modulo-7 select,#modulo-8 select,
+#modulo-7 input[type=number],#modulo-8 input[type=number],#modulo-8 input[type=month]{
+  border:1px solid rgba(0,0,0,.12);border-radius:10px;background-color:#fff;
+  padding:9px 12px;font-family:inherit;font-size:14px;color:var(--ink,#0c0c0d);
+  width:100%;outline:none;transition:border-color .15s,box-shadow .15s}
+.mr-field select,select[data-f],#modulo-7 select,#modulo-8 select{
+  -webkit-appearance:none;-moz-appearance:none;appearance:none;cursor:pointer;
+  padding-right:34px;
+  background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%230c0c0d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 11px center;background-size:15px}
+.mr-field select:focus,select[data-f]:focus,#modulo-7 select:focus,#modulo-8 select:focus,
+#modulo-7 input[type=number]:focus,#modulo-8 input[type=number]:focus,#modulo-8 input[type=month]:focus{
+  border-color:var(--accent,#0e4d3a);box-shadow:0 0 0 3px rgba(14,77,58,.12)}
+/* Píldora de autoguardado */
+.autosave-pill{position:fixed;right:18px;bottom:18px;z-index:9999;display:inline-flex;align-items:center;gap:7px;
+  padding:9px 15px;border-radius:22px;font-family:'Geist',system-ui,sans-serif;font-size:13px;font-weight:500;
+  background:#0c0c0d;color:#fff;box-shadow:0 6px 22px rgba(0,0,0,.22);
+  opacity:0;transform:translateY(10px);pointer-events:none;transition:opacity .25s ease,transform .25s ease}
+.autosave-pill.show{opacity:1;transform:translateY(0)}
+.autosave-pill.saved{background:var(--accent,#0e4d3a)}
+.autosave-pill.error{background:#8a5a14}
+.autosave-pill svg{width:14px;height:14px}
+@media (max-width:760px){.autosave-pill{bottom:84px}}
+/* Regla de presupuesto + Reparto en pareja (Tablero) */
+.rule-seg{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 14px}
+.rule-seg-btn{flex:1;min-width:90px;padding:8px 10px;border-radius:10px;border:1.5px solid rgba(0,0,0,.1);background:rgba(0,0,0,.02);font-family:inherit;font-size:13px;font-weight:500;color:var(--ink,#0c0c0d);cursor:pointer;transition:.15s}
+.rule-seg-btn:hover{border-color:rgba(14,77,58,.4)}
+.rule-seg-btn.active{border-color:var(--accent,#0e4d3a);background:rgba(14,77,58,.08);color:var(--accent,#0e4d3a)}
+.rule-custom{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}
+.rule-row{margin-bottom:14px}
+.rule-row-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:6px;font-size:13.5px}
+.rule-name{font-weight:500;color:var(--ink,#0c0c0d)}
+.rule-amt{font-family:'JetBrains Mono',monospace;font-size:12.5px;color:rgba(0,0,0,.65)}
+.rule-tgt{color:rgba(0,0,0,.4)}
+.rule-bar{position:relative;height:9px;border-radius:6px;background:rgba(0,0,0,.08);overflow:visible;margin-bottom:5px}
+.rule-bar-fill{height:100%;border-radius:6px;transition:width .35s ease}
+.rule-bar-marker{position:absolute;top:-3px;width:2px;height:15px;background:#0c0c0d;border-radius:2px;transform:translateX(-1px)}
+.rule-verdict{font-size:12.5px}
+.rule-verdict.pos{color:var(--pos,#0e4d3a)}
+.rule-verdict.warn{color:#8a5a14}
+.rule-warn{display:flex;gap:7px;align-items:center;font-size:12.5px;color:#8a5a14;background:rgba(138,90,20,.08);border-radius:9px;padding:8px 11px;margin-bottom:12px}
+.rule-warn svg{width:15px;height:15px;flex-shrink:0}
+.rule-empty{font-size:13.5px;color:rgba(0,0,0,.5);text-align:center;padding:14px}
+.rule-classify{margin-top:6px}
+.rule-classify summary{cursor:pointer;font-size:13px;color:var(--accent,#0e4d3a);font-weight:500;padding:6px 0}
+.rule-bucket-note{font-size:12px;color:rgba(0,0,0,.5);line-height:1.45;margin:6px 0 10px}
+.bucket-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;font-size:13.5px;border-bottom:1px solid rgba(0,0,0,.05)}
+.bucket-row select{max-width:150px}
+.cpl-grid{display:grid;grid-template-columns:1fr 1.2fr;gap:10px 14px}
+.cpl-result-cards{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:16px 0 6px}
+.cpl-card{background:rgba(14,77,58,.05);border:1px solid rgba(14,77,58,.12);border-radius:12px;padding:13px}
+.cpl-name{font-weight:600;font-size:14px;color:var(--accent,#0e4d3a);margin-bottom:7px}
+.cpl-line{font-size:13px;color:rgba(0,0,0,.65);margin-bottom:3px}
+.cpl-line strong{color:var(--ink,#0c0c0d)}
+.cpl-line.cpl-left strong{color:var(--pos,#0e4d3a)}
+.cpl-note{display:flex;gap:9px;align-items:flex-start;font-size:12.5px;line-height:1.5;color:rgba(0,0,0,.6);background:rgba(0,0,0,.03);border-radius:10px;padding:11px 13px;margin-top:6px}
+.cpl-note svg{width:16px;height:16px;flex-shrink:0;margin-top:1px;color:rgba(0,0,0,.4)}
+@media (max-width:560px){.cpl-grid,.cpl-result-cards,.rule-custom{grid-template-columns:1fr}}
+/* Inputs/selects del tablero: consistentes con el resto */
+#modulo-6 .mr-field input[type=text],#modulo-6 .mr-field input[type=number]{
+  border:1px solid rgba(0,0,0,.12);border-radius:10px;background:#fff;padding:9px 12px;
+  font-family:inherit;font-size:14px;color:var(--ink,#0c0c0d);width:100%;outline:none;transition:border-color .15s,box-shadow .15s}
+#modulo-6 select{
+  -webkit-appearance:none;-moz-appearance:none;appearance:none;cursor:pointer;
+  border:1px solid rgba(0,0,0,.12);border-radius:10px;background-color:#fff;
+  padding:8px 30px 8px 11px;font-family:inherit;font-size:13.5px;color:var(--ink,#0c0c0d);outline:none;
+  background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%230c0c0d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 9px center;background-size:14px}
+#modulo-6 .mr-field input[type=text]:focus,#modulo-6 .mr-field input[type=number]:focus,#modulo-6 select:focus{
+  border-color:var(--accent,#0e4d3a);box-shadow:0 0 0 3px rgba(14,77,58,.12)}
+/* Marca "restringido" en activos (M3) */
+.mr-restringido{display:flex;align-items:center;gap:7px;font-size:12.5px;color:rgba(0,0,0,.6);cursor:pointer;
+  padding:0 11px;border:1px dashed rgba(0,0,0,.2);border-radius:10px;white-space:nowrap;align-self:stretch}
+.mr-restringido input{width:16px;height:16px;accent-color:var(--accent,#0e4d3a);flex-shrink:0}
+.kpi.is-neg{background:rgba(176,0,32,.06);border-color:rgba(176,0,32,.2)}
+.kpi.is-neg .kpi-value{color:#b00020}
+.meta-perfil-nota{font-size:12.5px;color:var(--accent,#0e4d3a);margin-top:8px;font-weight:500}
+</style>
 </head>
 <body>
 
@@ -99,23 +300,6 @@
       </div>
     </div>
 
-    <div class="demo-buttons" id="demo-buttons-wrap">
-      <div class="demo-divider"><span>o explora con datos demo</span></div>
-      <button class="btn-demo" id="btn-demo-carlos">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="4"/><path d="M4 22a8 8 0 0 1 16 0"/></svg>
-        <div class="btn-demo-text">
-          <strong>Carlos</strong>
-          <span>Asesor de seguros independiente · 38 años</span>
-        </div>
-      </button>
-      <button class="btn-demo" id="btn-demo-maria">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="4"/><path d="M4 22a8 8 0 0 1 16 0"/></svg>
-        <div class="btn-demo-text">
-          <strong>María</strong>
-          <span>Coordinadora de marketing empleada · 34 años</span>
-        </div>
-      </button>
-    </div>
     <p class="login-foot">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
       Tus datos se guardan de forma cifrada y privada
@@ -154,6 +338,23 @@
       </div>
       <span class="field-hint">10 dígitos, empezando con 3. Solo te contactaremos si autorizas.</span>
       <div class="field-error" id="ob-whatsapp-error" style="display:none"></div>
+    </div>
+
+    <div class="field" style="margin-bottom:6px"><label style="font-weight:600">Para personalizar tus metas</label></div>
+    <div style="display:flex;gap:12px">
+      <div class="field" style="flex:1">
+        <label for="ob-edad">Tu edad</label>
+        <input type="number" id="ob-edad" min="18" max="100" placeholder="35" inputmode="numeric">
+      </div>
+      <div class="field" style="flex:1">
+        <label for="ob-dependientes">Personas a cargo</label>
+        <input type="number" id="ob-dependientes" min="0" max="20" placeholder="0" inputmode="numeric">
+      </div>
+    </div>
+    <div class="field">
+      <label for="ob-edad-retiro">¿A qué edad quieres retirarte?</label>
+      <input type="number" id="ob-edad-retiro" min="40" max="90" placeholder="60" inputmode="numeric">
+      <span class="field-hint">Opcional. Lo usamos para personalizar tus metas y la proyección de patrimonio.</span>
     </div>
 
     <!-- Consentimientos -->
@@ -247,6 +448,17 @@
       Presupuesto Anual
       <span class="sb-dot" id="dot-5"></span>
     </a>
+    <div class="sidebar-section" style="margin-top:8px">Plan de acción</div>
+    <a class="sb-item" data-module="7" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M23 18l-9.5-9.5-5 5L1 6"/><polyline points="17 18 23 18 23 12"/></svg>
+      Simulador de Deuda
+      <span class="sb-dot" id="dot-7"></span>
+    </a>
+    <a class="sb-item" data-module="8" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+      Metas y Proyección
+      <span class="sb-dot" id="dot-8"></span>
+    </a>
     <div class="sidebar-section" style="margin-top:8px">Resultado</div>
     <a class="sb-item" data-module="6" href="#">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
@@ -324,15 +536,15 @@
           <h3>Gasto mensual por categoría</h3>
         </div>
         <div class="item-list" id="gastos-body"></div>
+        <button class="btn-add" id="add-gasto-cat">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Agregar categoría
+        </button>
       </div>
       <div class="kpi-grid" id="m1-kpis"></div>
       <div class="actions">
         <button class="btn btn-secondary" onclick="navigateTo(2)">Siguiente
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="9 18 15 12 9 6"/></svg>
-        </button>
-        <button class="btn btn-primary" id="save-m1">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
-          Guardar módulo
         </button>
       </div>
     </div>
@@ -532,10 +744,6 @@
         <button class="btn btn-secondary" onclick="navigateTo(2)">Siguiente
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="9 18 15 12 9 6"/></svg>
         </button>
-        <button class="btn btn-primary" id="save-mvar">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
-          Guardar módulo
-        </button>
       </div>
     </div>
 
@@ -566,13 +774,25 @@
       </div>
       <div class="kpi-grid" id="m2-kpis"></div>
       <div id="m2-structure"></div>
+
+      <!-- Invitación: simulador de deuda -->
+      <div class="invite-card" onclick="navigateTo(7)">
+        <div class="invite-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M23 18l-9.5-9.5-5 5L1 6"/><polyline points="17 18 23 18 23 12"/></svg>
+        </div>
+        <div class="invite-body">
+          <div class="invite-eyebrow">Plan de acción</div>
+          <h4 class="invite-title">¿En cuánto tiempo puedes salir de estas deudas?</h4>
+          <p class="invite-text">Simula estrategias (bola de nieve, avalancha, compra de cartera), abonos extra y descubre cuántos intereses te ahorras.</p>
+        </div>
+        <div class="invite-arrow">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+      </div>
+
       <div class="actions">
         <button class="btn btn-secondary" onclick="navigateTo(3)">Siguiente
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="9 18 15 12 9 6"/></svg>
-        </button>
-        <button class="btn btn-primary" id="save-m2">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
-          Guardar módulo
         </button>
       </div>
     </div>
@@ -600,10 +820,6 @@
         <button class="btn btn-secondary" onclick="navigateTo(4)">Siguiente
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="9 18 15 12 9 6"/></svg>
         </button>
-        <button class="btn btn-primary" id="save-m3">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
-          Guardar módulo
-        </button>
       </div>
     </div>
 
@@ -629,10 +845,6 @@
       <div class="actions">
         <button class="btn btn-secondary" onclick="navigateTo(5)">Siguiente
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="9 18 15 12 9 6"/></svg>
-        </button>
-        <button class="btn btn-primary" id="save-m4">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
-          Guardar módulo
         </button>
       </div>
     </div>
@@ -724,10 +936,11 @@
           <div class="acc-chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="6 9 12 15 18 9"/></svg></div>
         </div>
         <div class="acc-body">
+          <p class="p5-sync-note">Estas cuotas se traen automáticamente de tu módulo de <strong>Endeudamiento</strong>. Cualquier cambio que hagas allí se refleja aquí, sin doble digitación.</p>
           <div id="p5-deudas-body"></div>
-          <button class="btn-add" onclick="addP5Row('deudas')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            Agregar pago de deuda
+          <button class="btn-ghost" onclick="navigateTo(2)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+            Gestionar mis deudas
           </button>
         </div>
       </div>
@@ -769,10 +982,6 @@
       <div class="actions">
         <button class="btn btn-secondary" onclick="navigateTo(6)">Ver tablero
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="9 18 15 12 9 6"/></svg>
-        </button>
-        <button class="btn btn-primary" id="save-m5">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
-          Guardar módulo
         </button>
       </div>
     </div>
@@ -828,10 +1037,64 @@
 
       <div class="card">
         <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="8"/><rect x="12" y="6" width="3" height="12"/><rect x="17" y="13" width="3" height="5"/></svg></div>
+          <h3>Regla de presupuesto</h3>
+        </div>
+        <p class="ds-hint">Clasifica tu dinero del mes en Necesidades, Deseos y Ahorro/deudas, y compáralo con la regla que elijas. La base es tu ingreso mensual neto.</p>
+        <div class="rule-seg" id="t6-rule-seg">
+          <button class="rule-seg-btn active" data-rule="50/30/20" type="button">50/30/20</button>
+          <button class="rule-seg-btn" data-rule="60/20/20" type="button">60/20/20</button>
+          <button class="rule-seg-btn" data-rule="70/20/10" type="button">70/20/10</button>
+          <button class="rule-seg-btn" data-rule="custom" type="button">Personalizada</button>
+        </div>
+        <div id="t6-rule-custom" class="rule-custom" style="display:none">
+          <div class="mr-field"><label>Necesidades %</label><input type="number" id="rule-nec" min="0" max="100" step="1"></div>
+          <div class="mr-field"><label>Deseos %</label><input type="number" id="rule-des" min="0" max="100" step="1"></div>
+          <div class="mr-field"><label>Ahorro/deudas %</label><input type="number" id="rule-aho" min="0" max="100" step="1"></div>
+        </div>
+        <div id="t6-rule-result"></div>
+        <details class="rule-classify">
+          <summary>Clasificar categorías de gasto</summary>
+          <div id="t6-rule-buckets"></div>
+        </details>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+          <h3>Reparto en pareja</h3>
+        </div>
+        <p class="ds-hint">Define el ingreso de cada quien y cuánto cuesta el hogar al mes. Calculamos un reparto justo y proporcional al ingreso, y lo comparamos con mitad y mitad.</p>
+        <div id="t6-pareja"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
           <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></div>
           <h3>Mis objetivos</h3>
         </div>
         <div class="obj-grid" id="t6-objetivos"></div>
+        <div class="invite-card" onclick="navigateTo(8)" style="margin-top:14px">
+          <div class="invite-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+          </div>
+          <div class="invite-body">
+            <div class="invite-eyebrow">Plan de acción</div>
+            <h4 class="invite-title">Convierte estos objetivos en metas medibles</h4>
+            <p class="invite-text">Asigna a cada uno monto, fecha y avance automático, y mira la proyección de tu patrimonio a futuro.</p>
+          </div>
+          <div class="invite-arrow">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M23 18l-9.5-9.5-5 5L1 6"/><polyline points="17 18 23 18 23 12"/></svg></div>
+          <h3>Tu plan de pago de deudas</h3>
+        </div>
+        <div id="t6-simulador"></div>
       </div>
 
       <div class="card">
@@ -842,10 +1105,195 @@
         <textarea class="plan-area" id="t6-plan" placeholder="Escribe aquí tu plan de acción financiero..."></textarea>
       </div>
 
+    </div>
+
+    <!-- ─── MÓDULO 7 · SIMULADOR DE DEUDA ─── -->
+    <div id="modulo-7" class="module">
+      <div class="module-head">
+        <div class="module-eyebrow"><span class="dot"></span>Plan de acción</div>
+        <h1 class="module-title">Simulador para <em>salir de deudas</em></h1>
+        <p class="module-desc">Compara estrategias, simula abonos extra y refinanciaciones, y descubre en cuánto tiempo quedas libre de deudas y cuántos intereses te ahorras. Se adapta a cualquier situación.</p>
+      </div>
+
+      <!-- Capacidad de pago -->
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg></div>
+          <h3>¿Cuánto puedes abonar extra cada mes?</h3>
+        </div>
+        <p class="ds-hint">Además de tus cuotas mínimas actuales, ¿cuánto dinero libre puedes destinar a acelerar el pago? Aunque sea poco, cambia todo. Déjalo en 0 si por ahora solo puedes cubrir los mínimos.</p>
+        <div class="ds-cap-grid">
+          <div class="mr-field">
+            <label>Capacidad de abono extra mensual</label>
+            <input class="money-input" id="ds-capacidad" placeholder="0">
+          </div>
+          <div class="ds-cap-stat">
+            <div class="ds-cap-label">Hoy pagas en cuotas mínimas</div>
+            <div class="ds-cap-value" id="ds-base-min">—</div>
+          </div>
+          <div class="ds-cap-stat">
+            <div class="ds-cap-label">Presupuesto total del plan</div>
+            <div class="ds-cap-value" id="ds-budget">—</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Deudas a incluir -->
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+          <h3>Deudas a incluir</h3>
+          <span class="head-meta" id="ds-deudas-count">0</span>
+        </div>
+        <p class="ds-hint">Las traemos de tu módulo de endeudamiento. Puedes ajustarlas aquí sin alterar tu diagnóstico — útil para simular distintos escenarios.</p>
+        <div id="ds-deudas-body"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+          <button class="btn-add" id="ds-add-deuda">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Agregar deuda
+          </button>
+          <button class="btn-ghost" id="ds-reload">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.8.95 6.5 2.5"/><polyline points="21 4 21 11 14 11"/></svg>
+            Recargar desde mis deudas
+          </button>
+        </div>
+      </div>
+
+      <!-- Estrategia -->
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg></div>
+          <h3>Estrategia de pago</h3>
+        </div>
+        <div class="ds-strat-grid" id="ds-strat">
+          <button class="ds-strat-btn active" data-strat="avalancha" type="button">
+            <strong>Avalancha</strong>
+            <span>Ataca primero la deuda con la tasa más alta. Pagas menos intereses en total — matemáticamente óptima.</span>
+          </button>
+          <button class="ds-strat-btn" data-strat="bola_nieve" type="button">
+            <strong>Bola de nieve</strong>
+            <span>Ataca primero la deuda más pequeña. Ganas victorias rápidas y motivación. Ideal si necesitas ver progreso.</span>
+          </button>
+          <button class="ds-strat-btn" data-strat="consolidacion" type="button">
+            <strong>Consolidación · compra de cartera</strong>
+            <span>Unifica varias deudas en un solo crédito a menor tasa. Simplifica y puede bajar tu cuota.</span>
+          </button>
+          <button class="ds-strat-btn" data-strat="personalizada" type="button">
+            <strong>Orden personalizado</strong>
+            <span>Tú decides el orden arrastrando las deudas. Útil cuando hay razones personales: un codeudor, una deuda familiar.</span>
+          </button>
+        </div>
+        <div id="ds-cons-config" class="ds-cons-config" style="display:none">
+          <p class="ds-hint" style="margin-bottom:10px">Marca abajo la casilla <strong>Unificar</strong> en las deudas que quieres consolidar y define las condiciones del nuevo crédito.</p>
+          <div class="ds-cap-grid">
+            <div class="mr-field"><label>Nueva tasa anual % (E.A.)</label><input type="number" id="ds-cons-tasa" min="0" max="100" step="0.1" value="18"></div>
+            <div class="mr-field"><label>Plazo del nuevo crédito (meses)</label><input type="number" id="ds-cons-plazo" min="1" max="240" step="1" value="36"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Abono extraordinario -->
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 12 20 22 4 22 4 12"/><rect x="2" y="7" width="20" height="5"/><line x1="12" y1="22" x2="12" y2="7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></svg></div>
+          <h3>Abono extraordinario (opcional)</h3>
+        </div>
+        <p class="ds-hint">¿Vas a recibir una prima, bono o devolución que quieras lanzarle a la deuda? Simúlalo aquí: se aplica a la deuda prioritaria según tu estrategia.</p>
+        <div class="ds-cap-grid">
+          <div class="mr-field"><label>Monto del abono</label><input class="money-input" id="ds-abono-monto" placeholder="0"></div>
+          <div class="mr-field"><label>¿En cuántos meses lo recibes?</label><input type="number" id="ds-abono-mes" min="1" max="120" step="1" value="1"></div>
+        </div>
+      </div>
+
+      <!-- Resultados -->
+      <div id="ds-resultados"></div>
+
+      <!-- Gráfica -->
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg></div>
+          <h3>Cómo baja tu deuda en el tiempo</h3>
+        </div>
+        <canvas id="ds-chart" style="max-height:300px"></canvas>
+        <div class="mvar-chart-legend" id="ds-chart-legend"></div>
+      </div>
+
       <div class="actions">
-        <button class="btn btn-primary" id="save-m6">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
-          Guardar tablero
+        <button class="btn btn-secondary" onclick="navigateTo(6)">Ver tablero
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- ─── MÓDULO 8 · METAS Y PROYECCIÓN ─── -->
+    <div id="modulo-8" class="module">
+      <div class="module-head">
+        <div class="module-eyebrow"><span class="dot"></span>Plan de acción</div>
+        <h1 class="module-title">Tus <em>metas</em> y tu patrimonio futuro</h1>
+        <p class="module-desc">Convierte tus sueños en metas medibles —con monto, fecha y avance que se calcula solo— y mira a dónde puede llegar tu patrimonio si mantienes el rumbo.</p>
+      </div>
+
+      <!-- Tu perfil -->
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+          <h3>Tu perfil</h3>
+        </div>
+        <p class="ds-hint">Estos datos personalizan tus metas y la proyección de patrimonio. Cámbialos cuando quieras.</p>
+        <div class="ds-cap-grid">
+          <div class="mr-field"><label>Tu edad</label><input type="number" id="meta-edad" min="18" max="100" placeholder="—"></div>
+          <div class="mr-field"><label>Personas a cargo</label><input type="number" id="meta-dependientes" min="0" max="20" placeholder="0"></div>
+          <div class="mr-field"><label>Edad de retiro objetivo</label><input type="number" id="meta-edad-retiro" min="40" max="90" placeholder="—"></div>
+        </div>
+        <div id="meta-perfil-nota" class="meta-perfil-nota"></div>
+      </div>
+
+      <!-- Metas -->
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg></div>
+          <h3>Mis metas</h3>
+        </div>
+        <p class="ds-hint">Vincula el saldo actual de cada meta a una fuente real (un activo del Módulo 3, el fondo de provisiones…) y el avance se actualiza solo. O ingrésalo manualmente.</p>
+        <div id="metas-body"></div>
+        <div class="meta-chips" id="meta-chips">
+          <span class="meta-chips-label">Atajos:</span>
+          <button class="meta-chip" data-meta-chip="Fondo de emergencia" type="button">Fondo de emergencia</button>
+          <button class="meta-chip" data-meta-chip="Cuota inicial de vivienda" type="button">Vivienda</button>
+          <button class="meta-chip" data-meta-chip="Vehículo" type="button">Vehículo</button>
+          <button class="meta-chip" data-meta-chip="Matrimonio" type="button">Matrimonio</button>
+          <button class="meta-chip" data-meta-chip="Viaje" type="button">Viaje</button>
+          <button class="meta-chip" data-meta-chip="Educación" type="button">Educación</button>
+          <button class="meta-chip" data-meta-chip="Retiro / libertad financiera" type="button">Retiro</button>
+        </div>
+        <button class="btn-add" id="meta-add">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Agregar meta
+        </button>
+        <div id="metas-resumen" style="margin-top:16px"></div>
+      </div>
+
+      <!-- Proyección de patrimonio -->
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg></div>
+          <h3>Proyección de patrimonio</h3>
+        </div>
+        <p class="ds-hint">El poder del interés compuesto en el tiempo. Ajusta los supuestos: dejamos en blanco para usar tus datos automáticos (patrimonio actual del M3−M2 y aporte del M4).</p>
+        <div class="ds-cap-grid">
+          <div class="mr-field"><label>Patrimonio neto inicial</label><input class="money-input" id="meta-proy-inicial" placeholder="auto"></div>
+          <div class="mr-field"><label>Aporte mensual</label><input class="money-input" id="meta-proy-aporte" placeholder="auto"></div>
+          <div class="mr-field"><label>Rendimiento anual %</label><input type="number" id="meta-proy-rend" min="0" max="40" step="0.5" value="9"></div>
+          <div class="mr-field"><label>Horizonte (años)</label><input type="number" id="meta-proy-anios" min="1" max="60" step="1" value="28"></div>
+        </div>
+        <div id="meta-proy-kpis" style="margin-top:6px"></div>
+        <canvas id="meta-proy-chart" style="max-height:300px;margin-top:8px"></canvas>
+        <div class="meta-proy-nota" id="meta-proy-nota"></div>
+      </div>
+
+      <div class="actions">
+        <button class="btn btn-secondary" onclick="navigateTo(6)">Ver tablero
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="9 18 15 12 9 6"/></svg>
         </button>
       </div>
     </div>
@@ -878,6 +1326,16 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
       <span class="bb-label">Plan</span>
       <span class="bb-dot" id="bbdot-5"></span>
+    </a>
+    <a class="bb-item" data-module="7" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M23 18l-9.5-9.5-5 5L1 6"/><polyline points="17 18 23 18 23 12"/></svg>
+      <span class="bb-label">Pagar</span>
+      <span class="bb-dot" id="bbdot-7"></span>
+    </a>
+    <a class="bb-item" data-module="8" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+      <span class="bb-label">Metas</span>
+      <span class="bb-dot" id="bbdot-8"></span>
     </a>
     <a class="bb-item" data-module="6" href="#">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>

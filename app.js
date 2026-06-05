@@ -120,6 +120,8 @@
   const MODULE_TITLES = {
     1:'Ingresos y Gastos',2:'Endeudamiento',3:'Activos',
     4:'Ahorro y Solvencia',5:'Presupuesto Anual',6:'Tablero de Control',
+    7:'Simulador de Deuda',
+    8:'Metas y Proyección',
     'var':'Ingresos Variables'
   };
   
@@ -143,6 +145,7 @@
       {nombre:'Otra fuente 02',monto:0},{nombre:'Otra fuente 03',monto:0}
     ],
     gastos:{alimentacion:0,vivienda:0,transporte:0,salud:0,entretenimiento:0,comunicaciones:0,otros:0},
+    gastosLabels:{},
     deudas:[],
     activos:[
       {nombre:'Dinero ahorrado en cuenta',valor:0,tipo:'LÍQUIDO'},
@@ -165,7 +168,9 @@
       meta_otros_ingresos:0,meta_otro_ahorro:0,meta_otros_deudas:0,meta_otros_gastos:0,
       meta_consumo:0,meta_deuda_total:0,meta_pct_liquidos:0,meta_pct_noliquidos:0,
       meta_fondo_emerg:0,meta_solvencia:0,meta_ratio_consumo:0,meta_ratio_apal:0,
-      objetivos:Array(15).fill(''),plan:''
+      objetivos:Array(15).fill(''),plan:'',
+      budgetRule:{rule:'50/30/20', custom:{nec:50,des:30,aho:20}, buckets:{}},
+      couple:{ingreso1:null, ingreso2:null, compartido:null, modo:'proporcional'}
     },
     varIncome:{
       active:false,
@@ -177,7 +182,24 @@
       meses:[]
     },
     profile:{
-      tipoIngreso:''  // 'empleado' | 'independiente' | 'mixto' | ''
+      tipoIngreso:'', // 'empleado' | 'independiente' | 'mixto' | ''
+      uid:'', edad:null, dependientes:null, edadRetiro:null
+    },
+    debtSim:{
+      seeded:false,
+      customized:false,        // true si el usuario editó la lista de deudas del simulador
+      capacidadExtra:0,
+      estrategia:'avalancha',   // 'avalancha' | 'bola_nieve' | 'consolidacion'
+      consolidacionTasa:18,     // % E.A.
+      consolidacionPlazo:36,    // meses
+      abonoMonto:0,
+      abonoMes:1,               // en cuántos meses se recibe (1 = este mes)
+      deudas:[]                 // [{nombre, saldo, tasa(decimal E.A.), pago, consolidar}]
+    },
+    metas:{
+      seeded:false,
+      items:[],                 // [{nombre, objetivo, fecha(YYYY-MM), fuente, saldoManual, aporte}]
+      proy:{ rendimiento:9, anios:28, inicialOverride:null, aporteOverride:null, aniosUserSet:false }
     }
   };
   
@@ -274,7 +296,16 @@
     document.getElementById('modulo-'+id).classList.add('active');
     document.querySelectorAll(`[data-module="${id}"]`).forEach(el=>el.classList.add('active'));
     document.getElementById('topbar-title').textContent = MODULE_TITLES[id] || '';
+    // Re-render desde el estado vivo: los cambios de cualquier módulo se reflejan
+    // al entrar a otro, sin necesidad de guardar.
+    if(id===1){renderIngresosTable();calcM1();}
+    if(id===2){calcM2();}
+    if(id===3){renderActivosTable();calcM3();}
+    if(id===4){renderAhorroTable();calcM4();}
+    if(id===5){renderP5Deudas();calcP5Totals();}
     if(id===6){renderTablero();renderCharts();}
+    if(id===7){renderDebtSim();}
+    if(id===8){renderMetas();}
     if(id==='var'){renderMVar();}
     window.scrollTo({top:0,behavior:'smooth'});
   }
@@ -338,6 +369,7 @@
         <div class="kpi-value">${pct(pctL)}</div>
         <div class="kpi-sub">Del ingreso mensual</div>
       </div>`;
+    scheduleSave('ingresos_gastos');
     return {totalIng,totalGas};
   }
   
@@ -427,32 +459,37 @@
           ${ratioApal>0.5?' Tu deuda trabaja mayoritariamente para generar activos.':ratioApal>0.25?' Mezcla equilibrada de consumo y apalancamiento.':' La mayor parte de tu deuda es de consumo. Prioriza pagarla.'}</div>
         </div>
       </div>`;
+    scheduleSave('endeudamiento');
     return {totalDeuda,totalPagos,pagosConsumo,totConsumo,totApal,totOtro,ratioConsumo,ratioApal};
   }
   
   function calcM3(){
-    let totalActivos=0,totalLiquido=0,totalNoLiquido=0;
-    // Preservar filas linked (sincronizadas con MVar)
+    let totalActivos=0,totalLiquido=0,totalNoLiquido=0,totalRestringido=0;
+    // Preservar filas linked (sincronizadas con MVar) — son fondos disponibles, no restringidos
     const lockedRows = state.activos.filter(a=>a.linkedToFondo || a.linkedToProvisiones);
     state.activos = [...lockedRows];
-    // Sumar las locked primero
     lockedRows.forEach(a=>{
       totalActivos += a.valor||0;
       if(a.tipo==='LÍQUIDO') totalLiquido += a.valor||0;
       else totalNoLiquido += a.valor||0;
     });
-    // Sumar las editables del DOM (las locked no tienen los inputs estándar)
     document.querySelectorAll('#activos-body .multi-row').forEach(r=>{
       if(r.classList.contains('multi-row-locked')) return;
       const nombre=r.querySelector('input[data-f=nombre]')?.value||'';
       const valor=n(r.querySelector('input[data-f=valor]')?.value);
       const tipo=r.querySelector('select[data-f=tipo]')?.value||'NO LÍQUIDO';
+      const restringido=r.querySelector('input[data-f=restringido]')?.checked||false;
       totalActivos+=valor;
       if(tipo==='LÍQUIDO') totalLiquido+=valor; else totalNoLiquido+=valor;
-      state.activos.push({nombre,valor,tipo});
+      if(restringido) totalRestringido+=valor;
+      state.activos.push({nombre,valor,tipo,restringido});
     });
     const pctL=totalActivos>0?totalLiquido/totalActivos:0;
     const pctNL=totalActivos>0?totalNoLiquido/totalActivos:0;
+    const totalDeuda=(state.deudas||[]).reduce((s,d)=>s+(d.saldo||0),0);
+    const patrimonioNeto = totalActivos - totalDeuda;
+    const patrimonioDisponible = (totalActivos - totalRestringido) - totalDeuda;
+    const dispClass = patrimonioDisponible >= 0 ? 'is-pos' : 'is-neg';
     document.getElementById('m3-kpis').innerHTML = `
       <div class="kpi is-info span-2">
         <div class="kpi-label">Total activos</div>
@@ -468,8 +505,19 @@
         <div class="kpi-label">Activos no líquidos</div>
         <div class="kpi-value">${fmt(totalNoLiquido)}</div>
         <div class="kpi-sub">${pct(pctNL)} del total</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Fondos restringidos</div>
+        <div class="kpi-value">${fmt(totalRestringido)}</div>
+        <div class="kpi-sub">Pensión, cesantías… no disponibles</div>
+      </div>
+      <div class="kpi ${dispClass} span-2">
+        <div class="kpi-label">Patrimonio neto disponible</div>
+        <div class="kpi-value">${fmt(patrimonioDisponible)}</div>
+        <div class="kpi-sub">Activos disponibles − deudas · neto total ${fmt(patrimonioNeto)}</div>
       </div>`;
-    return {totalActivos,totalLiquido,totalNoLiquido,pctL,pctNL};
+    scheduleSave('activos');
+    return {totalActivos,totalLiquido,totalNoLiquido,totalRestringido,patrimonioNeto,patrimonioDisponible,pctL,pctNL};
   }
   
   function calcM4(){
@@ -518,6 +566,7 @@
         <div class="kpi-value">${fondoEmerg.toFixed(1)} meses</div>
         <div class="kpi-sub">Meses de gastos cubiertos · meta &gt;6</div>
       </div>`;
+    scheduleSave('ahorro');
     return {totalAhorro};
   }
   
@@ -545,7 +594,8 @@
     });
     document.getElementById('acc-ing-m').textContent = fmtNum(iM)+' mensual';
     document.getElementById('acc-ing-a').textContent = fmtNum(iA)+' anual';
-    document.getElementById('acc-deu-m').textContent = fmtNum(dM)+' mensual';
+    const m2Mensual=(state.deudas||[]).reduce((s,d)=>s+(d.cuota_mensual||0),0);
+    document.getElementById('acc-deu-m').textContent = fmtNum(m2Mensual)+' mensual';
     document.getElementById('acc-deu-a').textContent = fmtNum(dA)+' anual';
     document.getElementById('acc-aho-m').textContent = fmtNum(aM)+' mensual';
     document.getElementById('acc-aho-a').textContent = fmtNum(aA)+' anual';
@@ -612,6 +662,7 @@
     Object.assign(state.p5,{ingMensual:iM,ingAnual:iA,deuMensual:dM,deuAnual:dA,ahoMensual:aM,ahoAnual:aA,gastosMensual:gM,gastosAnual:gastosAnualM5Real,saldo});
     // Recalcular provisiones y propagar a M3/M4
     calcProvisiones();
+    if(_autosaveReady){ collectP5State(); scheduleSave('presupuesto_anual'); }
   }
   
   /* ═══════════════════════════════════════════════════════════
@@ -996,23 +1047,59 @@
     if(noteEl) noteEl.style.display = mvarActive ? 'flex' : 'none';
   }
   
+  function gastoLabel(k){
+    return (state.gastosLabels && state.gastosLabels[k]) || GASTO_LABELS[k] || 'Categoría';
+  }
+  function isGastoCustom(k){ return !(k in GASTO_LABELS); }
+
   function renderGastosTable(){
     const body=document.getElementById('gastos-body');
     body.innerHTML='';
     Object.entries(state.gastos).forEach(([k,v])=>{
+      const custom = isGastoCustom(k);
       const row=document.createElement('div');
       row.className='item-row';
-      row.style.gridTemplateColumns='1fr auto auto';
-      row.innerHTML=`<span class="it-fixed-name">${GASTO_LABELS[k]}</span>
-        <span class="it-prefix">${currency}</span>
-        <input class="money-input" data-f="monto" data-key="${k}">`;
+      row.style.gridTemplateColumns = custom ? '1fr auto auto auto' : '1fr auto auto';
+      if(custom){
+        const label = (state.gastosLabels && state.gastosLabels[k]) || '';
+        row.innerHTML=`<input class="it-cat-name" data-labelkey="${k}" value="${String(label).replace(/"/g,'&quot;')}" placeholder="Nombre de la categoría">
+          <span class="it-prefix">${currency}</span>
+          <input class="money-input" data-f="monto" data-key="${k}">
+          <button class="it-del" title="Eliminar categoría">${SVG_X}</button>`;
+      } else {
+        row.innerHTML=`<span class="it-fixed-name">${GASTO_LABELS[k]}</span>
+          <span class="it-prefix">${currency}</span>
+          <input class="money-input" data-f="monto" data-key="${k}">`;
+      }
       body.appendChild(row);
       const inp = row.querySelector('.money-input');
       inp.value = v && v>0 ? fmtInput(v) : '';
       inp.placeholder='0';
       attachMoneyInput(inp);
       inp.addEventListener('input',function(){state.gastos[k]=n(this.value);calcM1();});
+      if(custom){
+        const lab=row.querySelector('.it-cat-name');
+        lab.addEventListener('input',function(){
+          if(!state.gastosLabels) state.gastosLabels={};
+          state.gastosLabels[k]=this.value;
+        });
+        row.querySelector('.it-del').addEventListener('click',function(){
+          delete state.gastos[k];
+          if(state.gastosLabels) delete state.gastosLabels[k];
+          renderGastosTable();calcM1();
+        });
+      }
     });
+  }
+
+  function addGastoCategoria(){
+    const key='cat_'+Date.now().toString(36)+Math.floor(Math.random()*1000).toString(36);
+    state.gastos[key]=0;
+    if(!state.gastosLabels) state.gastosLabels={};
+    state.gastosLabels[key]='';
+    renderGastosTable();calcM1();
+    const nuevo=document.querySelector(`#gastos-body input[data-labelkey="${key}"]`);
+    if(nuevo) nuevo.focus();
   }
   
   function makeMultiRow(fields, opts={}){
@@ -1044,11 +1131,11 @@
   function addDeudaRowFromState(i){
     const d=state.deudas[i]||{nombre:'',saldo:0,cuota_mensual:0,tasa_anual:0,tipo:'CONSUMO_TARJETA'};
     const body=document.getElementById('deudas-body');
-    const row=makeMultiRow(d,{cells:[deudaCells(d)],namePlaceholder:'Acreedor (Banco, entidad)'});
+    const row=makeMultiRow(d,{cells:[deudaCells(d)],namePlaceholder:'Nombre de la deuda (ej: Tarjeta Visa, Préstamo mamá)'});
     body.appendChild(row);
     const sIn=row.querySelector('input[data-f=saldo]');  sIn.value=d.saldo>0?fmtInput(d.saldo):'';attachMoneyInput(sIn);
     const cIn=row.querySelector('input[data-f=cuota]'); cIn.value=d.cuota_mensual>0?fmtInput(d.cuota_mensual):'';attachMoneyInput(cIn);
-    row.querySelectorAll('input,select').forEach(el=>el.addEventListener('input',calcM2));
+    row.querySelectorAll('input,select').forEach(el=>{el.addEventListener('input',calcM2);if(el.tagName==='SELECT')el.addEventListener('change',calcM2);});
     row.querySelector('.it-del').addEventListener('click',()=>{row.remove();calcM2();});
   }
   function addDeudaRow(){
@@ -1122,7 +1209,8 @@
       `<div class="mr-field"><label>Tipo</label><select data-f="tipo">
         <option value="LÍQUIDO" ${a.tipo==='LÍQUIDO'?'selected':''}>Líquido</option>
         <option value="NO LÍQUIDO" ${a.tipo==='NO LÍQUIDO'?'selected':''}>No líquido</option>
-       </select></div>`
+       </select></div>`,
+      `<label class="mr-restringido" title="Fondos que no puedes usar libremente: pensión obligatoria, cesantías, etc."><input type="checkbox" data-f="restringido" ${a.restringido?'checked':''}><span>Restringido</span></label>`
     ].join('');
   }
   function addActivoRowFromState(i){
@@ -1166,7 +1254,7 @@
     const row=makeMultiRow(a,{cells:[activoCells(a)],namePlaceholder:'Nombre del activo'});
     body.appendChild(row);
     const vIn=row.querySelector('input[data-f=valor]'); vIn.value=a.valor>0?fmtInput(a.valor):'';attachMoneyInput(vIn);
-    row.querySelectorAll('input,select').forEach(el=>el.addEventListener('input',calcM3));
+    row.querySelectorAll('input,select').forEach(el=>{el.addEventListener('input',calcM3);if(el.tagName==='SELECT'||el.type==='checkbox')el.addEventListener('change',calcM3);});
     row.querySelector('.it-del').addEventListener('click',()=>{row.remove();calcM3();});
   }
   function addActivoRow(){
@@ -1489,7 +1577,7 @@
       if(!mIn.value) mIn.value = '';
       if(!mIn.dataset.money) attachMoneyInput(mIn);
     }
-    row.querySelectorAll('input,select').forEach(el=>el.addEventListener('input',calcP5Totals));
+    row.querySelectorAll('input,select').forEach(el=>{el.addEventListener('input',calcP5Totals);if(el.tagName==='SELECT')el.addEventListener('change',calcP5Totals);});
     row.querySelector('.it-del').addEventListener('click',()=>{row.remove();calcP5Totals();});
   
     const frecSel = row.querySelector('select[data-f=frec]');
@@ -1604,6 +1692,35 @@
       wireP5Row(row, false);
     });
   }
+  /* Pago de deudas (M5): espejo bloqueado y sincronizado desde el Módulo 2.
+     La fuente única de la verdad es el M2; aquí solo se muestran sus cuotas. */
+  function renderP5Deudas(){
+    const body=document.getElementById('p5-deudas-body');
+    if(!body) return;
+    body.innerHTML='';
+    const deudas=(state.deudas||[]).filter(d=>(d.cuota_mensual||0)>0);
+    if(!deudas.length){
+      body.innerHTML='<div class="p5-deudas-empty">Tus deudas se sincronizan automáticamente desde el módulo de <a href="#" data-go-m2>Endeudamiento</a>. Regístralas allí y sus cuotas mensuales aparecerán aquí, sin volver a digitarlas.</div>';
+      const lnk=body.querySelector('[data-go-m2]');
+      if(lnk) lnk.addEventListener('click',e=>{e.preventDefault();navigateTo(2);});
+      return;
+    }
+    deudas.forEach(d=>{
+      const row=document.createElement('div');
+      row.className='multi-row multi-row-locked';
+      row.innerHTML='<div class="mr-head">'
+        +'<div class="multi-locked-name">'+(d.nombre||'Deuda')+' <span class="it-locked-badge">sincronizado</span></div>'
+        +'<a href="#" class="it-locked-link" data-go-m2>Ajustar en Endeudamiento</a>'
+        +'</div>'
+        +'<div class="mr-grid">'
+        +'<div class="mr-field locked"><label>Cuota mensual</label><div class="locked-value">'+fmt(d.cuota_mensual||0)+'</div></div>'
+        +'<div class="mr-field locked"><label>Tasa anual</label><div class="locked-value">'+pct(d.tasa_anual||0)+'</div></div>'
+        +'</div>';
+      body.appendChild(row);
+      const lnk=row.querySelector('[data-go-m2]');
+      if(lnk) lnk.addEventListener('click',e=>{e.preventDefault();navigateTo(2);});
+    });
+  }
   function getSocios(){return [
     document.getElementById('socio1')?.value||'Socio 01',
     document.getElementById('socio2')?.value||'Socio 02'
@@ -1611,6 +1728,7 @@
   function collectP5Rows(bodyId){
     const rows=[];
     document.querySelectorAll('#'+bodyId+' .multi-row').forEach(r=>{
+      if(r.classList.contains('multi-row-locked')) return; // filas sincronizadas: no se recolectan
       const provInput = r.querySelector('input[data-f=provisionar]');
       const yaM1Input = r.querySelector('input[data-f=yaEnM1]');
       rows.push({
@@ -1840,10 +1958,10 @@
       if(inp.classList.contains('money-input')){
         inp.value = val>0 ? fmtInput(val) : '';
         attachMoneyInput(inp);
-        inp.addEventListener('input',()=>{state.tablero[key]=n(inp.value);});
+        inp.addEventListener('input',()=>{state.tablero[key]=n(inp.value);scheduleSave('tablero');});
       } else {
         inp.value = val||'';
-        inp.addEventListener('input',()=>{state.tablero[key]=parseFloat(inp.value)||0;});
+        inp.addEventListener('input',()=>{state.tablero[key]=parseFloat(inp.value)||0;scheduleSave('tablero');});
       }
     });
   
@@ -1855,11 +1973,14 @@
         ${Array.from({length:5},(_,j)=>{const idx=col.start+j;return`<textarea class="obj-input" placeholder="Objetivo ${idx+1}" data-obj-idx="${idx}">${tbl.objetivos[idx]||''}</textarea>`;}).join('')}
       </div>`).join('');
     document.querySelectorAll('.obj-input').forEach(ta=>{
-      ta.addEventListener('input',()=>{state.tablero.objetivos[parseInt(ta.dataset.objIdx)]=ta.value;});
+      ta.addEventListener('input',()=>{state.tablero.objetivos[parseInt(ta.dataset.objIdx)]=ta.value;scheduleSave('tablero');});
     });
   
     document.getElementById('t6-plan').value = tbl.plan||'';
-    document.getElementById('t6-plan').oninput = function(){state.tablero.plan=this.value;};
+    document.getElementById('t6-plan').oninput = function(){state.tablero.plan=this.value;scheduleSave('tablero');};
+    renderTableroSimulador();
+    renderBudgetRule();
+    renderCouple();
   }
   
   function useRow(name, value, pctValue, meta, metaKey, isHead){
@@ -1879,7 +2000,7 @@
       const val=state.tablero[key]||0;
       inp.value = val>0 ? fmtInput(val) : '';
       attachMoneyInput(inp);
-      inp.addEventListener('input',()=>{state.tablero[key]=n(inp.value);});
+      inp.addEventListener('input',()=>{state.tablero[key]=n(inp.value);scheduleSave('tablero');});
     });
   }
   
@@ -1955,6 +2076,1045 @@
   }
   
   /* ═══════════════════════════════════════════════════════════
+     SIMULADOR DE DEUDA (Módulo 7)
+     ═══════════════════════════════════════════════════════════ */
+  let chartDebtSim = null;
+
+  /* Tasa Efectiva Anual (decimal) → tasa efectiva mensual (decimal) */
+  function eaToMonthly(ea){
+    if(!ea || ea <= 0) return 0;
+    return Math.pow(1 + ea, 1/12) - 1;
+  }
+  /* Cuota fija de un crédito amortizado */
+  function cuotaAmortizada(P, im, n){
+    if(n <= 0) return P;
+    if(im <= 0) return P / n;
+    return P * im / (1 - Math.pow(1 + im, -n));
+  }
+  function mesesATexto(m){
+    if(m == null) return '—';
+    const a = Math.floor(m / 12), me = m % 12;
+    if(a === 0) return m + (m === 1 ? ' mes' : ' meses');
+    if(me === 0) return a + (a === 1 ? ' año' : ' años');
+    return a + (a === 1 ? ' año' : ' años') + ' y ' + me + (me === 1 ? ' mes' : ' meses');
+  }
+  function fechaLibertad(meses){
+    const d = new Date();
+    d.setMonth(d.getMonth() + meses);
+    return MES_NAMES_ES[d.getMonth()] + ' ' + d.getFullYear();
+  }
+  function stratLabel(s){
+    return s === 'bola_nieve' ? 'Bola de nieve' : s === 'consolidacion' ? 'Consolidación' : s === 'personalizada' ? 'Orden personalizado' : 'Avalancha';
+  }
+  function ordenarEstrategia(lista, estrategia){
+    const arr = [...lista];
+    if(estrategia === 'bola_nieve') arr.sort((a,b)=> a.saldo - b.saldo);
+    else if(estrategia === 'personalizada') arr.sort((a,b)=> (a.orden ?? 0) - (b.orden ?? 0));
+    else arr.sort((a,b)=> (b.em - a.em) || (a.saldo - b.saldo)); // avalancha
+    return arr;
+  }
+
+  /* Motor de amortización mes a mes.
+     deudas: [{nombre, saldo, em(mensual), pago}]
+     opts.rollover: si true, redistribuye los mínimos liberados + capacidad extra (estrategia).
+                    si false, cada deuda paga solo su mínimo (escenario "solo mínimos"). */
+  function simularDeuda(deudas, capacidadExtra, estrategia, abonos, opts){
+    const MAX = 600;
+    const lista = deudas.filter(d => d.saldo > 0.5)
+      .map((d,idx) => ({nombre:d.nombre, saldo:d.saldo, em:d.em, pago:d.pago, payoffMes:null, orden: (d.orden != null ? d.orden : idx)}));
+    const baseMin = lista.reduce((s,d)=> s + d.pago, 0);
+    const budget = baseMin + (opts.useExtra ? capacidadExtra : 0);
+    let mes = 0, totalInteres = 0, totalPagado = 0, estancado = false;
+    const serie = [ lista.reduce((s,d)=> s + d.saldo, 0) ];
+    const interesSerie = [ 0 ];
+
+    while(lista.some(d => d.saldo > 0.5)){
+      mes++;
+      if(mes > MAX){ estancado = true; break; }
+      // Causación de intereses
+      lista.forEach(d => { if(d.saldo > 0.5){ const it = d.saldo * d.em; d.saldo += it; totalInteres += it; } });
+
+      if(!opts.rollover){
+        // Cada deuda paga solo su propio mínimo
+        lista.forEach(d => {
+          if(d.saldo > 0.5){
+            const p = Math.min(d.pago, d.saldo);
+            d.saldo -= p; totalPagado += p;
+            if(d.saldo <= 0.5 && d.payoffMes == null) d.payoffMes = mes;
+          }
+        });
+      } else {
+        let pool = budget;
+        // 1) Pagar mínimos de las deudas activas
+        lista.forEach(d => {
+          if(d.saldo > 0.5){
+            const p = Math.min(d.pago, d.saldo, pool);
+            d.saldo -= p; pool -= p; totalPagado += p;
+          }
+        });
+        // 2) Excedente (mínimos liberados + capacidad extra) + abono extraordinario del mes
+        let extra = pool + (abonos[mes] || 0);
+        // 3) Atacar en el orden de la estrategia
+        const orden = ordenarEstrategia(lista.filter(d => d.saldo > 0.5), estrategia);
+        for(const d of orden){
+          if(extra <= 0) break;
+          const p = Math.min(extra, d.saldo);
+          d.saldo -= p; extra -= p; totalPagado += p;
+        }
+        lista.forEach(d => { if(d.saldo <= 0.5 && d.payoffMes == null) d.payoffMes = mes; });
+      }
+      lista.forEach(d => { if(d.saldo < 0) d.saldo = 0; });
+      serie.push(lista.reduce((s,d)=> s + Math.max(0, d.saldo), 0));
+      interesSerie.push(totalInteres);
+    }
+    return {mes, totalInteres, totalPagado, serie, interesSerie, deudas:lista, estancado, budget, baseMin};
+  }
+
+  /* Reemplaza las deudas marcadas para unificar por un único crédito consolidado */
+  function aplicarConsolidacion(base, tasaEA, plazo){
+    const aUnir = base.filter(d => d.consolidar && d.saldo > 0.5);
+    const resto = base.filter(d => !(d.consolidar && d.saldo > 0.5)).map(d => ({...d}));
+    if(aUnir.length < 1){
+      return {lista: base.map(d => ({...d})), info: null};
+    }
+    const P = aUnir.reduce((s,d)=> s + d.saldo, 0);
+    const em = eaToMonthly(tasaEA);
+    const pago = cuotaAmortizada(P, em, plazo);
+    const consolidada = {nombre:'Crédito consolidado (compra de cartera)', saldo:P, em, pago, consolidar:false, tasa:tasaEA};
+    return {lista: [consolidada, ...resto], info: {P, pago, em, count: aUnir.length, plazo, tasaEA}};
+  }
+
+  function seedDebtSimFromM2(){
+    state.debtSim.deudas = (state.deudas || [])
+      .filter(d => (d.saldo || 0) > 0)
+      .map(d => ({
+        nombre: d.nombre || 'Deuda',
+        saldo: d.saldo || 0,
+        tasa: d.tasa_anual || 0,
+        pago: d.cuota_mensual || 0,
+        consolidar: false
+      }));
+    state.debtSim.seeded = true;
+  }
+
+  function renderDebtSim(){
+    const ds = state.debtSim;
+    if(!ds.customized || !ds.deudas.length) seedDebtSimFromM2();
+
+    const cap = document.getElementById('ds-capacidad');
+    cap.value = ds.capacidadExtra ? fmtInput(ds.capacidadExtra) : '';
+    if(!cap.dataset.money) attachMoneyInput(cap);
+    if(!cap.dataset.wired){ cap.dataset.wired='1'; cap.addEventListener('input', recalcDebtSim); cap.addEventListener('change', recalcDebtSim); }
+    document.getElementById('ds-cons-tasa').value = ds.consolidacionTasa;
+    document.getElementById('ds-cons-plazo').value = ds.consolidacionPlazo;
+    const ab = document.getElementById('ds-abono-monto');
+    ab.value = ds.abonoMonto ? fmtInput(ds.abonoMonto) : '';
+    if(!ab.dataset.money) attachMoneyInput(ab);
+    if(!ab.dataset.wired){ ab.dataset.wired='1'; ab.addEventListener('input', recalcDebtSim); ab.addEventListener('change', recalcDebtSim); }
+    document.getElementById('ds-abono-mes').value = ds.abonoMes;
+
+    document.querySelectorAll('#ds-strat .ds-strat-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.strat === ds.estrategia));
+    document.getElementById('ds-cons-config').style.display = ds.estrategia === 'consolidacion' ? 'block' : 'none';
+    document.getElementById('modulo-7').classList.toggle('ds-cons-mode', ds.estrategia === 'consolidacion');
+    document.getElementById('modulo-7').classList.toggle('ds-personal-mode', ds.estrategia === 'personalizada');
+
+    renderDebtSimRows();
+    renderDebtSimResults();
+  }
+
+  function renderDebtSimRows(){
+    const body = document.getElementById('ds-deudas-body');
+    const ds = state.debtSim;
+    body.innerHTML = '';
+    document.getElementById('ds-deudas-count').textContent =
+      ds.deudas.length + (ds.deudas.length === 1 ? ' deuda' : ' deudas');
+    if(!ds.deudas.length){
+      body.innerHTML = '<div class="ds-empty">No hay deudas para simular. Agrega una o recárgalas desde tu módulo de endeudamiento.</div>';
+      return;
+    }
+    ds.deudas.forEach((d,i) => {
+      const row = document.createElement('div');
+      row.className = 'ds-deuda-row';
+      row.dataset.i = i;
+      const tasaVal = (d.tasa * 100) ? (d.tasa * 100).toFixed(1) : '';
+      row.innerHTML =
+        '<div class="ds-dr-head">'
+        + '<input type="text" class="it-name" data-f="nombre" value="' + String(d.nombre || '').replace(/"/g,'&quot;') + '" placeholder="Nombre de la deuda">'
+        + '<button class="it-del" title="Quitar">' + SVG_X + '</button>'
+        + '</div>'
+        + '<div class="ds-dr-grid">'
+        + '<div class="mr-field"><label>Saldo actual</label><input class="money-input" data-f="saldo" placeholder="0"></div>'
+        + '<div class="mr-field"><label>Tasa anual % (E.A.)</label><input type="number" data-f="tasa" min="0" max="200" step="0.1" value="' + tasaVal + '" placeholder="0"></div>'
+        + '<div class="mr-field"><label>Cuota / pago mínimo</label><input class="money-input" data-f="pago" placeholder="0"></div>'
+        + '<label class="ds-cons-check"><input type="checkbox" data-f="consolidar" ' + (d.consolidar ? 'checked' : '') + '><span>Unificar</span></label>'
+        + '</div>'
+        + '<div class="ds-dr-flag" data-flag></div>';
+      body.appendChild(row);
+      const sIn = row.querySelector('input[data-f=saldo]');
+      sIn.value = d.saldo > 0 ? fmtInput(d.saldo) : ''; attachMoneyInput(sIn);
+      const pIn = row.querySelector('input[data-f=pago]');
+      pIn.value = d.pago > 0 ? fmtInput(d.pago) : ''; attachMoneyInput(pIn);
+      row.querySelectorAll('input').forEach(el => { const h = () => { state.debtSim.customized = true; recalcDebtSim(); }; el.addEventListener('input', h); if(el.type==='checkbox') el.addEventListener('change', h); });
+      row.querySelector('.it-del').addEventListener('click', () => {
+        state.debtSim.customized = true;
+        state.debtSim.deudas.splice(i, 1);
+        renderDebtSimRows();
+        recalcDebtSim();
+      });
+    });
+  }
+
+  const SVG_DRAG_HANDLE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg>';
+
+  /* Reordenamiento por arrastre (pointer events · escritorio y móvil)
+     Opera sobre la lista de "Orden de ataque" cuando la estrategia es personalizada. */
+  function updateDragPrios(container){
+    const c = container || document.getElementById('ds-order-list');
+    if(!c) return;
+    Array.from(c.querySelectorAll('.ds-drag-row')).forEach((r,idx) => {
+      const num = r.querySelector('.ds-order-num'); if(num) num.textContent = idx + 1;
+    });
+  }
+  function wireDebtDragHandle(handle, row){
+    if(!handle) return;
+    handle.addEventListener('pointerdown', function(e){
+      if(state.debtSim.estrategia !== 'personalizada') return;
+      e.preventDefault();
+      const container = row.parentElement;
+      row.classList.add('ds-dragging');
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'grabbing';
+      function move(ev){
+        const sibs = Array.from(container.querySelectorAll('.ds-drag-row:not(.ds-dragging)'));
+        let placed = false;
+        for(const sib of sibs){
+          const r = sib.getBoundingClientRect();
+          if(ev.clientY < r.top + r.height / 2){ container.insertBefore(row, sib); placed = true; break; }
+        }
+        if(!placed) container.appendChild(row);
+        updateDragPrios(container);
+      }
+      function end(){
+        document.removeEventListener('pointermove', move);
+        document.removeEventListener('pointerup', end);
+        document.removeEventListener('pointercancel', end);
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+        row.classList.remove('ds-dragging');
+        state.debtSim.customized = true;
+        const shownIdx = Array.from(container.querySelectorAll('.ds-drag-row')).map(r => +r.dataset.i);
+        const all = state.debtSim.deudas;
+        const shownSet = new Set(shownIdx);
+        state.debtSim.deudas = [...shownIdx.map(i => all[i]), ...all.filter((_,i)=> !shownSet.has(i))];
+        renderDebtSimRows();   // resincroniza los data-i de las filas editables
+        recalcDebtSim();       // recalcula y reconstruye la lista de orden
+      }
+      document.addEventListener('pointermove', move);
+      document.addEventListener('pointerup', end);
+      document.addEventListener('pointercancel', end);
+    });
+  }
+
+  function recalcDebtSim(){
+    const ds = state.debtSim;
+    const capEl = document.getElementById('ds-capacidad'); if(!capEl) return;
+    ds.capacidadExtra   = n(capEl.value);
+    ds.consolidacionTasa  = parseFloat(document.getElementById('ds-cons-tasa').value) || 0;
+    ds.consolidacionPlazo = parseInt(document.getElementById('ds-cons-plazo').value) || 36;
+    ds.abonoMonto = n(document.getElementById('ds-abono-monto').value);
+    ds.abonoMes   = Math.max(1, parseInt(document.getElementById('ds-abono-mes').value) || 1);
+    document.querySelectorAll('#ds-deudas-body .ds-deuda-row').forEach(row => {
+      const i = +row.dataset.i; const d = ds.deudas[i]; if(!d) return;
+      d.nombre = row.querySelector('input[data-f=nombre]').value;
+      d.saldo  = n(row.querySelector('input[data-f=saldo]').value);
+      d.tasa   = (parseFloat(row.querySelector('input[data-f=tasa]').value) || 0) / 100;
+      d.pago   = n(row.querySelector('input[data-f=pago]').value);
+      d.consolidar = row.querySelector('input[data-f=consolidar]').checked;
+    });
+    renderDebtSimResults();
+    // El simulador NO se autoguarda: es un borrador. Solo persiste al pulsar "Agregar a mi plan de acción".
+  }
+
+  function renderDebtSimResults(){
+    const ds = state.debtSim;
+    const cont = document.getElementById('ds-resultados');
+
+    // Banderas por deuda (interés-solo / tasa alta)
+    document.querySelectorAll('#ds-deudas-body .ds-deuda-row').forEach(row => {
+      const i = +row.dataset.i; const d = ds.deudas[i]; const flag = row.querySelector('[data-flag]');
+      if(!d || !flag) return;
+      const em = eaToMonthly(d.tasa); const interesMes = d.saldo * em;
+      if(d.saldo > 0 && d.pago > 0 && d.pago <= interesMes * 1.001){
+        flag.style.display = 'flex'; flag.className = 'ds-dr-flag warn';
+        flag.innerHTML = SVG_WARN + '<span>Con esta cuota apenas cubres los intereses (' + fmt(interesMes) + '/mes): el saldo casi no baja. Con pagos mínimos esta deuda no se acaba — priorízala o abónale extra.</span>';
+      } else if(d.saldo > 0 && d.tasa >= 0.25){
+        flag.style.display = 'flex'; flag.className = 'ds-dr-flag hot';
+        flag.innerHTML = SVG_WARN + '<span>Tasa alta (' + pct(d.tasa) + ' E.A.). Es de las más costosas: buena candidata para atacar primero o refinanciar.</span>';
+      } else { flag.style.display = 'none'; flag.innerHTML = ''; }
+    });
+
+    const base = ds.deudas.filter(d => d.saldo > 0.5).map((d,idx) => ({
+      nombre: d.nombre || 'Deuda', saldo: d.saldo, em: eaToMonthly(d.tasa),
+      pago: d.pago, consolidar: d.consolidar, tasa: d.tasa, orden: idx
+    }));
+    const baseMin = base.reduce((s,d)=> s + d.pago, 0);
+    document.getElementById('ds-base-min').textContent = fmt(baseMin);
+    document.getElementById('ds-budget').textContent = fmt(baseMin + ds.capacidadExtra);
+
+    if(!base.length){
+      cont.innerHTML = '<div class="card"><div class="ds-empty">Agrega al menos una deuda con saldo para ver tu plan.</div></div>';
+      if(chartDebtSim){ chartDebtSim.destroy(); chartDebtSim = null; }
+      return;
+    }
+
+    const abonos = {};
+    if(ds.abonoMonto > 0) abonos[Math.max(1, ds.abonoMes)] = ds.abonoMonto;
+
+    // Lista procesada según estrategia
+    let processed, ordering, consInfo = null;
+    if(ds.estrategia === 'consolidacion'){
+      const r = aplicarConsolidacion(base, ds.consolidacionTasa / 100, ds.consolidacionPlazo);
+      processed = r.lista; consInfo = r.info; ordering = 'avalancha';
+    } else {
+      processed = base.map(d => ({...d})); ordering = ds.estrategia;
+    }
+
+    const plan    = simularDeuda(processed, ds.capacidadExtra, ordering, abonos, {rollover:true,  useExtra:true});
+    const minimos = simularDeuda(base.map(d=>({...d})), 0, 'avalancha', {}, {rollover:false, useExtra:false});
+    const planAval  = simularDeuda(base.map(d=>({...d})), ds.capacidadExtra, 'avalancha',  abonos, {rollover:true, useExtra:true});
+    const planNieve = simularDeuda(base.map(d=>({...d})), ds.capacidadExtra, 'bola_nieve', abonos, {rollover:true, useExtra:true});
+
+    let ahorroVal, ahorroSub, ahorroPos = false;
+    if(plan.estancado){
+      ahorroVal = '—'; ahorroSub = 'Aumenta tu abono para ver el ahorro';
+    } else if(!minimos.estancado){
+      const a = Math.max(0, minimos.totalInteres - plan.totalInteres);
+      const m = minimos.mes - plan.mes;
+      ahorroVal = fmt(a); ahorroPos = a > 0;
+      ahorroSub = (m > 0) ? ('Y quedas libre ' + m + ' meses antes') : 'En intereses';
+    } else {
+      // Con solo mínimos alguna deuda nunca termina: comparamos en el horizonte de tu plan
+      const idx = Math.min(plan.mes, (minimos.interesSerie || []).length - 1);
+      const intMin = (minimos.interesSerie && minimos.interesSerie[idx]) || 0;
+      const a = Math.max(0, intMin - plan.totalInteres);
+      ahorroVal = fmt(a); ahorroPos = a > 0;
+      ahorroSub = 'Con solo mínimos esa deuda nunca termina; tú sales en ' + mesesATexto(plan.mes);
+    }
+    // Si no hay abono extra pero igual hay ahorro, viene del método (ordenar y redirigir cuotas)
+    if(ahorroPos && (ds.capacidadExtra || 0) <= 0){
+      ahorroSub = 'Solo por ordenar y redirigir tus cuotas, sin poner un peso extra';
+    }
+
+    /* ── KPIs ── */
+    let html = '<div class="kpi-grid">'
+      + '<div class="kpi ' + (plan.estancado ? 'is-neg' : 'is-pos') + ' span-2">'
+      + '<div class="kpi-label">Quedas libre de deudas en</div>'
+      + '<div class="kpi-value">' + (plan.estancado ? 'No se liquida' : mesesATexto(plan.mes)) + '</div>'
+      + '<div class="kpi-sub">' + (plan.estancado ? 'Aumenta tu abono extra o considera consolidar' : 'Fecha estimada · ' + fechaLibertad(plan.mes)) + '</div>'
+      + '</div>'
+      + '<div class="kpi">'
+      + '<div class="kpi-label">Intereses que pagarás</div>'
+      + '<div class="kpi-value">' + (plan.estancado ? '—' : fmt(plan.totalInteres)) + '</div>'
+      + '<div class="kpi-sub">Con tu plan actual</div>'
+      + '</div>'
+      + '<div class="kpi ' + (ahorroPos ? 'is-pos' : '') + '">'
+      + '<div class="kpi-label">Te ahorras vs. solo mínimos</div>'
+      + '<div class="kpi-value">' + ahorroVal + '</div>'
+      + '<div class="kpi-sub">' + ahorroSub + '</div>'
+      + '</div>'
+      + '</div>';
+
+    /* ── Comparación ── */
+    html += '<div class="card">'
+      + '<div class="card-head"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3v18M3 7h18M5 7l3 7H2zM19 7l3 7h-6z"/></svg></div><h3>Tu plan vs. pagar solo mínimos</h3></div>'
+      + '<div class="ds-cmp">'
+      + '<div class="ds-cmp-row head"><span>Escenario</span><span>Tiempo</span><span>Intereses</span></div>'
+      + '<div class="ds-cmp-row"><span>Solo pagos mínimos</span><span>' + (minimos.estancado ? 'No termina' : mesesATexto(minimos.mes)) + '</span><span>' + (minimos.estancado ? '—' : fmt(minimos.totalInteres)) + '</span></div>'
+      + '<div class="ds-cmp-row best"><span>Tu plan · ' + stratLabel(ds.estrategia) + '</span><span>' + (plan.estancado ? 'No termina' : mesesATexto(plan.mes)) + '</span><span>' + (plan.estancado ? '—' : fmt(plan.totalInteres)) + '</span></div>'
+      + '</div></div>';
+
+    /* ── Orden de ataque (refleja el método; arrastrable si es personalizado) ── */
+    const esPersonal = ds.estrategia === 'personalizada';
+    // Mapa de fecha de liberación por nombre de deuda
+    const payoffByName = {};
+    plan.deudas.forEach(d => { payoffByName[d.nombre] = d.payoffMes; });
+    // Lista en el orden que dicta el método
+    let attackList;
+    if(esPersonal){
+      attackList = (ds.deudas||[]).map((d,idx)=>({nombre:d.nombre||'Deuda', stateIdx:idx, saldo:d.saldo, payoffMes:payoffByName[d.nombre||'Deuda']}))
+        .filter(x => x.saldo > 0.5);
+    } else {
+      attackList = ordenarEstrategia(processed, ordering).map(d=>({nombre:d.nombre, saldo:d.saldo, payoffMes:payoffByName[d.nombre]}));
+    }
+    html += '<div class="card" id="ds-order-card">'
+      + '<div class="card-head"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div><h3>'
+      + (esPersonal ? 'Tu orden de ataque · arrástralas' : 'Orden de ataque · ' + stratLabel(ds.estrategia))
+      + '</h3></div>'
+      + '<p class="ds-hint">'
+      + (esPersonal
+          ? 'Arrastra cada deuda por el asa para decidir cuál atacar primero (la de arriba recibe el abono extra). El plan se recalcula al soltar.'
+          : 'Este es el orden que estableció el método: a cuál diriges primero el abono extra. La fecha es cuándo queda saldada cada una.')
+      + '</p>'
+      + '<div class="ds-order" id="ds-order-list">';
+    attackList.forEach((d,idx) => {
+      const liber = d.payoffMes != null
+        ? ('Libre en ' + mesesATexto(d.payoffMes) + ' · ' + fechaLibertad(d.payoffMes))
+        : 'No se liquida en el horizonte simulado';
+      html += '<div class="ds-order-item ds-drag-row' + (d.payoffMes==null?' pend':'') + '"' + (esPersonal ? (' data-i="' + d.stateIdx + '"') : '') + '>'
+        + (esPersonal ? '<button class="ds-drag-handle" title="Arrastra para reordenar">' + SVG_DRAG_HANDLE + '</button>' : '')
+        + '<div class="ds-order-num">' + (d.payoffMes==null && !esPersonal ? '!' : (idx + 1)) + '</div>'
+        + '<div class="ds-order-body"><div class="ds-order-name">' + (d.nombre || 'Deuda') + '</div>'
+        + '<div class="ds-order-meta">' + liber + '</div></div>'
+        + '</div>';
+    });
+    html += '</div></div>';
+
+    /* ── Recomendaciones ── */
+    const tips = [];
+    if(ds.estrategia === 'personalizada' && !plan.estancado && !planAval.estancado){
+      const sobrecosto = plan.totalInteres - planAval.totalInteres;
+      if(sobrecosto > 1000){
+        tips.push('Tu <strong>orden personalizado</strong> te cuesta ' + fmt(sobrecosto) + ' más en intereses que la avalancha pura. Vale la pena si tienes una razón concreta (liberar a un codeudor, saldar una deuda familiar antes), pero tenlo presente.');
+      } else {
+        tips.push('Tu <strong>orden personalizado</strong> queda muy cerca del óptimo matemático: prácticamente no pagas intereses de más por seguir tu propia prioridad. Buena elección.');
+      }
+    }
+    if(ds.estrategia !== 'personalizada' && !planAval.estancado && !planNieve.estancado){
+      const dif = planNieve.totalInteres - planAval.totalInteres;
+      const firstAval = planAval.deudas.filter(d=>d.payoffMes!=null).sort((a,b)=>a.payoffMes-b.payoffMes)[0];
+      const firstNieve = planNieve.deudas.filter(d=>d.payoffMes!=null).sort((a,b)=>a.payoffMes-b.payoffMes)[0];
+      if(dif > 1000){
+        tips.push('La <strong>avalancha</strong> te ahorra ' + fmt(dif) + ' en intereses frente a la bola de nieve. Pero la <strong>bola de nieve</strong> libera tu primera deuda'
+          + (firstNieve ? ' (' + firstNieve.nombre + ') en ' + mesesATexto(firstNieve.payoffMes) : '') + ', útil si necesitas motivación temprana.');
+      } else {
+        tips.push('En tu caso la avalancha y la bola de nieve dan un resultado casi idéntico en intereses. Elige la bola de nieve si te ayuda a mantener la disciplina.');
+      }
+    }
+    if(consInfo){
+      const dif = planAval.totalInteres - plan.totalInteres; // ahorro de consolidar vs avalancha actual
+      if(!plan.estancado && !planAval.estancado && dif > 1000){
+        tips.push('<strong>Consolidar te conviene:</strong> unificando ' + consInfo.count + ' deuda(s) pagas ' + fmt(dif) + ' menos en intereses y tu cuota del crédito unificado sería ' + fmt(consInfo.pago) + '/mes a ' + consInfo.plazo + ' meses.');
+      } else {
+        tips.push('<strong>Ojo con esta consolidación:</strong> con la tasa (' + (consInfo.tasaEA*100).toFixed(1) + '% E.A.) y plazo (' + consInfo.plazo + ' meses) indicados, no mejora tu situación frente a atacar por avalancha. Negocia una tasa más baja o acorta el plazo.');
+      }
+    }
+    const interesSolo = ds.deudas.filter(d => d.saldo > 0 && d.pago > 0 && d.pago <= d.saldo * eaToMonthly(d.tasa) * 1.001);
+    if(interesSolo.length){
+      tips.push('Tienes ' + interesSolo.length + ' deuda(s) donde la cuota <strong>solo cubre intereses</strong> (' + interesSolo.map(d=>d.nombre||'sin nombre').join(', ') + '). Con esa cuota nunca se acaban: son la prioridad #1.');
+    }
+    if(ds.capacidadExtra === 0 && !plan.estancado){
+      const sugerido = Math.max(200000, Math.round(baseMin * 0.1 / 50000) * 50000);
+      const conExtra = simularDeuda(base.map(d=>({...d})), sugerido, ordering === 'avalancha' ? 'avalancha' : ordering, abonos, {rollover:true, useExtra:true});
+      if(!conExtra.estancado && conExtra.mes < plan.mes){
+        tips.push('Hoy solo cubres mínimos. Si abonaras apenas ' + fmt(sugerido) + ' extra al mes, quedarías libre <strong>' + (plan.mes - conExtra.mes) + ' meses antes</strong> y pagarías ' + fmt(plan.totalInteres - conExtra.totalInteres) + ' menos en intereses.');
+      }
+    }
+    if(tips.length){
+      html += '<div class="card">'
+        + '<div class="card-head"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.3h6c0-1 .4-1.8 1-2.3A7 7 0 0 0 12 2z"/></svg></div><h3>Recomendaciones</h3></div>'
+        + '<div class="ds-advice">';
+      tips.forEach(t => { html += '<div class="ds-advice-item">' + SVG_CHECK + '<span>' + t + '</span></div>'; });
+      html += '</div></div>';
+    }
+
+    html += '<div class="card"><div class="ds-plan-actions" style="display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap">'
+      + '<div style="font-size:13.5px;color:rgba(0,0,0,.62)">¿Te convence este plan? Guárdalo en tu plan de acción.</div>'
+      + '<button class="btn btn-primary" id="ds-add-plan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>Agregar a mi plan de acción</button>'
+      + '</div></div>';
+
+    cont.innerHTML = html;
+    if(ds.estrategia === 'personalizada'){
+      document.querySelectorAll('#ds-order-list .ds-drag-row').forEach(row => {
+        wireDebtDragHandle(row.querySelector('.ds-drag-handle'), row);
+      });
+    }
+    const addPlanBtn = document.getElementById('ds-add-plan');
+    if(addPlanBtn) addPlanBtn.addEventListener('click', copiarPlanSimulador);
+    renderDebtSimChart(plan, minimos);
+  }
+
+  function renderDebtSimChart(plan, minimos){
+    const canvas = document.getElementById('ds-chart');
+    if(!canvas) return;
+    const N = Math.min(Math.max(plan.estancado ? 120 : plan.mes, 1), 120);
+    const labels = [];
+    for(let i = 0; i <= N; i++) labels.push(i % 6 === 0 ? ('Mes ' + i) : '');
+    const planSerie = plan.serie.slice(0, N + 1);
+    while(planSerie.length < N + 1) planSerie.push(0);
+    const minSerie = minimos.serie.slice(0, N + 1);
+    while(minSerie.length < N + 1) minSerie.push(minSerie.length ? minSerie[minSerie.length - 1] : 0);
+
+    const ctx = canvas.getContext('2d');
+    if(chartDebtSim){ chartDebtSim.destroy(); chartDebtSim = null; }
+    chartDebtSim = new Chart(ctx, {
+      type:'line',
+      data:{
+        labels,
+        datasets:[
+          {label:'Solo mínimos', data:minSerie, borderColor:'#8a1f1c', backgroundColor:'rgba(138,31,28,.06)',
+            borderWidth:2, borderDash:[5,4], fill:true, tension:.25, pointRadius:0},
+          {label:'Tu plan', data:planSerie, borderColor:'#0e4d3a', backgroundColor:'rgba(14,77,58,.1)',
+            borderWidth:2.5, fill:true, tension:.25, pointRadius:0}
+        ]
+      },
+      options:{
+        responsive:true, maintainAspectRatio:true,
+        interaction:{mode:'index', intersect:false},
+        plugins:{
+          legend:{position:'bottom', labels:{font:{family:'Geist',size:11,weight:'500'}, boxWidth:14, padding:14, color:'#2b2b2e', usePointStyle:true, pointStyle:'line'}},
+          tooltip:{backgroundColor:'#0c0c0d', titleColor:'#fff', bodyColor:'#fff', padding:12, cornerRadius:10,
+            titleFont:{family:'Geist',weight:'600',size:12}, bodyFont:{family:'JetBrains Mono',size:12},
+            callbacks:{title:items=>'Mes '+items[0].dataIndex, label:ctx=>' '+ctx.dataset.label+': '+fmt(ctx.parsed.y)}}
+        },
+        scales:{
+          x:{grid:{display:false}, ticks:{font:{family:'JetBrains Mono',size:10}, color:'#8a8a8a', maxRotation:0, autoSkip:true, maxTicksLimit:8}},
+          y:{grid:{color:'rgba(0,0,0,.05)'}, ticks:{font:{family:'JetBrains Mono',size:10}, color:'#8a8a8a',
+            callback:v=> v>=1e6 ? (v/1e6).toFixed(0)+'M' : v>=1e3 ? (v/1e3).toFixed(0)+'k' : v}}
+        }
+      }
+    });
+  }
+
+  /* Resumen del plan de pago — usado por el Tablero (M6) para volcar el resultado del simulador */
+  function computeDebtPlanSummary(){
+    const ds = state.debtSim || {};
+    const base = (ds.deudas || []).filter(d => d.saldo > 0.5).map((d,idx) => ({
+      nombre: d.nombre || 'Deuda', saldo: d.saldo, em: eaToMonthly(d.tasa),
+      pago: d.pago, consolidar: d.consolidar, tasa: d.tasa, orden: idx
+    }));
+    if(!base.length) return {hasData:false};
+    const abonos = {};
+    if(ds.abonoMonto > 0) abonos[Math.max(1, ds.abonoMes || 1)] = ds.abonoMonto;
+    let processed, ordering;
+    if(ds.estrategia === 'consolidacion'){
+      const r = aplicarConsolidacion(base, (ds.consolidacionTasa||0)/100, ds.consolidacionPlazo||36);
+      processed = r.lista; ordering = 'avalancha';
+    } else { processed = base.map(d=>({...d})); ordering = ds.estrategia || 'avalancha'; }
+    const plan = simularDeuda(processed, ds.capacidadExtra||0, ordering, abonos, {rollover:true, useExtra:true});
+    const orden = plan.deudas.filter(d => d.payoffMes != null).sort((a,b)=> a.payoffMes - b.payoffMes);
+    return {hasData:true, estrategia:ds.estrategia||'avalancha', mes:plan.mes, estancado:plan.estancado, totalInteres:plan.totalInteres, orden};
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     REGLA DE PRESUPUESTO (50/30/20) + REPARTO EN PAREJA (Tablero)
+     ═══════════════════════════════════════════════════════════ */
+  const RULE_TARGETS = {'50/30/20':{nec:50,des:30,aho:20},'60/20/20':{nec:60,des:20,aho:20},'70/20/10':{nec:70,des:20,aho:10}};
+  const DEFAULT_BUCKET = {vivienda:'nec',alimentacion:'nec',transporte:'nec',salud:'nec',comunicaciones:'nec',entretenimiento:'des',otros:'des'};
+
+  function gastoBucket(cat){
+    const br = state.tablero.budgetRule || {};
+    return (br.buckets && br.buckets[cat]) || DEFAULT_BUCKET[cat] || 'des';
+  }
+  function ruleTargets(){
+    const br = state.tablero.budgetRule || {};
+    if(br.rule === 'custom') return br.custom || {nec:50,des:30,aho:20};
+    return RULE_TARGETS[br.rule] || RULE_TARGETS['50/30/20'];
+  }
+  function ingresoMensualHogar(){ return (state.ingresos||[]).reduce((s,i)=>s+(i.monto||0),0); }
+  function gastoMensualTotal(){ return Object.values(state.gastos||{}).reduce((a,b)=>a+(b||0),0); }
+  function deudaServicioMensual(){ return (state.deudas||[]).reduce((s,d)=>s+(d.cuota_mensual||0),0); }
+
+  function renderBudgetRule(){
+    const br = state.tablero.budgetRule;
+    document.querySelectorAll('#t6-rule-seg .rule-seg-btn').forEach(b=>b.classList.toggle('active', b.dataset.rule===br.rule));
+    const customBox = document.getElementById('t6-rule-custom');
+    if(customBox){
+      customBox.style.display = br.rule==='custom' ? 'grid' : 'none';
+      if(br.rule==='custom'){
+        document.getElementById('rule-nec').value = br.custom.nec;
+        document.getElementById('rule-des').value = br.custom.des;
+        document.getElementById('rule-aho').value = br.custom.aho;
+      }
+    }
+    renderBudgetBuckets();
+    renderBudgetRuleResult();
+  }
+
+  function renderBudgetRuleResult(){
+    const cont = document.getElementById('t6-rule-result'); if(!cont) return;
+    const ingreso = ingresoMensualHogar();
+    let nec = deudaServicioMensual(), des = 0, aho = (state.ahorro||[]).reduce((s,a)=>s+(a.monto_mensual||0),0);
+    Object.entries(state.gastos||{}).forEach(([cat,val])=>{
+      const b = gastoBucket(cat);
+      if(b==='nec') nec += (val||0); else if(b==='aho') aho += (val||0); else des += (val||0);
+    });
+    const targets = ruleTargets();
+    const sumT = (+targets.nec||0)+(+targets.des||0)+(+targets.aho||0);
+    if(ingreso<=0){ cont.innerHTML='<div class="rule-empty">Registra tu ingreso mensual en el Módulo 1 para ver tu regla.</div>'; return; }
+    const rows=[
+      {key:'nec',label:'Necesidades',amt:nec,tgt:+targets.nec||0,color:'var(--accent,#0e4d3a)'},
+      {key:'des',label:'Deseos',amt:des,tgt:+targets.des||0,color:'#8a5a14'},
+      {key:'aho',label:'Ahorro y deudas',amt:aho,tgt:+targets.aho||0,color:'#1f6f8b'}
+    ];
+    let html='';
+    if(sumT!==100) html+='<div class="rule-warn">'+SVG_WARN+'<span>Tus porcentajes suman '+sumT+'% (deberían sumar 100%).</span></div>';
+    rows.forEach(r=>{
+      const actualPct = r.amt/ingreso*100;
+      const targetAmt = ingreso*r.tgt/100;
+      let verdict, vClass;
+      if(r.key==='aho'){
+        if(r.amt>=targetAmt){ verdict='Vas bien · '+fmt(r.amt-targetAmt)+' por encima de la meta'; vClass='pos'; }
+        else { verdict='Te faltan '+fmt(targetAmt-r.amt)+' para la meta'; vClass='warn'; }
+      } else {
+        if(r.amt<=targetAmt){ verdict='Dentro de la meta · '+fmt(targetAmt-r.amt)+' de margen'; vClass='pos'; }
+        else { verdict=fmt(r.amt-targetAmt)+' por encima de la meta'; vClass='warn'; }
+      }
+      html+='<div class="rule-row">'
+        +'<div class="rule-row-top"><span class="rule-name">'+r.label+'</span>'
+        +'<span class="rule-amt">'+fmt(r.amt)+' · '+actualPct.toFixed(0)+'% <span class="rule-tgt">(meta '+r.tgt+'%)</span></span></div>'
+        +'<div class="rule-bar"><div class="rule-bar-fill" style="width:'+Math.min(actualPct,100).toFixed(1)+'%;background:'+r.color+'"></div>'
+        +'<span class="rule-bar-marker" style="left:'+Math.min(r.tgt,100)+'%"></span></div>'
+        +'<div class="rule-verdict '+vClass+'">'+verdict+'</div>'
+        +'</div>';
+    });
+    cont.innerHTML=html;
+  }
+
+  function renderBudgetBuckets(){
+    const cont=document.getElementById('t6-rule-buckets'); if(!cont) return;
+    let html='<p class="rule-bucket-note">Las cuotas mínimas de deuda cuentan como Necesidad y el ahorro del Módulo 4 como Ahorro. Reclasifica tus gastos si lo necesitas:</p>';
+    Object.keys(state.gastos||{}).forEach(cat=>{
+      const b=gastoBucket(cat);
+      html+='<div class="bucket-row"><span>'+gastoLabel(cat)+'</span>'
+        +'<select data-bucket-cat="'+cat+'">'
+        +'<option value="nec"'+(b==='nec'?' selected':'')+'>Necesidad</option>'
+        +'<option value="des"'+(b==='des'?' selected':'')+'>Deseo</option>'
+        +'<option value="aho"'+(b==='aho'?' selected':'')+'>Ahorro</option>'
+        +'</select></div>';
+    });
+    cont.innerHTML=html;
+    cont.querySelectorAll('select[data-bucket-cat]').forEach(sel=>{
+      sel.addEventListener('change',function(){
+        if(!state.tablero.budgetRule.buckets) state.tablero.budgetRule.buckets={};
+        state.tablero.budgetRule.buckets[this.dataset.bucketCat]=this.value;
+        renderBudgetRuleResult(); scheduleSave('tablero');
+      });
+    });
+  }
+
+  function renderCouple(){
+    const cont=document.getElementById('t6-pareja'); if(!cont) return;
+    const nombre1=(state.p5.socio1||'Socio 1'), nombre2=(state.p5.socio2||'Socio 2');
+    const c=state.tablero.couple;
+    const ingresoHogar=ingresoMensualHogar();
+    const compartidoAuto=gastoMensualTotal()+deudaServicioMensual();
+    const i1 = c.ingreso1!=null ? c.ingreso1 : ingresoHogar;
+    const i2 = c.ingreso2!=null ? c.ingreso2 : 0;
+    const comp = c.compartido!=null ? c.compartido : compartidoAuto;
+    cont.innerHTML =
+      '<div class="cpl-grid">'
+      + '<div class="mr-field"><label>Nombre</label><input type="text" id="cpl-nom1" value="'+String(nombre1).replace(/"/g,'&quot;')+'"></div>'
+      + '<div class="mr-field"><label>Ingreso neto mensual</label><input class="money-input" id="cpl-ing1"></div>'
+      + '<div class="mr-field"><label>Nombre</label><input type="text" id="cpl-nom2" value="'+String(nombre2).replace(/"/g,'&quot;')+'"></div>'
+      + '<div class="mr-field"><label>Ingreso neto mensual</label><input class="money-input" id="cpl-ing2"></div>'
+      + '</div>'
+      + '<div class="mr-field" style="margin-top:10px"><label>Gasto del hogar al mes (compartido)</label><input class="money-input" id="cpl-comp"></div>'
+      + '<div class="rule-seg" id="cpl-modo" style="margin-top:12px">'
+      + '<button class="rule-seg-btn'+(c.modo!=='mitad'?' active':'')+'" data-modo="proporcional" type="button">Proporcional al ingreso</button>'
+      + '<button class="rule-seg-btn'+(c.modo==='mitad'?' active':'')+'" data-modo="mitad" type="button">Mitad y mitad</button>'
+      + '</div>'
+      + '<div id="cpl-result"></div>';
+    const ing1El=document.getElementById('cpl-ing1'); ing1El.value=i1>0?fmtInput(i1):''; ing1El.placeholder=fmtInput(ingresoHogar)||'0'; attachMoneyInput(ing1El);
+    const ing2El=document.getElementById('cpl-ing2'); ing2El.value=i2>0?fmtInput(i2):''; attachMoneyInput(ing2El);
+    const compEl=document.getElementById('cpl-comp'); compEl.value=comp>0?fmtInput(comp):''; compEl.placeholder=fmtInput(compartidoAuto)||'0'; attachMoneyInput(compEl);
+    function syncMoney(){
+      state.tablero.couple.ingreso1 = ing1El.value.trim()!==''? n(ing1El.value):null;
+      state.tablero.couple.ingreso2 = ing2El.value.trim()!==''? n(ing2El.value):null;
+      state.tablero.couple.compartido = compEl.value.trim()!==''? n(compEl.value):null;
+      renderCoupleResult(); scheduleSave('tablero');
+    }
+    [ing1El,ing2El,compEl].forEach(el=>el.addEventListener('input',syncMoney));
+    document.getElementById('cpl-nom1').addEventListener('input',function(){ state.p5.socio1=this.value; const s=document.getElementById('socio1'); if(s)s.value=this.value; renderCoupleResult(); scheduleSave('presupuesto_anual'); });
+    document.getElementById('cpl-nom2').addEventListener('input',function(){ state.p5.socio2=this.value; const s=document.getElementById('socio2'); if(s)s.value=this.value; renderCoupleResult(); scheduleSave('presupuesto_anual'); });
+    document.querySelectorAll('#cpl-modo .rule-seg-btn').forEach(b=>b.addEventListener('click',function(){
+      state.tablero.couple.modo=this.dataset.modo;
+      document.querySelectorAll('#cpl-modo .rule-seg-btn').forEach(x=>x.classList.remove('active'));
+      this.classList.add('active');
+      renderCoupleResult(); scheduleSave('tablero');
+    }));
+    renderCoupleResult();
+  }
+
+  function renderCoupleResult(){
+    const cont=document.getElementById('cpl-result'); if(!cont) return;
+    const c=state.tablero.couple;
+    const nombre1=(state.p5.socio1||'Socio 1'), nombre2=(state.p5.socio2||'Socio 2');
+    const i1 = c.ingreso1!=null ? c.ingreso1 : ingresoMensualHogar();
+    const i2 = c.ingreso2!=null ? c.ingreso2 : 0;
+    const comp = c.compartido!=null ? c.compartido : (gastoMensualTotal()+deudaServicioMensual());
+    const total=i1+i2;
+    if(total<=0){ cont.innerHTML='<div class="rule-empty">Ingresa el ingreso de cada quien para ver el reparto.</div>'; return; }
+    const prop = c.modo!=='mitad';
+    const share1=prop? i1/total : 0.5;
+    const share2=prop? i2/total : 0.5;
+    const ap1=comp*share1, ap2=comp*share2;
+    let html='<div class="cpl-result-cards">';
+    [[nombre1,i1,share1,ap1],[nombre2,i2,share2,ap2]].forEach(arr=>{
+      const nm=arr[0], ing=arr[1], sh=arr[2], ap=arr[3];
+      html+='<div class="cpl-card"><div class="cpl-name">'+nm+'</div>'
+        +'<div class="cpl-line">Aporta <strong>'+fmt(ap)+'</strong> ('+(sh*100).toFixed(0)+'%)</div>'
+        +'<div class="cpl-line cpl-left">Le queda <strong>'+fmt(ing-ap)+'</strong></div></div>';
+    });
+    html+='</div>';
+    html+='<div class="cpl-note">'+SVG_INFO+'<div>'+(prop
+      ? 'Con <strong>mitad y mitad</strong> cada uno aportaría '+fmt(comp/2)+'. El reparto proporcional suele ser más justo cuando los ingresos difieren.'
+      : 'Con reparto <strong>proporcional</strong>, '+nombre1+' aportaría '+fmt(comp*(total>0?i1/total:0.5))+' y '+nombre2+' '+fmt(comp*(total>0?i2/total:0.5))+', según su ingreso.')+'</div></div>';
+    cont.innerHTML=html;
+  }
+
+  function renderTableroSimulador(){
+    const cont = document.getElementById('t6-simulador');
+    if(!cont) return;
+    const s = computeDebtPlanSummary();
+    if(!s.hasData){
+      cont.innerHTML = '<div class="t6-sim-empty">Aún no has configurado tu plan de pago de deudas. <a href="#" data-go-m7>Ábrelo en el simulador</a> para ver aquí tu fecha de libertad y el orden de ataque.</div>';
+      const l = cont.querySelector('[data-go-m7]');
+      if(l) l.addEventListener('click', e=>{e.preventDefault();navigateTo(7);});
+      return;
+    }
+    let html = '<div class="t6-sim-head">'
+      + '<div class="t6-sim-kpi"><div class="t6-sim-label">Estrategia</div><div class="t6-sim-strong">' + stratLabel(s.estrategia) + '</div></div>'
+      + '<div class="t6-sim-kpi"><div class="t6-sim-label">Libre de deudas</div><div class="t6-sim-strong">' + (s.estancado ? 'No se liquida' : mesesATexto(s.mes)) + '</div>' + (s.estancado ? '' : '<div class="t6-sim-sub">' + fechaLibertad(s.mes) + '</div>') + '</div>'
+      + '<div class="t6-sim-kpi"><div class="t6-sim-label">Intereses del plan</div><div class="t6-sim-strong">' + (s.estancado ? '—' : fmt(s.totalInteres)) + '</div></div>'
+      + '</div>';
+    if(s.orden.length){
+      html += '<div class="t6-sim-order">';
+      s.orden.forEach((d,i)=>{
+        html += '<div class="t6-sim-step"><span class="t6-sim-num">' + (i+1) + '</span><span class="t6-sim-name">' + (d.nombre || 'Deuda') + '</span><span class="t6-sim-date">' + fechaLibertad(d.payoffMes) + '</span></div>';
+      });
+      html += '</div>';
+    }
+    html += '<div class="t6-sim-actions"><a href="#" class="btn-link" data-go-m7>Editar en el simulador</a>'
+      + '<button class="btn-ghost" id="t6-sim-copy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Agregar a mi plan de acción</button></div>';
+    cont.innerHTML = html;
+    cont.querySelectorAll('[data-go-m7]').forEach(l => l.addEventListener('click', e=>{e.preventDefault();navigateTo(7);}));
+    const btn = document.getElementById('t6-sim-copy');
+    if(btn) btn.addEventListener('click', copiarPlanSimulador);
+  }
+
+  function copiarPlanSimulador(){
+    const s = computeDebtPlanSummary();
+    if(!s.hasData){ showToast('Primero define tus deudas en el simulador','info'); return; }
+    let txt = '— Plan de pago de deudas (' + stratLabel(s.estrategia) + ') —\n';
+    if(s.estancado){
+      txt += 'Con el abono actual la deuda no se liquida; aumentar la capacidad de pago o consolidar.\n';
+    } else {
+      txt += 'Quedo libre de deudas en ' + mesesATexto(s.mes) + ' (' + fechaLibertad(s.mes) + ').\n';
+      if(s.totalInteres) txt += 'Intereses estimados del plan: ' + fmt(s.totalInteres) + '.\n';
+      txt += 'Orden de liberación:\n';
+      s.orden.forEach((d,i)=>{ txt += '  ' + (i+1) + '. ' + (d.nombre||'Deuda') + ' — ' + fechaLibertad(d.payoffMes) + '\n'; });
+    }
+    const ta = document.getElementById('t6-plan');
+    if(!ta) return;
+    ta.value = (ta.value ? ta.value.trim() + '\n\n' : '') + txt.trim();
+    state.tablero.plan = ta.value;
+    // Al comprometer el plan, recién ahí persistimos el simulador y el plan de acción.
+    if(typeof persistModule === 'function'){
+      persistModule('simulador_deuda');
+      scheduleSave('tablero');
+    }
+    showToast('Plan agregado a tu plan de acción · guardado','success');
+  }
+
+  async function saveM7(){
+    recalcDebtSim();
+    await saveModule('simulador_deuda', state.debtSim);
+    completedModules.add(7); updateProgress(); updateNavStatus();
+    showModal('Plan guardado','Tu plan de pago de deudas se guardó correctamente.');
+    showToast('Guardado','success');
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     METAS CUANTIFICADAS + PROYECCIÓN DE PATRIMONIO (Módulo 8)
+     ═══════════════════════════════════════════════════════════ */
+  let chartProy = null;
+
+  function computePatrimonioNeto(){
+    const totalActivos = (state.activos||[]).reduce((s,a)=> s + (a.valor||0), 0);
+    const totalDeuda   = (state.deudas||[]).reduce((s,d)=> s + (d.saldo||0), 0);
+    return totalActivos - totalDeuda;
+  }
+  function ahorroMensualM4(){
+    return (state.ahorro||[]).reduce((s,a)=> s + (a.monto_mensual||0), 0);
+  }
+  function mesesHastaFecha(fecha){
+    if(!fecha) return null;
+    const parts = String(fecha).split('-'); if(parts.length < 2) return null;
+    const y = +parts[0], mo = +parts[1];
+    if(!y || !mo) return null;
+    const now = new Date();
+    return (y - now.getFullYear()) * 12 + ((mo - 1) - now.getMonth());
+  }
+  function formatMesAnio(fecha){
+    if(!fecha) return '';
+    const parts = String(fecha).split('-'); if(parts.length < 2) return '';
+    const mo = +parts[1];
+    if(!mo || mo < 1 || mo > 12) return parts[0];
+    return MES_NAMES_ES[mo-1] + ' ' + parts[0];
+  }
+  function metaFuenteOptions(sel){
+    const opts = [
+      {v:'manual', l:'Lo ingreso manualmente'},
+      {v:'liquido_total', l:'Todos mis activos líquidos (M3)'},
+      {v:'fondo_provisiones', l:'Fondo de provisiones (M5)'}
+    ];
+    if(state.varIncome && state.varIncome.active) opts.push({v:'fondo_estabilizacion', l:'Fondo de estabilización'});
+    (state.activos||[]).forEach(a=>{ if(a.tipo==='LÍQUIDO' && a.nombre) opts.push({v:'activo:'+a.nombre, l:'Activo · '+a.nombre}); });
+    return opts.map(o=>'<option value="'+String(o.v).replace(/"/g,'&quot;')+'"'+(o.v===sel?' selected':'')+'>'+o.l+'</option>').join('');
+  }
+  function metaSaldoActual(m){
+    const f = m.fuente || 'manual';
+    if(f === 'manual') return m.saldoManual || 0;
+    if(f === 'liquido_total') return (state.activos||[]).filter(a=>a.tipo==='LÍQUIDO').reduce((s,a)=>s+(a.valor||0),0);
+    if(f === 'fondo_provisiones') return state.p5.fondoProvisiones || 0;
+    if(f === 'fondo_estabilizacion') return (state.varIncome && state.varIncome.fondoActual) || 0;
+    if(f.indexOf('activo:') === 0){ const nombre = f.slice(7); const a = (state.activos||[]).find(x=>x.nombre===nombre); return a ? (a.valor||0) : 0; }
+    return m.saldoManual || 0;
+  }
+  function proyeccionPatrimonio(P0, aporteMensual, rDec, anios){
+    const im = rDec > 0 ? Math.pow(1 + rDec, 1/12) - 1 : 0;
+    let saldo = P0, aportado = P0;
+    const serie = [{anio:0, saldo:P0, aportado:P0}];
+    const N = Math.max(1, Math.min(anios, 60)) * 12;
+    for(let m=1; m<=N; m++){
+      saldo = saldo * (1 + im) + aporteMensual;
+      aportado += aporteMensual;
+      if(m % 12 === 0) serie.push({anio: m/12, saldo, aportado});
+    }
+    return {serie, final:saldo, aportado, rendimiento: saldo - aportado};
+  }
+
+  function seedMetas(){
+    if(state.metas.seeded) return;
+    if(state.metas.items && state.metas.items.length){ state.metas.seeded = true; return; }
+    const pr = state.profile || {};
+    let fechaRetiro = '';
+    if(pr.edad != null && pr.edadRetiro != null && pr.edadRetiro > pr.edad){
+      const now = new Date();
+      fechaRetiro = (now.getFullYear() + (pr.edadRetiro - pr.edad)) + '-' + String(now.getMonth()+1).padStart(2,'0');
+    }
+    state.metas.items = [
+      {nombre:'Fondo de emergencia', objetivo:0, fecha:'', fuente:'liquido_total', saldoManual:0, aporte:0},
+      {nombre:'Cuota inicial de vivienda', objetivo:0, fecha:'', fuente:'manual', saldoManual:0, aporte:0},
+      {nombre:'Retiro / libertad financiera', objetivo:0, fecha:fechaRetiro, fuente:'manual', saldoManual:0, aporte:0}
+    ];
+    state.metas.seeded = true;
+  }
+
+  function renderMetas(){
+    seedMetas();
+    const p = state.metas.proy || {};
+    // Perfil: edad, dependientes, edad de retiro
+    const pr = state.profile || {};
+    const edadEl = document.getElementById('meta-edad'); if(edadEl) edadEl.value = pr.edad != null ? pr.edad : '';
+    const depEl = document.getElementById('meta-dependientes'); if(depEl) depEl.value = pr.dependientes != null ? pr.dependientes : '';
+    const retEl = document.getElementById('meta-edad-retiro'); if(retEl) retEl.value = pr.edadRetiro != null ? pr.edadRetiro : '';
+    const notaEl = document.getElementById('meta-perfil-nota');
+    let aniosRetiro = null;
+    if(pr.edad != null && pr.edadRetiro != null && pr.edadRetiro > pr.edad){
+      aniosRetiro = pr.edadRetiro - pr.edad;
+      if(!p.aniosUserSet) p.anios = aniosRetiro;   // horizonte por defecto = años hasta el retiro
+      if(notaEl) notaEl.textContent = 'Te faltan ' + aniosRetiro + ' años para tu retiro objetivo (' + pr.edadRetiro + '). Usamos ese horizonte en tu proyección.';
+    } else if(notaEl){
+      notaEl.textContent = pr.edad==null || pr.edadRetiro==null ? 'Completa tu edad y tu edad de retiro para personalizar la proyección.' : '';
+    }
+    const rendEl = document.getElementById('meta-proy-rend'); if(rendEl) rendEl.value = p.rendimiento != null ? p.rendimiento : 9;
+    const aniosEl = document.getElementById('meta-proy-anios'); if(aniosEl) aniosEl.value = p.anios != null ? p.anios : 28;
+    const iniEl = document.getElementById('meta-proy-inicial');
+    if(iniEl){ iniEl.value = p.inicialOverride != null ? fmtInput(p.inicialOverride) : ''; if(!iniEl.dataset.money) attachMoneyInput(iniEl); }
+    const apEl = document.getElementById('meta-proy-aporte');
+    if(apEl){ apEl.value = p.aporteOverride != null ? fmtInput(p.aporteOverride) : ''; if(!apEl.dataset.money) attachMoneyInput(apEl); }
+    renderMetasRows();
+    recalcMetas();
+  }
+
+  function renderMetasRows(){
+    const body = document.getElementById('metas-body');
+    if(!body) return;
+    body.innerHTML = '';
+    const items = state.metas.items || [];
+    if(!items.length){
+      body.innerHTML = '<div class="meta-empty">Aún no tienes metas. Agrega una con el botón de abajo o usa un atajo.</div>';
+      return;
+    }
+    items.forEach((m,i)=>{
+      const card = document.createElement('div');
+      card.className = 'meta-card';
+      card.dataset.i = i;
+      const manualHide = (m.fuente && m.fuente !== 'manual') ? ' hide' : '';
+      card.innerHTML =
+        '<div class="meta-head">'
+        + '<input type="text" class="it-name" data-f="nombre" value="' + String(m.nombre||'').replace(/"/g,'&quot;') + '" placeholder="Nombre de la meta">'
+        + '<button class="it-del" title="Quitar">' + SVG_X + '</button>'
+        + '</div>'
+        + '<div class="meta-grid">'
+        + '<div class="mr-field"><label>Monto objetivo</label><input class="money-input" data-f="objetivo" placeholder="0"></div>'
+        + '<div class="mr-field"><label>Fecha objetivo</label><input type="month" data-f="fecha" value="' + (m.fecha||'') + '"></div>'
+        + '<div class="mr-field"><label>Saldo actual · fuente</label><select data-f="fuente">' + metaFuenteOptions(m.fuente||'manual') + '</select></div>'
+        + '<div class="mr-field meta-manual-cell' + manualHide + '" data-manual><label>Saldo actual</label><input class="money-input" data-f="saldoManual" placeholder="0"></div>'
+        + '<div class="mr-field"><label>Aporte mensual planeado</label><input class="money-input" data-f="aporte" placeholder="0"></div>'
+        + '</div>'
+        + '<div class="meta-progress" data-prog></div>';
+      body.appendChild(card);
+      const oIn = card.querySelector('input[data-f=objetivo]'); oIn.value = m.objetivo>0?fmtInput(m.objetivo):''; attachMoneyInput(oIn);
+      const sIn = card.querySelector('input[data-f=saldoManual]'); sIn.value = m.saldoManual>0?fmtInput(m.saldoManual):''; attachMoneyInput(sIn);
+      const aIn = card.querySelector('input[data-f=aporte]'); aIn.value = m.aporte>0?fmtInput(m.aporte):''; attachMoneyInput(aIn);
+      card.querySelectorAll('input,select').forEach(el=>{ el.addEventListener('input', recalcMetas); el.addEventListener('change', recalcMetas); });
+      card.querySelector('.it-del').addEventListener('click', ()=>{ state.metas.items.splice(i,1); renderMetasRows(); recalcMetas(); });
+    });
+  }
+
+  function recalcMetas(){
+    const items = state.metas.items || [];
+    document.querySelectorAll('#metas-body .meta-card').forEach(card=>{
+      const i = +card.dataset.i; const m = items[i]; if(!m) return;
+      m.nombre = card.querySelector('input[data-f=nombre]').value;
+      m.objetivo = n(card.querySelector('input[data-f=objetivo]').value);
+      m.fecha = card.querySelector('input[data-f=fecha]').value;
+      m.fuente = card.querySelector('select[data-f=fuente]').value;
+      m.saldoManual = n(card.querySelector('input[data-f=saldoManual]').value);
+      m.aporte = n(card.querySelector('input[data-f=aporte]').value);
+      const manualCell = card.querySelector('[data-manual]');
+      if(manualCell) manualCell.classList.toggle('hide', m.fuente !== 'manual');
+      // Progreso
+      const prog = card.querySelector('[data-prog]');
+      const saldo = metaSaldoActual(m);
+      const obj = m.objetivo || 0;
+      const pctv = obj > 0 ? Math.min(saldo/obj, 1) : 0;
+      const faltante = Math.max(0, obj - saldo);
+      const meses = mesesHastaFecha(m.fecha);
+      const aporteNec = (faltante > 0 && meses && meses > 0) ? faltante/meses : 0;
+      const aportePlan = m.aporte || 0;
+      let estado = '', estClass = '';
+      if(obj <= 0){ estado = 'Define un monto objetivo para ver tu avance'; }
+      else if(saldo >= obj){ estado = '¡Meta cumplida!'; estClass = 'pos'; }
+      else if(meses != null && meses <= 0){ estado = 'La fecha objetivo ya pasó · ajusta el plazo'; estClass = 'neg'; }
+      else if(aporteNec > 0 && aportePlan >= aporteNec){ estado = 'Vas en ritmo para lograrla a tiempo'; estClass = 'pos'; }
+      else if(aporteNec > 0){ estado = 'Tu aporte planeado no alcanza el ritmo necesario'; estClass = 'warn'; }
+      const barColor = saldo >= obj && obj > 0 ? 'var(--pos,#0e4d3a)' : 'var(--accent,#0e4d3a)';
+      let html = '<div class="meta-bar-wrap"><div class="meta-bar"><div class="meta-bar-fill" style="width:' + (pctv*100).toFixed(1) + '%;background:' + barColor + '"></div></div><span class="meta-pct">' + (obj>0?(pctv*100).toFixed(1)+'%':'—') + '</span></div>';
+      html += '<div class="meta-stats">';
+      html += '<span>Tienes <strong>' + fmt(saldo) + '</strong>' + (obj>0?(' de ' + fmt(obj)):'') + '</span>';
+      if(obj > 0) html += '<span>Faltan <strong>' + fmt(faltante) + '</strong></span>';
+      if(meses != null && meses > 0) html += '<span>' + meses + ' meses · ' + formatMesAnio(m.fecha) + '</span>';
+      if(aporteNec > 0) html += '<span>Aporte necesario: <strong>' + fmt(aporteNec) + '/mes</strong></span>';
+      if(estado) html += '<span class="meta-estado ' + estClass + '">' + estado + '</span>';
+      html += '</div>';
+      if(prog) prog.innerHTML = html;
+    });
+    renderMetasResumen();
+    renderProyeccion();
+    scheduleSave('metas');
+  }
+
+  function renderMetasResumen(){
+    const cont = document.getElementById('metas-resumen'); if(!cont) return;
+    const items = (state.metas.items||[]).filter(m=>(m.objetivo||0) > 0);
+    if(!items.length){ cont.innerHTML = ''; return; }
+    let totObj=0, totSaldo=0, totNec=0;
+    items.forEach(m=>{
+      const saldo = Math.min(metaSaldoActual(m), m.objetivo);
+      const faltante = Math.max(0, m.objetivo - metaSaldoActual(m));
+      const meses = mesesHastaFecha(m.fecha);
+      totObj += m.objetivo; totSaldo += saldo;
+      if(faltante > 0 && meses && meses > 0) totNec += faltante/meses;
+    });
+    const pctTot = totObj>0 ? Math.min(totSaldo/totObj,1) : 0;
+    cont.innerHTML =
+      '<div class="kpi-grid">'
+      + '<div class="kpi is-info"><div class="kpi-label">Suma de tus metas</div><div class="kpi-value">' + fmt(totObj) + '</div><div class="kpi-sub">' + (pctTot*100).toFixed(1) + '% ya alcanzado</div></div>'
+      + '<div class="kpi is-pos"><div class="kpi-label">Ahorrado hacia metas</div><div class="kpi-value">' + fmt(totSaldo) + '</div><div class="kpi-sub">Saldos vinculados + manuales</div></div>'
+      + '<div class="kpi span-2"><div class="kpi-label">Aporte mensual necesario · total</div><div class="kpi-value">' + fmt(totNec) + '</div><div class="kpi-sub">Para cumplir todas a tiempo</div></div>'
+      + '</div>';
+  }
+
+  function renderProyeccion(){
+    const autoInicial = computePatrimonioNeto();
+    const autoAporte = ahorroMensualM4();
+    const iniEl = document.getElementById('meta-proy-inicial');
+    const apEl  = document.getElementById('meta-proy-aporte');
+    const rendEl = document.getElementById('meta-proy-rend');
+    const aniosEl = document.getElementById('meta-proy-anios');
+    if(!iniEl) return;
+    if(iniEl) iniEl.placeholder = fmtInput(autoInicial) || '0';
+    if(apEl) apEl.placeholder = fmtInput(autoAporte) || '0';
+
+    const inicialOverride = iniEl.value.trim() !== '' ? n(iniEl.value) : null;
+    const aporteOverride  = apEl.value.trim() !== '' ? n(apEl.value) : null;
+    const rend = parseFloat(rendEl.value); const rendVal = isNaN(rend) ? 9 : rend;
+    const anios = Math.max(1, Math.min(parseInt(aniosEl.value) || 28, 60));
+    state.metas.proy = Object.assign(state.metas.proy||{}, { rendimiento: rendVal, anios, inicialOverride, aporteOverride });
+
+    const inicial = inicialOverride != null ? inicialOverride : autoInicial;
+    const aporte  = aporteOverride  != null ? aporteOverride  : autoAporte;
+    const r = proyeccionPatrimonio(inicial, aporte, rendVal/100, anios);
+
+    const kpis = document.getElementById('meta-proy-kpis');
+    if(kpis){
+      kpis.innerHTML =
+        '<div class="kpi-grid">'
+        + '<div class="kpi is-info"><div class="kpi-label">Patrimonio neto hoy</div><div class="kpi-value">' + fmt(inicial) + '</div><div class="kpi-sub">Activos − deudas</div></div>'
+        + '<div class="kpi is-pos span-2"><div class="kpi-label">Patrimonio proyectado a ' + anios + ' años</div><div class="kpi-value">' + fmt(r.final) + '</div><div class="kpi-sub">Aportando ' + fmt(aporte) + '/mes al ' + rendVal + '% anual</div></div>'
+        + '<div class="kpi"><div class="kpi-label">Rendimiento generado</div><div class="kpi-value">' + fmt(r.rendimiento) + '</div><div class="kpi-sub">Lo que trabaja tu dinero</div></div>'
+        + '</div>';
+    }
+    const nota = document.getElementById('meta-proy-nota');
+    if(nota){
+      nota.innerHTML = SVG_INFO + '<div>Proyección en pesos nominales: asume que reinviertes todo y mantienes el aporte mensual. El rendimiento real depende de tus inversiones y no descuenta inflación. Es una estimación para ilustrar el poder del interés compuesto, no una promesa de retorno.</div>';
+    }
+    renderProyeccionChart(r, anios);
+    scheduleSave('metas');
+  }
+
+  function renderProyeccionChart(r, anios){
+    const canvas = document.getElementById('meta-proy-chart'); if(!canvas) return;
+    const labels = r.serie.map(p => 'Año ' + p.anio);
+    const saldoData = r.serie.map(p => Math.round(p.saldo));
+    const aportadoData = r.serie.map(p => Math.round(p.aportado));
+    const ctx = canvas.getContext('2d');
+    if(chartProy){ chartProy.destroy(); chartProy = null; }
+    chartProy = new Chart(ctx, {
+      type:'line',
+      data:{ labels, datasets:[
+        {label:'Total aportado', data:aportadoData, borderColor:'#a8a59e', backgroundColor:'rgba(168,165,158,.08)', borderWidth:2, borderDash:[5,4], fill:true, tension:.2, pointRadius:0},
+        {label:'Patrimonio proyectado', data:saldoData, borderColor:'#0e4d3a', backgroundColor:'rgba(14,77,58,.12)', borderWidth:2.5, fill:true, tension:.2, pointRadius:0}
+      ]},
+      options:{
+        responsive:true, maintainAspectRatio:true,
+        interaction:{mode:'index', intersect:false},
+        plugins:{
+          legend:{position:'bottom', labels:{font:{family:'Geist',size:11,weight:'500'}, boxWidth:14, padding:14, color:'#2b2b2e', usePointStyle:true, pointStyle:'line'}},
+          tooltip:{backgroundColor:'#0c0c0d', titleColor:'#fff', bodyColor:'#fff', padding:12, cornerRadius:10,
+            titleFont:{family:'Geist',weight:'600',size:12}, bodyFont:{family:'JetBrains Mono',size:12},
+            callbacks:{label:ctx=>' '+ctx.dataset.label+': '+fmt(ctx.parsed.y)}}
+        },
+        scales:{
+          x:{grid:{display:false}, ticks:{font:{family:'JetBrains Mono',size:10}, color:'#8a8a8a', maxRotation:0, autoSkip:true, maxTicksLimit:8}},
+          y:{grid:{color:'rgba(0,0,0,.05)'}, ticks:{font:{family:'JetBrains Mono',size:10}, color:'#8a8a8a',
+            callback:v=> v>=1e6 ? (v/1e6).toFixed(0)+'M' : v>=1e3 ? (v/1e3).toFixed(0)+'k' : v}}
+        }
+      }
+    });
+  }
+
+  function addMeta(nombre){
+    if((state.metas.items||[]).length >= 20){ showToast('Máximo 20 metas','error'); return; }
+    state.metas.items.push({nombre:nombre||'', objetivo:0, fecha:'', fuente:'manual', saldoManual:0, aporte:0});
+    renderMetasRows(); recalcMetas();
+    const last = document.querySelector('#metas-body .meta-card:last-child input[data-f=nombre]');
+    if(last && !nombre) last.focus();
+  }
+
+  async function saveMetas(){
+    recalcMetas();
+    await saveModule('metas', state.metas);
+    completedModules.add(8); updateProgress(); updateNavStatus();
+    showModal('Metas guardadas','Tus metas y proyección se guardaron correctamente.');
+    showToast('Guardado','success');
+  }
+
+  /* ═══════════════════════════════════════════════════════════
      PERSISTENCIA
      ═══════════════════════════════════════════════════════════ */
   async function saveModule(name,data){
@@ -1983,6 +3143,86 @@
     }
   }
   
+  /* ═══════════════════════════════════════════════════════════
+     AUTOGUARDADO EN TIEMPO REAL (Firestore)
+     ═══════════════════════════════════════════════════════════ */
+  const NAME_TO_ID = {ingresos_gastos:1, endeudamiento:2, activos:3, ahorro:4, presupuesto_anual:5, tablero:6, simulador_deuda:7, metas:8, ingresos_variables:'var'};
+  const _saveTimers = {};
+  const _lastSaved = {};
+  let _autosaveReady = false;   // se activa tras la carga inicial (evita guardar durante el render inicial)
+
+  function moduleData(name){
+    switch(name){
+      case 'ingresos_gastos':{
+        const totalIng = (state.ingresos||[]).reduce((s,i)=>s+(i.monto||0),0);
+        const totalGas = Object.values(state.gastos||{}).reduce((a,b)=>a+(b||0),0);
+        return {
+          fuentes_ingreso:(state.ingresos||[]).map(ing=>({nombre:ing.nombre,monto:ing.monto,esVariable:ing.esVariable||false})),
+          gastos:state.gastos, gastosLabels:state.gastosLabels,
+          tipoIngreso:state.profile.tipoIngreso, total_ingresos:totalIng, total_gastos:totalGas
+        };
+      }
+      case 'endeudamiento': return {deudas:state.deudas};
+      case 'activos': return {activos:state.activos};
+      case 'ahorro': return {objetivos_ahorro:state.ahorro};
+      case 'presupuesto_anual': return state.p5;
+      case 'tablero': return state.tablero;
+      case 'simulador_deuda': return state.debtSim;
+      case 'metas': return state.metas;
+      case 'ingresos_variables': return state.varIncome;
+    }
+    return null;
+  }
+
+  function scheduleSave(name){
+    if(!_autosaveReady) return;
+    clearTimeout(_saveTimers[name]);
+    _saveTimers[name] = setTimeout(()=>persistModule(name), 700);
+  }
+
+  async function persistModule(name){
+    const data = moduleData(name);
+    if(data == null) return;
+    let json = null;
+    try{ json = JSON.stringify(data); }catch(_){ }
+    if(json != null && _lastSaved[name] === json) return; // sin cambios reales → no escribir
+    _lastSaved[name] = json;
+    setAutosaveStatus('saving');
+    try{
+      await saveModule(name, data);
+      if(name === 'presupuesto_anual'){ try{ await regenerateEventosCliente(); }catch(_){ } }
+      const id = NAME_TO_ID[name];
+      if(id != null){ completedModules.add(id); updateProgress(); updateNavStatus(); }
+      setAutosaveStatus('saved');
+    }catch(e){
+      setAutosaveStatus('error');
+    }
+  }
+
+  /* Píldora de estado de guardado (flotante) */
+  let _autosavePill = null, _autosaveHideTimer = null;
+  function setAutosaveStatus(status){
+    if(!_autosavePill){
+      _autosavePill = document.createElement('div');
+      _autosavePill.id = 'autosave-pill';
+      _autosavePill.className = 'autosave-pill';
+      document.body.appendChild(_autosavePill);
+    }
+    clearTimeout(_autosaveHideTimer);
+    if(status === 'saving'){
+      _autosavePill.textContent = 'Guardando…';
+      _autosavePill.className = 'autosave-pill show';
+    } else if(status === 'saved'){
+      _autosavePill.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg> Guardado';
+      _autosavePill.className = 'autosave-pill show saved';
+      _autosaveHideTimer = setTimeout(()=>_autosavePill.classList.remove('show'), 1400);
+    } else {
+      _autosavePill.textContent = 'Sin conexión · guardado local';
+      _autosavePill.className = 'autosave-pill show error';
+      _autosaveHideTimer = setTimeout(()=>_autosavePill.classList.remove('show'), 2600);
+    }
+  }
+
   /* Perfil del cliente: vive en clientes/{uid} (raíz, no en una subcolección) */
   async function savePerfil(uid, perfilData){
     if(!firestoreAvailable||!uid){
@@ -2012,15 +3252,31 @@
       return d?JSON.parse(d):null;
     }
   }
+  /* Persistencia del perfil tras edición (debounced) */
+  let _perfilTimer = null;
+  function profilePayload(){
+    const p = state.profile || {};
+    return {
+      nombre:p.nombre||'', email:p.email||'', whatsapp:p.whatsapp||'', tipoIngreso:p.tipoIngreso||'',
+      edad:(p.edad!=null?p.edad:null), dependientes:(p.dependientes!=null?p.dependientes:null), edadRetiro:(p.edadRetiro!=null?p.edadRetiro:null),
+      consentimientoTratamiento:p.consentimientoTratamiento, consentimientoRecomendaciones:p.consentimientoRecomendaciones
+    };
+  }
+  function persistPerfilDebounced(){
+    clearTimeout(_perfilTimer);
+    _perfilTimer = setTimeout(()=>{ if(state.profile && state.profile.uid) savePerfil(state.profile.uid, profilePayload()); }, 800);
+  }
+
   async function loadAllData(){
     showToast('Cargando tus datos…','info');
-    const [m1,m2,m3,m4,m5,m6,mVar] = await Promise.all(
-      ['ingresos_gastos','endeudamiento','activos','ahorro','presupuesto_anual','tablero','ingresos_variables']
+    const [m1,m2,m3,m4,m5,m6,mVar,mSim,mMetas] = await Promise.all(
+      ['ingresos_gastos','endeudamiento','activos','ahorro','presupuesto_anual','tablero','ingresos_variables','simulador_deuda','metas']
       .map(m=>loadModule(m))
     );
     if(m1){
       if(m1.fuentes_ingreso) state.ingresos=m1.fuentes_ingreso;
       if(m1.gastos) Object.assign(state.gastos,m1.gastos);
+      if(m1.gastosLabels) Object.assign(state.gastosLabels,m1.gastosLabels);
       if(m1.tipoIngreso) state.profile.tipoIngreso = m1.tipoIngreso;
       completedModules.add(1);
     }
@@ -2029,7 +3285,17 @@
     if(m4){if(m4.objetivos_ahorro) state.ahorro=m4.objetivos_ahorro;completedModules.add(4);}
     if(m5){state.p5={...state.p5,...m5};completedModules.add(5);}
     if(m6){Object.assign(state.tablero,m6);completedModules.add(6);}
+    state.tablero.budgetRule = Object.assign({rule:'50/30/20',custom:{nec:50,des:30,aho:20},buckets:{}}, state.tablero.budgetRule||{});
+    state.tablero.couple = Object.assign({ingreso1:null,ingreso2:null,compartido:null,modo:'proporcional'}, state.tablero.couple||{});
     if(mVar){Object.assign(state.varIncome, mVar);if(mVar.active)completedModules.add('var');}
+    if(mSim){
+      state.debtSim = {...state.debtSim, ...mSim};
+      if(mSim.deudas && mSim.deudas.length){ state.debtSim.seeded = true; completedModules.add(7); }
+    }
+    if(mMetas){
+      state.metas = {...state.metas, ...mMetas, proy:{...state.metas.proy, ...(mMetas.proy||{})}};
+      if(mMetas.items && mMetas.items.length){ state.metas.seeded = true; completedModules.add(8); }
+    }
     renderIngresosTable();calcM1();
     renderGastosTable();
     renderDeudasTable();calcM2();
@@ -2067,8 +3333,8 @@
       }
     }
   
-    if(s.deudas?.length)   populateP5Section('p5-deudas-body',s.deudas);
     if(s.ahorro?.length)   populateP5Section('p5-ahorro-body',s.ahorro);
+    renderP5Deudas();
     renderP5GastosAccordions();calcP5Totals();
   
     // Sincronizar el select de tipo de ingreso con el state al cargar
@@ -2076,6 +3342,10 @@
     if(tipoSel && state.profile && state.profile.tipoIngreso){
       tipoSel.value = state.profile.tipoIngreso;
     }
+
+    // Primar el cache de "último guardado" con el estado cargado y activar el autoguardado.
+    Object.keys(NAME_TO_ID).forEach(nm=>{ try{ _lastSaved[nm] = JSON.stringify(moduleData(nm)); }catch(_){ } });
+    _autosaveReady = true;
   }
   
   /* Re-pre-cargar ingresos cuando cambia el tipo (si están vacíos) */
@@ -2104,10 +3374,10 @@
     state.p5.gastos=g;
   }
   function updateProgress(){
-    document.getElementById('progress-bar').style.width = (completedModules.size/6*100)+'%';
+    document.getElementById('progress-bar').style.width = Math.min(100, completedModules.size/6*100)+'%';
   }
   function updateNavStatus(){
-    [1,2,3,4,5,6,'var'].forEach(i=>{
+    [1,2,3,4,5,6,7,8,'var'].forEach(i=>{
       const sbItem=document.querySelector(`.sb-item[data-module="${i}"]`);
       const bbItem=document.querySelector(`.bb-item[data-module="${i}"]`);
       if(completedModules.has(i)){
@@ -2132,6 +3402,7 @@
     await saveModule('ingresos_gastos',{
       fuentes_ingreso:fuentes,
       gastos:state.gastos,
+      gastosLabels:state.gastosLabels,
       tipoIngreso: state.profile.tipoIngreso,
       total_ingresos:totalIng,
       total_gastos:totalGas
@@ -2385,12 +3656,18 @@
     this.innerHTML = 'Guardando…';
   
     const now = new Date().toISOString();
+    const edad = parseInt(document.getElementById('ob-edad').value)||null;
+    const dependientes = parseInt(document.getElementById('ob-dependientes').value);
+    const edadRetiro = parseInt(document.getElementById('ob-edad-retiro').value)||null;
     const perfilData = {
       uid: _onboardingUser.uid,
       nombre: nombre,
       email: email,
       whatsapp: wppCheck.value,
       tipoIngreso: '',
+      edad: edad,
+      dependientes: isNaN(dependientes) ? null : dependientes,
+      edadRetiro: edadRetiro,
       consentimientoTratamiento: {
         aceptado: true,
         fecha: now,
@@ -2406,9 +3683,13 @@
     try {
       await savePerfil(_onboardingUser.uid, perfilData);
       state.profile = Object.assign(state.profile||{}, {
+        uid: _onboardingUser.uid,
         nombre: nombre,
         email: email,
         whatsapp: wppCheck.value,
+        edad: edad,
+        dependientes: isNaN(dependientes) ? null : dependientes,
+        edadRetiro: edadRetiro,
         consentimientoTratamiento: perfilData.consentimientoTratamiento,
         consentimientoRecomendaciones: perfilData.consentimientoRecomendaciones
       });
@@ -2484,10 +3765,14 @@
   
     // Aplicar info del perfil al UI
     state.profile = Object.assign(state.profile||{}, {
+      uid: user.uid,
       nombre: perfil.nombre || user.displayName || user.email,
       email: perfil.email || user.email,
       whatsapp: perfil.whatsapp || '',
       tipoIngreso: perfil.tipoIngreso || '',
+      edad: perfil.edad != null ? perfil.edad : null,
+      dependientes: perfil.dependientes != null ? perfil.dependientes : null,
+      edadRetiro: perfil.edadRetiro != null ? perfil.edadRetiro : null,
       consentimientoTratamiento: perfil.consentimientoTratamiento,
       consentimientoRecomendaciones: perfil.consentimientoRecomendaciones || {aceptado:false}
     });
@@ -2634,18 +3919,107 @@
       navigateTo(isNaN(m) ? m : parseInt(m));
     });
   });
-  document.getElementById('save-m1').addEventListener('click',saveM1);
-  document.getElementById('save-m2').addEventListener('click',saveM2);
-  document.getElementById('save-m3').addEventListener('click',saveM3);
-  document.getElementById('save-m4').addEventListener('click',saveM4);
-  document.getElementById('save-m5').addEventListener('click',saveM5);
-  document.getElementById('save-m6').addEventListener('click',saveM6);
+  /* Los botones de "Guardar módulo" se eliminaron: el guardado es automático en tiempo real. */
+
+  /* ── Wiring del Simulador de Deuda (Módulo 7) ── */
+  /* ds-capacidad y ds-abono-monto se cablean en renderDebtSim sobre el elemento vivo
+     (garantiza que el cálculo reaccione al pago extra). Aquí solo los campos simples. */
+  ['ds-cons-tasa','ds-cons-plazo','ds-abono-mes'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el) el.addEventListener('input', recalcDebtSim);
+  });
+  document.querySelectorAll('#ds-strat .ds-strat-btn').forEach(btn=>{
+    btn.addEventListener('click', function(){
+      state.debtSim.estrategia = this.dataset.strat;
+      document.querySelectorAll('#ds-strat .ds-strat-btn').forEach(b=>b.classList.remove('active'));
+      this.classList.add('active');
+      document.getElementById('ds-cons-config').style.display = state.debtSim.estrategia==='consolidacion' ? 'block' : 'none';
+      document.getElementById('modulo-7').classList.toggle('ds-cons-mode', state.debtSim.estrategia==='consolidacion');
+      document.getElementById('modulo-7').classList.toggle('ds-personal-mode', state.debtSim.estrategia==='personalizada');
+      recalcDebtSim();
+      requestAnimationFrame(()=>{
+        const card = document.getElementById('ds-order-card');
+        if(card) card.scrollIntoView({behavior:'smooth', block:'start'});
+      });
+    });
+  });
+  document.getElementById('ds-add-deuda').addEventListener('click', function(){
+    state.debtSim.customized = true;
+    state.debtSim.deudas.push({nombre:'',saldo:0,tasa:0,pago:0,consolidar:false});
+    renderDebtSimRows(); recalcDebtSim();
+  });
+  document.getElementById('ds-reload').addEventListener('click', function(){
+    seedDebtSimFromM2(); state.debtSim.customized = false; renderDebtSimRows(); recalcDebtSim();
+    showToast('Deudas recargadas desde tu diagnóstico','info');
+  });
+
+  /* ── Wiring de Metas y Proyección (Módulo 8) ── */
+  /* save-m8 eliminado: autoguardado en tiempo real */
+  const addMetaBtn = document.getElementById('meta-add');
+  if(addMetaBtn) addMetaBtn.addEventListener('click', ()=> addMeta());
+  document.querySelectorAll('#meta-chips [data-meta-chip]').forEach(chip=>{
+    chip.addEventListener('click', ()=> addMeta(chip.dataset.metaChip));
+  });
+  ['meta-proy-inicial','meta-proy-aporte','meta-proy-rend','meta-proy-anios'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.addEventListener('input', function(){ if(id==='meta-proy-anios') state.metas.proy.aniosUserSet=true; renderProyeccion(); });
+  });
+  /* Perfil editable desde Metas */
+  (function(){
+    const e = document.getElementById('meta-edad'), d = document.getElementById('meta-dependientes'), r = document.getElementById('meta-edad-retiro');
+    function upd(){
+      state.profile.edad = e.value.trim()!=='' ? (parseInt(e.value)||null) : null;
+      const dv = parseInt(d.value); state.profile.dependientes = isNaN(dv) ? null : dv;
+      state.profile.edadRetiro = r.value.trim()!=='' ? (parseInt(r.value)||null) : null;
+      persistPerfilDebounced();
+      const pr = state.profile, notaEl = document.getElementById('meta-perfil-nota');
+      if(pr.edad!=null && pr.edadRetiro!=null && pr.edadRetiro>pr.edad){
+        const aniosRetiro = pr.edadRetiro - pr.edad;
+        state.metas.proy.anios = aniosRetiro;
+        state.metas.proy.aniosUserSet = false;
+        const aniosEl = document.getElementById('meta-proy-anios'); if(aniosEl) aniosEl.value = aniosRetiro;
+        if(notaEl) notaEl.textContent = 'Te faltan ' + aniosRetiro + ' años para tu retiro objetivo (' + pr.edadRetiro + '). Usamos ese horizonte en tu proyección.';
+      } else if(notaEl){
+        notaEl.textContent = (pr.edad==null||pr.edadRetiro==null) ? 'Completa tu edad y tu edad de retiro para personalizar la proyección.' : '';
+      }
+      renderProyeccion();
+    }
+    [e,d,r].forEach(el=>{ if(el) el.addEventListener('input', upd); });
+  })();
+
+  /* ── Wiring de la Regla de presupuesto (Tablero) ── */
+  document.querySelectorAll('#t6-rule-seg .rule-seg-btn').forEach(b=>b.addEventListener('click',function(){
+    state.tablero.budgetRule.rule = this.dataset.rule;
+    document.querySelectorAll('#t6-rule-seg .rule-seg-btn').forEach(x=>x.classList.remove('active'));
+    this.classList.add('active');
+    const cb = document.getElementById('t6-rule-custom');
+    if(cb){
+      cb.style.display = this.dataset.rule==='custom' ? 'grid' : 'none';
+      if(this.dataset.rule==='custom'){
+        const c = state.tablero.budgetRule.custom;
+        document.getElementById('rule-nec').value = c.nec;
+        document.getElementById('rule-des').value = c.des;
+        document.getElementById('rule-aho').value = c.aho;
+      }
+    }
+    renderBudgetRuleResult(); scheduleSave('tablero');
+  }));
+  ['rule-nec','rule-des','rule-aho'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.addEventListener('input', function(){
+      const c = state.tablero.budgetRule.custom;
+      const v = parseFloat(this.value)||0;
+      if(id==='rule-nec') c.nec=v; else if(id==='rule-des') c.des=v; else c.aho=v;
+      renderBudgetRuleResult(); scheduleSave('tablero');
+    });
+  });
   document.getElementById('add-ingreso').addEventListener('click',function(){
     if(state.ingresos.length>=15){showToast('Máximo 15 fuentes','error');return;}
     state.ingresos.push({nombre:'',monto:0});
     renderIngresosTable();calcM1();
   });
   document.getElementById('add-deuda').addEventListener('click',addDeudaRow);
+  document.getElementById('add-gasto-cat').addEventListener('click',addGastoCategoria);
   document.getElementById('add-activo').addEventListener('click',addActivoRow);
   document.getElementById('add-ahorro').addEventListener('click',addAhorroRow);
   document.getElementById('socio1').addEventListener('input',calcP5Totals);
@@ -3205,6 +4579,7 @@
     renderIngresosTable();calcM1();
     renderActivosTable();calcM3();
     renderAhorroTable();calcM4();
+    scheduleSave('ingresos_variables');
   }
   
   /* Event handlers MVar */
@@ -3215,6 +4590,7 @@
   });
   document.getElementById('mvar-actividad').addEventListener('change', function(){
     state.varIncome.actividad = this.value;
+    scheduleSave('ingresos_variables');
   });
   document.getElementById('mvar-tributo-pct').addEventListener('input', function(){
     state.varIncome.tributoPct = parseFloat(this.value)||0;
@@ -3235,6 +4611,7 @@
       bruto:0,costos:0,tributo:0,neto:0,monthIdx:d.getMonth()
     });
     renderMVarMeses();renderMVarStats();
+    scheduleSave('ingresos_variables');
   });
   document.getElementById('mvar-fill-12').addEventListener('click', function(){
     if(state.varIncome.meses.length>0){
@@ -3267,7 +4644,7 @@
     showModal('Módulo guardado','Tu análisis de ingresos variables se guardó correctamente.');
     showToast('Guardado','success');
   }
-  document.getElementById('save-mvar').addEventListener('click',saveMVar);
+  /* save-mvar eliminado: autoguardado en tiempo real */
   
   /* DEMO DATA — Carlos Mendoza */
   function loadDemoIndependent(){
@@ -3321,7 +4698,7 @@
       {nombre:'CDT a 6 meses', valor:6000000, tipo:'LÍQUIDO'},
       {nombre:'Apartamento (cuota inicial pagada)', valor:95000000, tipo:'NO LÍQUIDO'},
       {nombre:'Vehículo Mazda CX-5', valor:78000000, tipo:'NO LÍQUIDO'},
-      {nombre:'Pensión voluntaria Skandia', valor:12500000, tipo:'NO LÍQUIDO'}
+      {nombre:'Pensión voluntaria Skandia', valor:12500000, tipo:'NO LÍQUIDO', restringido:true}
     ];
     state.ahorro = [
       {nombre:'Fondo de emergencias', monto_mensual:400000},
@@ -3404,8 +4781,8 @@
     ];
     state.activos = [
       {nombre:'Cuenta de ahorros Bancolombia', valor:2800000, tipo:'LÍQUIDO'},
-      {nombre:'Fondo voluntario Protección', valor:18500000, tipo:'NO LÍQUIDO'},
-      {nombre:'Cesantías acumuladas', valor:6200000, tipo:'NO LÍQUIDO'},
+      {nombre:'Fondo voluntario Protección', valor:18500000, tipo:'NO LÍQUIDO', restringido:true},
+      {nombre:'Cesantías acumuladas', valor:6200000, tipo:'NO LÍQUIDO', restringido:true},
       {nombre:'Apartamento (heredado, sin hipoteca)', valor:185000000, tipo:'NO LÍQUIDO'}
     ];
     state.ahorro = [
@@ -3462,35 +4839,8 @@
     setTimeout(function(){navigateTo(5);}, 600);
   }
   
-  document.getElementById('btn-demo-carlos').addEventListener('click', function(){
-    userId = 'demo_carlos';
-    currency = 'COP $';
-    state.profile = state.profile || {};
-    state.profile.nombre = 'Carlos Mendoza';
-    state.profile.email = 'carlos@demo.com';
-    state.profile.whatsapp = '3001234567';
-    state.profile.consentimientoTratamiento = {aceptado:true, fecha:new Date().toISOString()};
-    document.getElementById('user-display').textContent = 'Carlos Mendoza';
-    document.getElementById('user-avatar').textContent = 'C';
-    document.getElementById('login-screen').style.display = 'none';
-    document.getElementById('app').classList.add('show');
-    loadDemoIndependent();
-  });
-  document.getElementById('btn-demo-maria').addEventListener('click', function(){
-    userId = 'demo_maria';
-    currency = 'COP $';
-    state.profile = state.profile || {};
-    state.profile.nombre = 'María Restrepo';
-    state.profile.email = 'maria@demo.com';
-    state.profile.whatsapp = '3009876543';
-    state.profile.consentimientoTratamiento = {aceptado:true, fecha:new Date().toISOString()};
-    document.getElementById('user-display').textContent = 'María Restrepo';
-    document.getElementById('user-avatar').textContent = 'M';
-    document.getElementById('login-screen').style.display = 'none';
-    document.getElementById('app').classList.add('show');
-    loadDemoEmpleada();
-  });
-  
+  /* Los perfiles demo visibles en el inicio se eliminaron. El acceso demo por URL (?demo=carlos|maria) se conserva solo para pruebas internas. */
+
   (function autoDemo(){
     const params = new URLSearchParams(window.location.search);
     const which = params.get('demo');
