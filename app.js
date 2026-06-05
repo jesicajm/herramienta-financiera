@@ -4037,7 +4037,7 @@
     for(let i=11;i>=0;i--){
       const d = new Date(today.getFullYear(), today.getMonth()-i, 1);
       const label = MES_NAMES_ES[d.getMonth()] + ' ' + d.getFullYear();
-      months.push({label, bruto:0, costos:0, tributo:0, neto:0, monthIdx:d.getMonth()});
+      months.push({label, bruto:0, costos:0, tributo:0, neto:0, monthIdx:d.getMonth(), anio:d.getFullYear()});
     }
     return months;
   }
@@ -4100,30 +4100,49 @@
     return mes.neto;
   }
 
-  /* Combina los meses de TODOS los contratos en una serie por etiqueta de mes.
-     Cada pseudo-mes suma bruto/costos/tributo/neto/tributoSugerido de los contratos. */
+  /* --- Período de un mes (año + mes), independiente de la etiqueta editable --- */
+  /* Normaliza: asegura mes.anio y mes.monthIdx. Migra filas viejas leyendo la etiqueta. */
+  function normalizarMesPeriodo(mes){
+    if(mes.monthIdx==null || isNaN(mes.monthIdx)){
+      // intentar deducir el mes desde la etiqueta
+      if(mes.label){
+        const low = (''+mes.label).toLowerCase();
+        for(let k=0;k<MES_NAMES_ES.length;k++){ if(low.indexOf(MES_NAMES_ES[k].toLowerCase())>=0){ mes.monthIdx=k; break; } }
+      }
+      if(mes.monthIdx==null || isNaN(mes.monthIdx)) mes.monthIdx = new Date().getMonth();
+    }
+    if(mes.anio==null || isNaN(mes.anio)){
+      let yr=null;
+      if(mes.label){ const ym=(''+mes.label).match(/(20\d{2})/); if(ym) yr=parseInt(ym[1]); }
+      mes.anio = (yr!=null) ? yr : new Date().getFullYear();
+    }
+    return mes;
+  }
+  function mesKey(mes){ normalizarMesPeriodo(mes); return mes.anio*12 + mes.monthIdx; }
+  function mesLabelFmt(mes){ normalizarMesPeriodo(mes); return MES_NAMES_ES[mes.monthIdx] + ' ' + mes.anio; }
+
+  /* Combina los meses de TODOS los contratos por MES CALENDARIO (año+mes), no por texto.
+     Cada pseudo-mes suma bruto/costos/tributo/neto/tributoSugerido de los contratos. Orden cronológico. */
   function getCombinedMeses(){
     const v = state.varIncome;
-    const map = {};        // key(label) -> pseudo-mes
-    const order = [];      // preserva el orden de aparición
+    const map = {};
     (v.contratos||[]).forEach(function(c){
       (c.meses||[]).forEach(function(m){
         recalcMesNetoC(c, m);
-        const key = (m.label||'').trim().toLowerCase() || ('__' + order.length);
-        if(!map[key]){
-          map[key] = {label:m.label||'—', monthIdx:m.monthIdx, bruto:0, costos:0, tributo:0, neto:0, tributoSugerido:0};
-          order.push(key);
+        const k = mesKey(m);
+        if(!map[k]){
+          map[k] = {key:k, label:mesLabelFmt(m), monthIdx:m.monthIdx, anio:m.anio,
+                    bruto:0, costos:0, tributo:0, neto:0, tributoSugerido:0};
         }
-        const p = map[key];
+        const p = map[k];
         p.bruto += m.bruto||0;
         p.costos += m.costos||0;
         p.tributo += m.tributo||0;
         p.neto += m.neto||0;
         p.tributoSugerido += m.tributoSugerido||0;
-        if(p.monthIdx==null && m.monthIdx!=null) p.monthIdx = m.monthIdx;
       });
     });
-    return order.map(function(k){return map[k];});
+    return Object.keys(map).map(function(k){return map[k];}).sort(function(a,b){return a.key-b.key;});
   }
 
   function getSalarioPersonalActual(){
@@ -4205,6 +4224,7 @@
       }).join('');
 
       card.innerHTML = '<div class="mvar-contrato-head">'
+        + '<span class="mvar-contrato-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg></span>'
         + '<input type="text" class="it-name mvar-contrato-nombre" data-f="nombre" value="' + (c.nombre||'') + '" placeholder="Nombre del contrato (ej: Honorarios Clínica X)">'
         + '<button class="it-del mvar-contrato-del" title="Eliminar contrato">' + SVG_X + '</button>'
         + '</div>'
@@ -4255,9 +4275,18 @@
 
       card.querySelector('[data-add-mes]').addEventListener('click', function(){
         if(c.meses.length >= 24){ showToast('Máximo 24 meses por contrato','error'); return; }
-        const today = new Date();
-        const d = new Date(today.getFullYear(), today.getMonth()-c.meses.length, 1);
-        c.meses.push({label:MES_NAMES_ES[d.getMonth()]+' '+d.getFullYear(), bruto:0,costos:0,tributo:0,neto:0,monthIdx:d.getMonth()});
+        // por defecto: un mes antes del más antiguo registrado (o el mes actual si no hay)
+        let baseAnio, baseMon;
+        if(c.meses.length){
+          c.meses.forEach(normalizarMesPeriodo);
+          let minK = Infinity, minM=null;
+          c.meses.forEach(function(m){ const k=mesKey(m); if(k<minK){minK=k;minM=m;} });
+          const prev = new Date(minM.anio, minM.monthIdx-1, 1);
+          baseAnio = prev.getFullYear(); baseMon = prev.getMonth();
+        } else {
+          const today=new Date(); baseAnio=today.getFullYear(); baseMon=today.getMonth();
+        }
+        c.meses.push({label:MES_NAMES_ES[baseMon]+' '+baseAnio, bruto:0,costos:0,tributo:0,neto:0,monthIdx:baseMon,anio:baseAnio});
         renderContratoMeses(c, mesesBody, mesCountEl); renderMVarStats(); scheduleSave('ingresos_variables');
       });
       card.querySelector('[data-fill-12]').addEventListener('click', function(){
@@ -4287,7 +4316,15 @@
       body.innerHTML = '<p class="mvar-hint" style="margin:6px 0 0">Sin meses. Usa "Crear 12 meses" o "Agregar mes".</p>';
       return;
     }
+    // Ordenar cronológicamente por período (año+mes); la etiqueta de texto ya no manda
+    c.meses.forEach(normalizarMesPeriodo);
+    c.meses.sort(function(a,b){ return mesKey(a)-mesKey(b); });
+
     const retiene = c.retencionAplica;
+    const hoyAnio = new Date().getFullYear();
+    const anios = [];
+    for(let y=hoyAnio-4; y<=hoyAnio+1; y++) anios.push(y);
+
     c.meses.forEach(function(mes, i){
       recalcMesNetoC(c, mes);
       const real = mes.tributo || 0;
@@ -4299,10 +4336,13 @@
         if(df>0) return '<span class="trib-hint trib-hint-warn">Insuficiente · faltaron ' + fmt(df) + '</span>';
         return '<span class="trib-hint trib-hint-ok">Reserva suficiente</span>';
       }
+      const mesOpts = MES_NAMES_ES.map(function(nm,idx){ return '<option value="'+idx+'"'+(idx===mes.monthIdx?' selected':'')+'>'+nm+'</option>'; }).join('');
+      const anioOpts = anios.map(function(y){ return '<option value="'+y+'"'+(y===mes.anio?' selected':'')+'>'+y+'</option>'; }).join('');
+
       const row = document.createElement('div');
       row.className = 'mvar-mes-row';
       row.innerHTML = '<div class="mvar-mes-head">'
-        + '<div class="mvar-mes-label"><input type="text" data-f="label" value="' + (mes.label||'') + '" placeholder="Ej: Ene 2025"></div>'
+        + '<div class="mvar-mes-periodo"><select data-f="monthIdx" title="Mes">' + mesOpts + '</select><select data-f="anio" title="Año">' + anioOpts + '</select></div>'
         + '<span class="mvar-mes-neto" data-neto>' + fmt(mes.neto||0) + '</span>'
         + '<button class="it-del" title="Eliminar">' + SVG_X + '</button>'
         + '</div>'
@@ -4322,8 +4362,21 @@
       if(tribIn) tribIn.value = real>0 ? fmtInput(real) : '';
       [brutoIn,costosIn,tribIn].forEach(function(el){ if(el) attachMoneyInput(el); });
 
+      // Cambiar mes/año: actualiza período, re-ordena y re-renderiza
+      const mesSel = row.querySelector('select[data-f=monthIdx]');
+      const anioSel = row.querySelector('select[data-f=anio]');
+      const onPeriodo = function(){
+        mes.monthIdx = parseInt(mesSel.value);
+        mes.anio = parseInt(anioSel.value);
+        mes.label = MES_NAMES_ES[mes.monthIdx] + ' ' + mes.anio;
+        renderContratoMeses(c, body, countEl);
+        renderMVarStats();
+        propagateMVarChanges();
+      };
+      mesSel.addEventListener('change', onPeriodo);
+      anioSel.addEventListener('change', onPeriodo);
+
       const updateRow = function(){
-        mes.label = row.querySelector('input[data-f=label]').value;
         mes.bruto = n(brutoIn.value);
         mes.costos = n(costosIn.value);
         mes.tributo = tribIn ? n(tribIn.value) : 0;
@@ -4334,9 +4387,10 @@
         renderMVarStats();
         propagateMVarChanges();
       };
-      row.querySelectorAll('input').forEach(inp=>inp.addEventListener('input',updateRow));
+      [brutoIn,costosIn,tribIn].forEach(function(el){ if(el) el.addEventListener('input',updateRow); });
       row.querySelector('.it-del').addEventListener('click',function(){
-        c.meses.splice(i,1);
+        const idx = c.meses.indexOf(mes);
+        if(idx>=0) c.meses.splice(idx,1);
         renderContratoMeses(c, body, countEl);
         renderMVarStats();
         propagateMVarChanges();
@@ -4766,7 +4820,7 @@
       const mes = {
         label:MES_NAMES_ES[d.getMonth()]+' '+d.getFullYear(),
         bruto:item.bruto, costos:item.costos, tributo:item.tributo,
-        neto:0, monthIdx:d.getMonth()
+        neto:0, monthIdx:d.getMonth(), anio:d.getFullYear()
       };
       recalcMesNetoC(contrato, mes);
       contrato.meses.push(mes);
