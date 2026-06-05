@@ -174,12 +174,10 @@
     },
     varIncome:{
       active:false,
-      actividad:'servicios',
-      tributoPct:11,
+      contratos:[],   // cada uno: {id,nombre,tipo,retencionAplica,retencionPct,meses:[]}
       fondoActual:0,
       salarioPersonal:0,
-      salarioOverride:false,
-      meses:[]
+      salarioOverride:false
     },
     profile:{
       tipoIngreso:'', // 'empleado' | 'independiente' | 'mixto' | ''
@@ -973,22 +971,17 @@
     const mvarActive = state.varIncome && state.varIncome.active;
     const salarioPersonal = mvarActive ? getSalarioPersonalActual() : 0;
   
-    // Asegurar exactamente UNA línea marcada como variable cuando módulo activo
+    // La fila de ingreso variable es DEDICADA (linkedToMVar), no roba una fila fija del usuario.
+    state.ingresos.forEach(x=>{ if(x.esVariable) delete x.esVariable; });   // limpiar marca antigua
+    state.ingresos = state.ingresos.filter(x=>!x.linkedToMVar);              // quitar la sincronizada previa
     if(mvarActive){
-      const variableCount = state.ingresos.filter(x=>x.esVariable).length;
-      if(variableCount===0 && state.ingresos.length>0){
-        state.ingresos[0].esVariable = true;
-      } else if(variableCount>1){
-        let found=false;
-        state.ingresos.forEach(x=>{if(x.esVariable){if(found)x.esVariable=false;found=true;}});
-      }
-      state.ingresos.forEach(x=>{if(x.esVariable) x.monto = salarioPersonal;});
+      state.ingresos.push({nombre:'Ingreso variable (salario personal)', monto:salarioPersonal, linkedToMVar:true});
     }
   
     state.ingresos.forEach((ing,i)=>{
       const row=document.createElement('div');
       row.className='item-row';
-      const isVariable = mvarActive && ing.esVariable;
+      const isVariable = !!ing.linkedToMVar;
   
       if(isVariable){
         row.classList.add('item-row-locked');
@@ -1003,13 +996,9 @@
         const link = row.querySelector('[data-go-mvar]');
         if(link) link.addEventListener('click',function(e){e.preventDefault();navigateTo('var');});
       } else {
-        const toggleBtn = mvarActive
-          ? '<button class="it-var-toggle" title="Marcar como ingreso variable" data-mark-var><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 17l6-6 4 4 8-8"/><polyline points="14 7 21 7 21 14"/></svg></button>'
-          : '';
-        row.innerHTML = '<input type="text" class="it-name" data-f="nombre" value="' + (ing.nombre||'') + '" placeholder="Fuente de ingreso">'
+        row.innerHTML = '<input type="text" class="it-name" data-f="nombre" value="' + (ing.nombre||'') + '" placeholder="Fuente de ingreso (salario, etc.)">'
           + '<span class="it-prefix">' + currency + '</span>'
           + '<input class="money-input" data-f="monto">'
-          + toggleBtn
           + '<button class="it-del" title="Eliminar">' + SVG_X + '</button>';
         body.appendChild(row);
         const moneyInp = row.querySelector('.money-input');
@@ -1018,28 +1007,17 @@
         attachMoneyInput(moneyInp);
         row.querySelectorAll('input').forEach(inp=>inp.addEventListener('input',calcM1));
         row.querySelector('.it-del').addEventListener('click',()=>{
-          if(state.ingresos.length<=1)return;
+          const editables = state.ingresos.filter(x=>!x.linkedToMVar).length;
+          if(editables<=1 && !mvarActive) return;        // siempre dejar al menos una fila utilizable
           state.ingresos.splice(i,1);
           renderIngresosTable();calcM1();
-        });
-        const tg = row.querySelector('[data-mark-var]');
-        if(tg) tg.addEventListener('click',()=>{
-          state.ingresos.forEach((x,j)=>{x.esVariable = (j===i);});
-          renderIngresosTable();calcM1();
-          showToast('Marcada como ingreso variable principal','success');
         });
       }
     });
   
-    // Grid: con toggle es 5 cols, sin toggle es 4
+    // Grid uniforme (4 columnas): ya no hay toggle de "marcar como variable"
     body.querySelectorAll('.item-row').forEach(r=>{
-      if(r.classList.contains('item-row-locked')){
-        r.style.gridTemplateColumns='1fr auto auto auto';
-      } else if(mvarActive){
-        r.style.gridTemplateColumns='1fr auto auto auto auto';
-      } else {
-        r.style.gridTemplateColumns='1fr auto auto auto';
-      }
+      r.style.gridTemplateColumns='1fr auto auto auto';
     });
   
     // Mostrar nota informativa si MVar activo
@@ -1883,8 +1861,8 @@
     // Indicadores adicionales si MVar activo
     if(state.varIncome && state.varIncome.active){
       const v = state.varIncome;
-      const mesesConDatos = (v.meses||[]).filter(m=>(m.bruto||0)>0);
-      const netos = mesesConDatos.map(m=>Math.max(0,(m.bruto||0)-(m.costos||0)-(m.tributo||0)));
+      const mesesConDatos = getCombinedMeses().filter(m=>(m.bruto||0)>0);
+      const netos = mesesConDatos.map(m=>m.neto||0);
   
       if(netos.length>=3){
         const promNeto = vMean(netos);
@@ -1922,7 +1900,7 @@
       }
   
       let totalDebido=0, totalReservado=0;
-      (v.meses||[]).forEach(m=>{
+      getCombinedMeses().forEach(m=>{
         totalDebido    += m.tributoSugerido || 0;
         totalReservado += m.tributo || 0;
       });
@@ -3157,7 +3135,7 @@
         const totalIng = (state.ingresos||[]).reduce((s,i)=>s+(i.monto||0),0);
         const totalGas = Object.values(state.gastos||{}).reduce((a,b)=>a+(b||0),0);
         return {
-          fuentes_ingreso:(state.ingresos||[]).map(ing=>({nombre:ing.nombre,monto:ing.monto,esVariable:ing.esVariable||false})),
+          fuentes_ingreso:(state.ingresos||[]).filter(ing=>!ing.linkedToMVar).map(ing=>({nombre:ing.nombre,monto:ing.monto})),
           gastos:state.gastos, gastosLabels:state.gastosLabels,
           tipoIngreso:state.profile.tipoIngreso, total_ingresos:totalIng, total_gastos:totalGas
         };
@@ -3288,6 +3266,8 @@
     state.tablero.budgetRule = Object.assign({rule:'50/30/20',custom:{nec:50,des:30,aho:20},buckets:{}}, state.tablero.budgetRule||{});
     state.tablero.couple = Object.assign({ingreso1:null,ingreso2:null,compartido:null,modo:'proporcional'}, state.tablero.couple||{});
     if(mVar){Object.assign(state.varIncome, mVar);if(mVar.active)completedModules.add('var');}
+    if(!Array.isArray(state.varIncome.contratos)) state.varIncome.contratos = [];
+    delete state.varIncome.meses; delete state.varIncome.actividad; delete state.varIncome.tributoPct;
     if(mSim){
       state.debtSim = {...state.debtSim, ...mSim};
       if(mSim.deudas && mSim.deudas.length){ state.debtSim.seeded = true; completedModules.add(7); }
@@ -3526,9 +3506,9 @@
   
       // 3. Eventos especiales (no atados a un mes específico)
       // Déficit tributario detectado en el módulo de variables
-      if(state.varIncome && state.varIncome.active && state.varIncome.meses){
+      if(state.varIncome && state.varIncome.active && (state.varIncome.contratos||[]).length){
         let totalDebido = 0, totalReservado = 0;
-        state.varIncome.meses.forEach(m => {
+        getCombinedMeses().forEach(m => {
           totalDebido += m.tributoSugerido || 0;
           totalReservado += m.tributo || 0;
         });
@@ -4098,40 +4078,78 @@
   }
   
   /* Salario personal sugerido (P25 redondeado a 50.000 abajo) */
+  /* Factory de contrato nuevo */
+  function nuevoContrato(){
+    return {
+      id: 'c' + Date.now() + Math.floor(Math.random()*1000),
+      nombre: '',
+      tipo: 'prestacion_servicios',
+      retencionAplica: true,
+      retencionPct: 11,
+      meses: []
+    };
+  }
+
+  /* Recalcular neto de UN mes según la retención de SU contrato */
+  function recalcMesNetoC(c, mes){
+    const pct = c.retencionAplica ? (c.retencionPct||0)/100 : 0;
+    const tributoReal = c.retencionAplica ? Math.max(0, mes.tributo||0) : 0;
+    mes.tributoSugerido = Math.round((mes.bruto||0) * pct);
+    mes.tributoDeficit  = Math.max(0, mes.tributoSugerido - tributoReal);
+    mes.neto = Math.max(0, (mes.bruto||0) - (mes.costos||0) - tributoReal);
+    return mes.neto;
+  }
+
+  /* Combina los meses de TODOS los contratos en una serie por etiqueta de mes.
+     Cada pseudo-mes suma bruto/costos/tributo/neto/tributoSugerido de los contratos. */
+  function getCombinedMeses(){
+    const v = state.varIncome;
+    const map = {};        // key(label) -> pseudo-mes
+    const order = [];      // preserva el orden de aparición
+    (v.contratos||[]).forEach(function(c){
+      (c.meses||[]).forEach(function(m){
+        recalcMesNetoC(c, m);
+        const key = (m.label||'').trim().toLowerCase() || ('__' + order.length);
+        if(!map[key]){
+          map[key] = {label:m.label||'—', monthIdx:m.monthIdx, bruto:0, costos:0, tributo:0, neto:0, tributoSugerido:0};
+          order.push(key);
+        }
+        const p = map[key];
+        p.bruto += m.bruto||0;
+        p.costos += m.costos||0;
+        p.tributo += m.tributo||0;
+        p.neto += m.neto||0;
+        p.tributoSugerido += m.tributoSugerido||0;
+        if(p.monthIdx==null && m.monthIdx!=null) p.monthIdx = m.monthIdx;
+      });
+    });
+    return order.map(function(k){return map[k];});
+  }
+
   function getSalarioPersonalActual(){
     const v = state.varIncome;
     if(!v || !v.active) return 0;
     if(v.salarioOverride && v.salarioPersonal>0) return v.salarioPersonal;
-    const meses = (v.meses||[]).filter(m => (m.bruto||0) > 0);
+    const meses = getCombinedMeses().filter(m => (m.bruto||0) > 0);
     if(meses.length<3) return v.salarioPersonal||0;
-    const netos = meses.map(m => Math.max(0,(m.bruto||0)-(m.costos||0)-(m.tributo||0)));
+    const netos = meses.map(m => m.neto||0);
     const p25 = vPercentile(netos, 25);
     return p25 > 0 ? Math.floor(p25/50000)*50000 : 0;
   }
-  
-  /* Meta del fondo de estabilización según variabilidad */
+
+  /* Meta del fondo de estabilización según variabilidad combinada */
   function getFondoMetaActual(){
     const v = state.varIncome;
     if(!v || !v.active) return 0;
     const salario = getSalarioPersonalActual();
     if(salario<=0) return 0;
-    const meses = (v.meses||[]).filter(m => (m.bruto||0) > 0);
+    const meses = getCombinedMeses().filter(m => (m.bruto||0) > 0);
     if(meses.length<3) return salario*6;
-    const netos = meses.map(m => Math.max(0,(m.bruto||0)-(m.costos||0)-(m.tributo||0)));
+    const netos = meses.map(m => m.neto||0);
     const promedio = vMean(netos);
     const variabilidad = promedio>0 ? vStdDev(netos)/promedio : 0;
     const mesesMeta = variabilidad>=0.5 ? 12 : variabilidad>=0.25 ? 9 : 6;
     return salario * mesesMeta;
-  }
-  
-  /* Recalcular neto y campos teóricos del mes */
-  function recalcMesNeto(mes){
-    const tribPctSugerido = (state.varIncome.tributoPct||0)/100;
-    const tributoReal = Math.max(0, mes.tributo||0);
-    mes.tributoSugerido = Math.round((mes.bruto||0) * tribPctSugerido);
-    mes.tributoDeficit  = Math.max(0, mes.tributoSugerido - tributoReal);
-    mes.neto = Math.max(0, (mes.bruto||0) - (mes.costos||0) - tributoReal);
-    return mes.neto;
   }
   
   /* Render principal */
@@ -4142,45 +4160,145 @@
     activeEl.checked = v.active;
     document.getElementById('mvar-content').style.display = v.active ? 'block' : 'none';
     if(!v.active) return;
-  
-    const actividadEl = document.getElementById('mvar-actividad');
-    const tributoEl = document.getElementById('mvar-tributo-pct');
+
     const fondoEl = document.getElementById('mvar-fondo-actual');
-    if(actividadEl.value !== v.actividad) actividadEl.value = v.actividad;
-    if(document.activeElement !== tributoEl) tributoEl.value = v.tributoPct || '';
-    if(document.activeElement !== fondoEl) fondoEl.value = v.fondoActual>0 ? fmtInput(v.fondoActual) : '';
-    if(!fondoEl.dataset.money) attachMoneyInput(fondoEl);
-  
-    renderMVarMeses();
+    if(fondoEl){
+      if(document.activeElement !== fondoEl) fondoEl.value = v.fondoActual>0 ? fmtInput(v.fondoActual) : '';
+      if(!fondoEl.dataset.money) attachMoneyInput(fondoEl);
+    }
+
+    renderMVarContratos();
     renderMVarStats();
   }
-  
-  function renderMVarMeses(){
-    const body = document.getElementById('mvar-meses-body');
+
+  const MVAR_TIPOS = [
+    ['prestacion_servicios','Prestación de servicios'],
+    ['honorarios','Honorarios'],
+    ['comercio','Comercio / Ventas'],
+    ['freelance','Freelance / Creativo'],
+    ['comisiones','Comisiones'],
+    ['rentas','Rentas / Arriendos'],
+    ['negocio','Negocio propio'],
+    ['otros','Otros']
+  ];
+
+  /* Render de las tarjetas de contrato (cada una con su histórico y retención) */
+  function renderMVarContratos(){
+    const cont = document.getElementById('mvar-contratos');
     const v = state.varIncome;
-    body.innerHTML = '';
-    if(!v.meses.length){
-      body.innerHTML = '<div class="mvar-empty">'
-        + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>'
-        + '<p>Aún no has registrado meses.<br>Usa <strong>"Crear 12 meses recientes"</strong> para empezar.</p>'
+    if(!cont) return;
+    cont.innerHTML = '';
+
+    if(!v.contratos.length){
+      cont.innerHTML = '<div class="mvar-empty">'
+        + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>'
+        + '<p>Aún no has agregado contratos.<br>Usa <strong>"Agregar contrato"</strong> para registrar cada fuente variable (honorarios, comisiones, etc.).</p>'
         + '</div>';
-      document.getElementById('mvar-meses-count').textContent = '0 meses';
       return;
     }
-    v.meses.forEach((mes,i)=>{
-      recalcMesNeto(mes);
-      const sug = mes.tributoSugerido || 0;
-      const def = mes.tributoDeficit || 0;
+
+    v.contratos.forEach(function(c, ci){
+      const card = document.createElement('div');
+      card.className = 'card mvar-contrato';
+      const tipoOpts = MVAR_TIPOS.map(function(t){
+        return '<option value="' + t[0] + '"' + (c.tipo===t[0]?' selected':'') + '>' + t[1] + '</option>';
+      }).join('');
+
+      card.innerHTML = '<div class="mvar-contrato-head">'
+        + '<input type="text" class="it-name mvar-contrato-nombre" data-f="nombre" value="' + (c.nombre||'') + '" placeholder="Nombre del contrato (ej: Honorarios Clínica X)">'
+        + '<button class="it-del mvar-contrato-del" title="Eliminar contrato">' + SVG_X + '</button>'
+        + '</div>'
+        + '<div class="mvar-config-grid">'
+        + '<div class="mr-field"><label>Tipo de contrato</label><select data-f="tipo">' + tipoOpts + '</select></div>'
+        + '<div class="mr-field"><label>¿Te retienen en la fuente?</label>'
+        +   '<label class="mvar-ret-toggle"><input type="checkbox" data-f="retencionAplica"' + (c.retencionAplica?' checked':'') + '> <span data-ret-label>' + (c.retencionAplica?'Sí, me retienen':'No me retienen') + '</span></label>'
+        + '</div>'
+        + '<div class="mr-field" data-ret-pct-wrap style="' + (c.retencionAplica?'':'display:none') + '"><label>% de retención <span class="info-tip" data-def="reserva_tributaria" tabindex="0">i</span></label><input type="number" data-f="retencionPct" min="0" max="50" step="0.5" placeholder="11" value="' + (c.retencionPct||'') + '"></div>'
+        + '</div>'
+        + '<div class="mvar-contrato-historial">'
+        +   '<div class="mvar-hist-head"><span>Historial mensual</span><span class="head-meta" data-mes-count>' + c.meses.length + (c.meses.length===1?' mes':' meses') + '</span></div>'
+        +   '<div data-meses-body></div>'
+        +   '<div class="mvar-hist-actions">'
+        +     '<button class="btn-add" data-add-mes><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Agregar mes</button>'
+        +     '<button class="btn-ghost" data-fill-12>Crear 12 meses</button>'
+        +     '<button class="btn-ghost" data-clear-mes>Limpiar</button>'
+        +   '</div>'
+        + '</div>';
+      cont.appendChild(card);
+
+      // --- wiring config ---
+      const nombreIn = card.querySelector('input[data-f=nombre]');
+      nombreIn.addEventListener('input', function(){ c.nombre = this.value; scheduleSave('ingresos_variables'); });
+
+      const tipoSel = card.querySelector('select[data-f=tipo]');
+      tipoSel.addEventListener('change', function(){ c.tipo = this.value; scheduleSave('ingresos_variables'); });
+
+      const retChk = card.querySelector('input[data-f=retencionAplica]');
+      const retLabel = card.querySelector('[data-ret-label]');
+      const retPctWrap = card.querySelector('[data-ret-pct-wrap]');
+      retChk.addEventListener('change', function(){
+        c.retencionAplica = this.checked;
+        retLabel.textContent = this.checked ? 'Sí, me retienen' : 'No me retienen';
+        retPctWrap.style.display = this.checked ? '' : 'none';
+        renderMVarContratos(); renderMVarStats(); propagateMVarChanges();
+      });
+      const retPctIn = card.querySelector('input[data-f=retencionPct]');
+      if(retPctIn) retPctIn.addEventListener('input', function(){
+        c.retencionPct = parseFloat(this.value)||0;
+        renderMVarStats(); propagateMVarChanges();
+      });
+
+      // --- meses ---
+      const mesesBody = card.querySelector('[data-meses-body]');
+      const mesCountEl = card.querySelector('[data-mes-count]');
+      renderContratoMeses(c, mesesBody, mesCountEl);
+
+      card.querySelector('[data-add-mes]').addEventListener('click', function(){
+        if(c.meses.length >= 24){ showToast('Máximo 24 meses por contrato','error'); return; }
+        const today = new Date();
+        const d = new Date(today.getFullYear(), today.getMonth()-c.meses.length, 1);
+        c.meses.push({label:MES_NAMES_ES[d.getMonth()]+' '+d.getFullYear(), bruto:0,costos:0,tributo:0,neto:0,monthIdx:d.getMonth()});
+        renderContratoMeses(c, mesesBody, mesCountEl); renderMVarStats(); scheduleSave('ingresos_variables');
+      });
+      card.querySelector('[data-fill-12]').addEventListener('click', function(){
+        if(c.meses.length>0 && !confirm('Esto reemplazará los meses de este contrato. ¿Continuar?')) return;
+        c.meses = generateRecent12Months();
+        renderContratoMeses(c, mesesBody, mesCountEl); renderMVarStats(); propagateMVarChanges();
+      });
+      card.querySelector('[data-clear-mes]').addEventListener('click', function(){
+        if(!c.meses.length) return;
+        if(!confirm('¿Borrar el historial de este contrato?')) return;
+        c.meses = [];
+        renderContratoMeses(c, mesesBody, mesCountEl); renderMVarStats(); propagateMVarChanges();
+      });
+      card.querySelector('.mvar-contrato-del').addEventListener('click', function(){
+        if(!confirm('¿Eliminar este contrato y su historial?')) return;
+        v.contratos.splice(ci,1);
+        renderMVarContratos(); renderMVarStats(); propagateMVarChanges();
+      });
+    });
+  }
+
+  /* Render de las filas de meses de UN contrato */
+  function renderContratoMeses(c, body, countEl){
+    body.innerHTML = '';
+    if(countEl) countEl.textContent = c.meses.length + (c.meses.length===1?' mes':' meses');
+    if(!c.meses.length){
+      body.innerHTML = '<p class="mvar-hint" style="margin:6px 0 0">Sin meses. Usa "Crear 12 meses" o "Agregar mes".</p>';
+      return;
+    }
+    const retiene = c.retencionAplica;
+    c.meses.forEach(function(mes, i){
+      recalcMesNetoC(c, mes);
       const real = mes.tributo || 0;
-      let hint = '';
-      if(mes.bruto > 0){
-        if(real === 0) hint = '<span class="trib-hint trib-hint-bad">No apartaste nada · sugerido: ' + fmt(sug) + '</span>';
-        else if(def > 0) hint = '<span class="trib-hint trib-hint-warn">Insuficiente · faltaron ' + fmt(def) + '</span>';
-        else hint = '<span class="trib-hint trib-hint-ok">Reserva suficiente</span>';
-      } else {
-        hint = '<span class="trib-hint">Sugerido: ' + (state.varIncome.tributoPct||0) + '% del bruto</span>';
+      function hintHtml(){
+        const sg = mes.tributoSugerido||0, df = mes.tributoDeficit||0, rl = mes.tributo||0;
+        if(!retiene) return '<span class="trib-hint trib-hint-ok">Sin retención en este contrato</span>';
+        if((mes.bruto||0)<=0) return '<span class="trib-hint">Sugerido: ' + (c.retencionPct||0) + '% del bruto</span>';
+        if(rl===0) return '<span class="trib-hint trib-hint-bad">No apartaste nada · sugerido: ' + fmt(sg) + '</span>';
+        if(df>0) return '<span class="trib-hint trib-hint-warn">Insuficiente · faltaron ' + fmt(df) + '</span>';
+        return '<span class="trib-hint trib-hint-ok">Reserva suficiente</span>';
       }
-  
       const row = document.createElement('div');
       row.className = 'mvar-mes-row';
       row.innerHTML = '<div class="mvar-mes-head">'
@@ -4191,53 +4309,44 @@
         + '<div class="mvar-mes-grid">'
         + '<div class="mr-field"><label>Ingreso bruto</label><input class="money-input" data-f="bruto" placeholder="0"></div>'
         + '<div class="mr-field"><label>Costos del negocio</label><input class="money-input" data-f="costos" placeholder="0"></div>'
-        + '<div class="mr-field full"><label>Reserva tributaria · lo que apartaste</label><input class="money-input" data-f="tributo" placeholder="0"><div data-trib-hint>' + hint + '</div></div>'
+        + (retiene ? '<div class="mr-field full"><label>Retención · lo que apartaste</label><input class="money-input" data-f="tributo" placeholder="0"><div data-trib-hint>' + hintHtml() + '</div></div>'
+                   : '<div class="mr-field full"><div data-trib-hint>' + hintHtml() + '</div></div>')
         + '</div>';
       body.appendChild(row);
-  
+
       const brutoIn = row.querySelector('input[data-f=bruto]');
       const costosIn = row.querySelector('input[data-f=costos]');
       const tribIn = row.querySelector('input[data-f=tributo]');
       brutoIn.value = mes.bruto>0 ? fmtInput(mes.bruto) : '';
       costosIn.value = mes.costos>0 ? fmtInput(mes.costos) : '';
-      tribIn.value = real>0 ? fmtInput(real) : '';
-      [brutoIn,costosIn,tribIn].forEach(attachMoneyInput);
-  
+      if(tribIn) tribIn.value = real>0 ? fmtInput(real) : '';
+      [brutoIn,costosIn,tribIn].forEach(function(el){ if(el) attachMoneyInput(el); });
+
       const updateRow = function(){
         mes.label = row.querySelector('input[data-f=label]').value;
         mes.bruto = n(brutoIn.value);
         mes.costos = n(costosIn.value);
-        mes.tributo = n(tribIn.value);
-        recalcMesNeto(mes);
+        mes.tributo = tribIn ? n(tribIn.value) : 0;
+        recalcMesNetoC(c, mes);
         row.querySelector('[data-neto]').textContent = fmt(mes.neto);
         const hintEl = row.querySelector('[data-trib-hint]');
-        const sg = mes.tributoSugerido||0;
-        const df = mes.tributoDeficit||0;
-        const rl = mes.tributo||0;
-        if(mes.bruto>0){
-          if(rl===0) hintEl.innerHTML = '<span class="trib-hint trib-hint-bad">No apartaste nada · sugerido: ' + fmt(sg) + '</span>';
-          else if(df>0) hintEl.innerHTML = '<span class="trib-hint trib-hint-warn">Insuficiente · faltaron ' + fmt(df) + '</span>';
-          else hintEl.innerHTML = '<span class="trib-hint trib-hint-ok">Reserva suficiente</span>';
-        } else {
-          hintEl.innerHTML = '<span class="trib-hint">Sugerido: ' + (state.varIncome.tributoPct||0) + '% del bruto</span>';
-        }
+        if(hintEl) hintEl.innerHTML = hintHtml();
         renderMVarStats();
         propagateMVarChanges();
       };
       row.querySelectorAll('input').forEach(inp=>inp.addEventListener('input',updateRow));
       row.querySelector('.it-del').addEventListener('click',function(){
-        v.meses.splice(i,1);
-        renderMVarMeses();
+        c.meses.splice(i,1);
+        renderContratoMeses(c, body, countEl);
         renderMVarStats();
         propagateMVarChanges();
       });
     });
-    document.getElementById('mvar-meses-count').textContent = v.meses.length + (v.meses.length===1?' mes':' meses');
   }
   
   function renderMVarStats(){
     const v = state.varIncome;
-    const meses = v.meses.filter(m => (m.bruto||0) > 0);
+    const meses = getCombinedMeses().filter(m => (m.bruto||0) > 0);
     const netos = meses.map(m => m.neto);
   
     const promedio = vMean(netos);
@@ -4345,12 +4454,15 @@
     }
   
     renderMVarFondo(salarioActual, variabilidad);
+    const totBruto = meses.reduce((a,m)=>a+(m.bruto||0),0);
+    const totSug   = meses.reduce((a,m)=>a+(m.tributoSugerido||0),0);
+    const pctEfectivo = totBruto>0 ? (totSug/totBruto*100) : 0;
     renderMVarRecos({
       promedio:promedio, mediana:mediana,
       ingresoBaseSeguro:ingresoBaseSeguro, ingresoPesimista:ingresoPesimista,
       variabilidad:variabilidad, tendencia:tendencia,
       salario:salarioActual, fondo:v.fondoActual,
-      tributoPct:v.tributoPct, mesesCount:meses.length,
+      tributoPct:pctEfectivo, mesesCount:meses.length,
       cobertura:cobertura, meses:meses
     });
   }
@@ -4383,7 +4495,7 @@
   
     let html = '<div class="tributario-grid">'
       + '<div class="tributario-stat"><div class="tributario-label">Ingreso bruto del periodo</div><div class="tributario-value">' + fmt(totalBruto) + '</div><div class="tributario-sub">' + meses.length + ' meses · todo lo facturado</div></div>'
-      + '<div class="tributario-stat"><div class="tributario-label">Lo que debiste apartar</div><div class="tributario-value">' + fmt(totalDebido) + '</div><div class="tributario-sub">' + (state.varIncome.tributoPct||0) + '% del bruto</div></div>'
+      + '<div class="tributario-stat"><div class="tributario-label">Lo que debiste apartar</div><div class="tributario-value">' + fmt(totalDebido) + '</div><div class="tributario-sub">según la retención de cada contrato</div></div>'
       + '<div class="tributario-stat ' + estadoClass + '"><div class="tributario-label">Lo que efectivamente apartaste</div><div class="tributario-value">' + fmt(totalReservado) + '</div><div class="tributario-sub">' + pct(cobertura) + ' de lo debido · ' + estadoLabel + '</div></div>'
       + '</div>';
   
@@ -4406,7 +4518,7 @@
       + '</div>'
       + '<div style="margin-top:14px"><button class="btn-ghost" id="btn-aplicar-reserva-sug">'
       + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4"/><path d="M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9c2.5 0 4.77 1.02 6.4 2.66"/></svg>'
-      + 'Aplicar la reserva sugerida (' + (state.varIncome.tributoPct||0) + '%) a todos los meses'
+      + 'Aplicar la reserva sugerida de cada contrato a sus meses'
       + '</button></div>';
   
     document.getElementById('mvar-tributario-content').innerHTML = html;
@@ -4414,11 +4526,14 @@
     const btn = document.getElementById('btn-aplicar-reserva-sug');
     if(btn){
       btn.onclick = function(){
-        if(!confirm('Esto sobrescribirá la reserva tributaria de todos los meses con la sugerencia (' + state.varIncome.tributoPct + '% del bruto). ¿Continuar?')) return;
-        state.varIncome.meses.forEach(function(m){
-          if(m.bruto > 0) m.tributo = Math.round(m.bruto * (state.varIncome.tributoPct||0)/100);
+        if(!confirm('Esto sobrescribirá la retención apartada en cada mes con el % de cada contrato (solo en los contratos donde aplica retención). ¿Continuar?')) return;
+        (state.varIncome.contratos||[]).forEach(function(c){
+          if(!c.retencionAplica) return;
+          (c.meses||[]).forEach(function(m){
+            if(m.bruto > 0) m.tributo = Math.round(m.bruto * (c.retencionPct||0)/100);
+          });
         });
-        renderMVarMeses();
+        renderMVarContratos();
         renderMVarStats();
         propagateMVarChanges();
         showToast('Reservas actualizadas','success');
@@ -4544,7 +4659,7 @@
       }
     }
   
-    if(s.tributoPct < 8){
+    if(s.tributoPct > 0 && s.tributoPct < 8){
       recos.push({type:'warn',title:'Tu porcentaje de reserva está bajo',
         text:'Configuraste solo ' + s.tributoPct + '% de reserva tributaria. Para un independiente en régimen ordinario en Colombia, esto suele ser insuficiente. <strong>Sugerido: 10 % a 15 %</strong>. Si te llega una declaración alta sin reserva, terminas pagando con deuda.'});
     }
@@ -4588,43 +4703,15 @@
     renderMVar();
     propagateMVarChanges();
   });
-  document.getElementById('mvar-actividad').addEventListener('change', function(){
-    state.varIncome.actividad = this.value;
+  document.getElementById('mvar-add-contrato').addEventListener('click', function(){
+    if(state.varIncome.contratos.length >= 8){showToast('Máximo 8 contratos','error');return;}
+    state.varIncome.contratos.push(nuevoContrato());
+    renderMVarContratos();renderMVarStats();
     scheduleSave('ingresos_variables');
-  });
-  document.getElementById('mvar-tributo-pct').addEventListener('input', function(){
-    state.varIncome.tributoPct = parseFloat(this.value)||0;
-    state.varIncome.meses.forEach(function(m){recalcMesNeto(m);});
-    renderMVarMeses();renderMVarStats();propagateMVarChanges();
   });
   document.getElementById('mvar-fondo-actual').addEventListener('input', function(){
     state.varIncome.fondoActual = n(this.value);
     renderMVarStats();propagateMVarChanges();
-  });
-  document.getElementById('mvar-add-mes').addEventListener('click', function(){
-    if(state.varIncome.meses.length >= 24){showToast('Máximo 24 meses','error');return;}
-    const today = new Date();
-    const lastIdx = state.varIncome.meses.length;
-    const d = new Date(today.getFullYear(), today.getMonth()-lastIdx, 1);
-    state.varIncome.meses.push({
-      label:MES_NAMES_ES[d.getMonth()]+' '+d.getFullYear(),
-      bruto:0,costos:0,tributo:0,neto:0,monthIdx:d.getMonth()
-    });
-    renderMVarMeses();renderMVarStats();
-    scheduleSave('ingresos_variables');
-  });
-  document.getElementById('mvar-fill-12').addEventListener('click', function(){
-    if(state.varIncome.meses.length>0){
-      if(!confirm('Esto reemplazará los meses actuales. ¿Continuar?'))return;
-    }
-    state.varIncome.meses = generateRecent12Months();
-    renderMVarMeses();renderMVarStats();propagateMVarChanges();
-  });
-  document.getElementById('mvar-clear').addEventListener('click', function(){
-    if(!state.varIncome.meses.length)return;
-    if(!confirm('¿Borrar todo el historial? No se puede deshacer.'))return;
-    state.varIncome.meses = [];
-    renderMVarMeses();renderMVarStats();propagateMVarChanges();
   });
   document.getElementById('mvar-salary-input').addEventListener('input', function(){
     const val = n(this.value);
@@ -4649,9 +4736,14 @@
   /* DEMO DATA — Carlos Mendoza */
   function loadDemoIndependent(){
     state.profile.tipoIngreso = 'independiente';
+    const contrato = nuevoContrato();
+    contrato.nombre = 'Comisiones de seguros';
+    contrato.tipo = 'comisiones';
+    contrato.retencionAplica = true;
+    contrato.retencionPct = 11;
     state.varIncome = {
-      active:true, actividad:'comisiones', tributoPct:11,
-      fondoActual:8500000, salarioPersonal:0, salarioOverride:false, meses:[]
+      active:true, contratos:[contrato],
+      fondoActual:8500000, salarioPersonal:0, salarioOverride:false
     };
     const today = new Date();
     const dataReal = [
@@ -4676,14 +4768,13 @@
         bruto:item.bruto, costos:item.costos, tributo:item.tributo,
         neto:0, monthIdx:d.getMonth()
       };
-      recalcMesNeto(mes);
-      state.varIncome.meses.push(mes);
+      recalcMesNetoC(contrato, mes);
+      contrato.meses.push(mes);
     }
   
     state.ingresos = [
-      {nombre:'Comisiones de seguros (variable)', monto:0, esVariable:true},
-      {nombre:'Renovaciones (recurrente)', monto:1200000, esVariable:false},
-      {nombre:'Bonos de aseguradoras', monto:500000, esVariable:false}
+      {nombre:'Renovaciones (recurrente)', monto:1200000},
+      {nombre:'Bonos de aseguradoras', monto:500000}
     ];
     state.gastos = {
       alimentacion:1800000, vivienda:2400000, transporte:950000,
@@ -4762,14 +4853,14 @@
   function loadDemoEmpleada(){
     state.profile.tipoIngreso = 'empleado';
     state.varIncome = {
-      active:false, actividad:'servicios', tributoPct:11,
-      fondoActual:0, salarioPersonal:0, salarioOverride:false, meses:[]
+      active:false, contratos:[],
+      fondoActual:0, salarioPersonal:0, salarioOverride:false
     };
   
     // María, 34 años, Coordinadora de marketing en una multinacional
     state.ingresos = [
-      {nombre:'Salario neto mensual', monto:5800000, esVariable:false},
-      {nombre:'Auxilio de movilización', monto:280000, esVariable:false}
+      {nombre:'Salario neto mensual', monto:5800000},
+      {nombre:'Auxilio de movilización', monto:280000}
     ];
     state.gastos = {
       alimentacion:1450000, vivienda:1800000, transporte:550000,

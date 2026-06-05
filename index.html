@@ -216,6 +216,20 @@
 .kpi.is-neg{background:rgba(176,0,32,.06);border-color:rgba(176,0,32,.2)}
 .kpi.is-neg .kpi-value{color:#b00020}
 .meta-perfil-nota{font-size:12.5px;color:var(--accent,#0e4d3a);margin-top:8px;font-weight:500}
+/* Contratos de ingreso variable (multi-contrato) */
+.mvar-contrato{border-left:3px solid var(--accent,#0e4d3a)}
+.mvar-contrato-head{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.mvar-contrato-nombre{flex:1;font-weight:600}
+.mvar-contrato-del{flex-shrink:0}
+.mvar-ret-toggle{display:flex;align-items:center;gap:8px;font-size:13.5px;color:rgba(0,0,0,.7);cursor:pointer;
+  padding:9px 12px;border:1px solid rgba(0,0,0,.14);border-radius:10px;background:rgba(0,0,0,.02);min-height:42px}
+.mvar-ret-toggle input{width:17px;height:17px;accent-color:var(--accent,#0e4d3a);flex-shrink:0;cursor:pointer}
+.mvar-contrato-historial{margin-top:16px;padding-top:14px;border-top:1px dashed rgba(0,0,0,.12)}
+.mvar-hist-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;
+  font-size:13px;font-weight:600;color:rgba(0,0,0,.65)}
+.mvar-hist-head .head-meta{font-weight:500;color:rgba(0,0,0,.45)}
+.mvar-hist-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+
 </style>
 </head>
 <body>
@@ -520,8 +534,7 @@
         <div class="m1-mvar-note" id="m1-mvar-note" style="display:none">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 17l6-6 4 4 8-8"/><polyline points="14 7 21 7 21 14"/></svg>
           <div>
-            <strong>Tu ingreso variable se sincroniza desde el módulo dedicado.</strong>
-            La línea marcada como "sincronizada" muestra tu salario personal predecible. El resto puedes usarlas para ingresos fijos adicionales (renovaciones, rentas, dividendos).
+            <strong>La línea "sincronizada" es tu ingreso variable</strong> (viene del módulo de ingresos variables y muestra tu salario personal predecible). Tu <strong>salario fijo</strong> y cualquier otro ingreso estable los registras aquí como fuentes normales — usa "Agregar fuente de ingreso".
           </div>
         </div>
         <div class="item-list" id="ingresos-body"></div>
@@ -574,60 +587,25 @@
       <!-- Contenido condicional -->
       <div id="mvar-content" style="display:none">
 
-        <!-- Configuración inicial -->
+        <!-- Intro contratos -->
         <div class="card">
           <div class="card-head">
-            <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
-            <h3>Configuración</h3>
+            <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+            <h3>Tus contratos variables</h3>
           </div>
-          <div class="mvar-config-grid">
-            <div class="mr-field">
-              <label>Tipo de actividad</label>
-              <select id="mvar-actividad">
-                <option value="servicios">Servicios profesionales</option>
-                <option value="comercio">Comercio / Ventas</option>
-                <option value="freelance">Freelance / Creativo</option>
-                <option value="comisiones">Comisiones</option>
-                <option value="rentas">Rentas / Arriendos</option>
-                <option value="mixto">Mixto</option>
-              </select>
-            </div>
-            <div class="mr-field">
-              <label>Reserva tributaria estimada (%) <span class="info-tip" data-def="reserva_tributaria" tabindex="0">i</span></label>
-              <input type="number" id="mvar-tributo-pct" min="0" max="50" step="0.5" placeholder="10">
-            </div>
-            <div class="mr-field full">
-              <label>Saldo actual del fondo de estabilización</label>
-              <input class="money-input" id="mvar-fondo-actual" placeholder="0">
-            </div>
+          <p class="mvar-hint" style="margin-top:-6px">Agrega un contrato por cada fuente que varía mes a mes (honorarios, comisiones, etc.). Cada contrato tiene <strong>su propio historial</strong> y su propia <strong>retención</strong> — solo se aparta reserva tributaria en los contratos donde te retienen. Tu salario fijo va en el Módulo 1, no aquí.</p>
+          <div class="mr-field" style="margin-top:14px;max-width:340px">
+            <label>Saldo actual del fondo de estabilización</label>
+            <input class="money-input" id="mvar-fondo-actual" placeholder="0">
           </div>
-          <p class="mvar-hint">La reserva tributaria es lo que apartas de cada ingreso para impuestos. En Colombia, para independientes con régimen ordinario, suele estar entre <strong>8 % y 15 %</strong> del bruto. Ajústalo según tu caso.</p>
         </div>
 
-        <!-- Histórico mensual -->
-        <div class="card">
-          <div class="card-head">
-            <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
-            <h3>Historial de ingresos</h3>
-            <span class="head-meta" id="mvar-meses-count">0 meses</span>
-          </div>
-          <p class="mvar-hint" style="margin-top:-6px;margin-bottom:14px">Registra los últimos <strong>12 meses</strong> (mínimo 6). Para cada mes ingresa lo que <em>realmente</em> recibiste y los costos directos del negocio si los hay.</p>
-          <div id="mvar-meses-body"></div>
-          <button class="btn-add" id="mvar-add-mes">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            Agregar mes
-          </button>
-          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-            <button class="btn-ghost" id="mvar-fill-12">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-              Crear 12 meses recientes
-            </button>
-            <button class="btn-ghost" id="mvar-clear">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-              Limpiar historial
-            </button>
-          </div>
-        </div>
+        <!-- Contenedor de contratos (dinámico) -->
+        <div id="mvar-contratos"></div>
+        <button class="btn-add" id="mvar-add-contrato" style="margin-bottom:8px">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Agregar contrato
+        </button>
 
         <!-- Análisis estadístico -->
         <div class="kpi-grid" id="mvar-kpis"></div>
