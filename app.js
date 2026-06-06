@@ -145,6 +145,7 @@
       {nombre:'Otra fuente 02',monto:0},{nombre:'Otra fuente 03',monto:0}
     ],
     gastos:{alimentacion:0,vivienda:0,transporte:0,salud:0,entretenimiento:0,comunicaciones:0,otros:0},
+    gastosItems:{},   // por categoría: [{nombre,monto}]; el total de la categoría = suma de sus items
     gastosLabels:{},
     deudas:[],
     activos:[
@@ -328,19 +329,8 @@
       }
     });
     let totalGas=0;
-    // Si hay inputs renderizados, leer y actualizar state. Si no hay inputs (DOM aún no rendered), sumar del state.
-    const gastosInputs = document.querySelectorAll('#gastos-body input[data-key]');
-    if(gastosInputs.length > 0){
-      gastosInputs.forEach(inp=>{
-        const k = inp.dataset.key;
-        const v = n(inp.value);
-        totalGas += v;
-        if(k && k in state.gastos) state.gastos[k] = v;
-      });
-    } else {
-      // No hay inputs renderizados todavía; usar el state directamente
-      Object.values(state.gastos).forEach(v => totalGas += (v||0));
-    }
+    // El total de cada categoría se deriva de sus items (state.gastos[k] ya está sincronizado).
+    Object.values(state.gastos).forEach(v => totalGas += (v||0));
     const pctG = totalIng>0 ? totalGas/totalIng : 0;
     const pctL = 1 - pctG;
     const cls  = pctG<.7 ? 'is-pos' : pctG<=.85 ? 'is-warn' : 'is-neg';
@@ -1030,39 +1020,112 @@
   }
   function isGastoCustom(k){ return !(k in GASTO_LABELS); }
 
+  /* Asegura la estructura de items por categoría y migra montos antiguos a un item. */
+  function ensureGastosItems(){
+    if(!state.gastosItems || typeof state.gastosItems!=='object') state.gastosItems={};
+    Object.keys(state.gastos).forEach(k=>{
+      if(!Array.isArray(state.gastosItems[k])){
+        const total = state.gastos[k]||0;
+        state.gastosItems[k] = total>0 ? [{nombre:'', monto:total}] : [];
+      }
+    });
+    // categorías que existan solo en items
+    Object.keys(state.gastosItems).forEach(k=>{ if(!(k in state.gastos)) state.gastos[k]=0; });
+  }
+  function recomputeGastoTotal(k){
+    const items = state.gastosItems[k]||[];
+    state.gastos[k] = items.reduce((s,it)=>s+(it.monto||0),0);
+    return state.gastos[k];
+  }
+  function recomputeGastosTotales(){ Object.keys(state.gastos).forEach(recomputeGastoTotal); }
+
   function renderGastosTable(){
+    ensureGastosItems();
     const body=document.getElementById('gastos-body');
     body.innerHTML='';
-    Object.entries(state.gastos).forEach(([k,v])=>{
+    Object.keys(state.gastos).forEach(k=>{
       const custom = isGastoCustom(k);
-      const row=document.createElement('div');
-      row.className='item-row';
-      row.style.gridTemplateColumns = custom ? '1fr auto auto auto' : '1fr auto auto';
-      if(custom){
-        const label = (state.gastosLabels && state.gastosLabels[k]) || '';
-        row.innerHTML=`<input class="it-cat-name" data-labelkey="${k}" value="${String(label).replace(/"/g,'&quot;')}" placeholder="Nombre de la categoría">
-          <span class="it-prefix">${currency}</span>
-          <input class="money-input" data-f="monto" data-key="${k}">
-          <button class="it-del" title="Eliminar categoría">${SVG_X}</button>`;
-      } else {
-        row.innerHTML=`<span class="it-fixed-name">${GASTO_LABELS[k]}</span>
-          <span class="it-prefix">${currency}</span>
-          <input class="money-input" data-f="monto" data-key="${k}">`;
-      }
-      body.appendChild(row);
-      const inp = row.querySelector('.money-input');
-      inp.value = v && v>0 ? fmtInput(v) : '';
-      inp.placeholder='0';
-      attachMoneyInput(inp);
-      inp.addEventListener('input',function(){state.gastos[k]=n(this.value);calcM1();});
-      if(custom){
-        const lab=row.querySelector('.it-cat-name');
-        lab.addEventListener('input',function(){
-          if(!state.gastosLabels) state.gastosLabels={};
-          state.gastosLabels[k]=this.value;
+      const items = state.gastosItems[k] || (state.gastosItems[k]=[]);
+      recomputeGastoTotal(k);
+
+      const cat=document.createElement('div');
+      cat.className='gasto-cat';
+
+      // Encabezado: nombre editable + total automático + acciones
+      const head=document.createElement('div');
+      head.className='gasto-cat-head';
+      head.innerHTML =
+        `<input class="it-cat-name gasto-cat-name" data-labelkey="${k}" value="${String(gastoLabel(k)).replace(/"/g,'&quot;')}" placeholder="${custom?'Nombre de la categoría':GASTO_LABELS[k]}">`
+        + `<div class="gasto-cat-total"><span class="gasto-cat-total-label">Total</span><span class="gasto-cat-total-val" data-cat-total="${k}">${fmt(state.gastos[k])}</span></div>`
+        + `<button class="gasto-add-btn" title="Agregar gasto a esta categoría" data-add-item="${k}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span>Gasto</span></button>`
+        + (custom?`<button class="it-del gasto-cat-del" title="Eliminar categoría">${SVG_X}</button>`:'');
+      cat.appendChild(head);
+
+      // Items
+      const itemsWrap=document.createElement('div');
+      itemsWrap.className='gasto-cat-items';
+      cat.appendChild(itemsWrap);
+      body.appendChild(cat);
+
+      const renderItems=()=>{
+        itemsWrap.innerHTML='';
+        if(!items.length){
+          itemsWrap.innerHTML=`<div class="gasto-cat-empty">Sin gastos registrados. Usa “+ Gasto”.</div>`;
+        }
+        items.forEach((it,idx)=>{
+          const row=document.createElement('div');
+          row.className='item-row gasto-item-row';
+          row.style.gridTemplateColumns='1fr auto auto auto';
+          row.innerHTML =
+            `<input type="text" class="it-name" data-f="nombre" value="${String(it.nombre||'').replace(/"/g,'&quot;')}" placeholder="¿En qué? (ej: arriendo, mercado)">`
+            + `<span class="it-prefix">${currency}</span>`
+            + `<input class="money-input" data-f="monto">`
+            + `<button class="it-del" title="Eliminar gasto">${SVG_X}</button>`;
+          itemsWrap.appendChild(row);
+          const montoInp=row.querySelector('.money-input');
+          montoInp.value = it.monto>0 ? fmtInput(it.monto) : '';
+          montoInp.placeholder='0';
+          attachMoneyInput(montoInp);
+          montoInp.addEventListener('input',function(){
+            it.monto=n(this.value);
+            const tot=recomputeGastoTotal(k);
+            head.querySelector(`[data-cat-total="${k}"]`).textContent=fmt(tot);
+            calcM1();
+            if(typeof scheduleSave==='function') scheduleSave('ingresos_gastos');
+          });
+          row.querySelector('.it-name').addEventListener('input',function(){
+            it.nombre=this.value;
+            if(typeof scheduleSave==='function') scheduleSave('ingresos_gastos');
+          });
+          row.querySelector('.it-del').addEventListener('click',function(){
+            items.splice(idx,1);
+            const tot=recomputeGastoTotal(k);
+            head.querySelector(`[data-cat-total="${k}"]`).textContent=fmt(tot);
+            renderItems();calcM1();
+            if(typeof scheduleSave==='function') scheduleSave('ingresos_gastos');
+          });
         });
-        row.querySelector('.it-del').addEventListener('click',function(){
+      };
+      renderItems();
+
+      // Nombre de categoría editable
+      head.querySelector('.it-cat-name').addEventListener('input',function(){
+        if(!state.gastosLabels) state.gastosLabels={};
+        state.gastosLabels[k]=this.value;
+        if(typeof scheduleSave==='function') scheduleSave('ingresos_gastos');
+      });
+      // Agregar gasto
+      head.querySelector(`[data-add-item="${k}"]`).addEventListener('click',function(){
+        items.push({nombre:'',monto:0});
+        renderItems();
+        const last=itemsWrap.querySelector('.gasto-item-row:last-child .it-name');
+        if(last) last.focus();
+      });
+      // Eliminar categoría (solo custom)
+      if(custom){
+        head.querySelector('.gasto-cat-del').addEventListener('click',function(){
           delete state.gastos[k];
+          delete state.gastosItems[k];
           if(state.gastosLabels) delete state.gastosLabels[k];
           renderGastosTable();calcM1();
         });
@@ -1073,6 +1136,8 @@
   function addGastoCategoria(){
     const key='cat_'+Date.now().toString(36)+Math.floor(Math.random()*1000).toString(36);
     state.gastos[key]=0;
+    if(!state.gastosItems) state.gastosItems={};
+    state.gastosItems[key]=[{nombre:'',monto:0}];
     if(!state.gastosLabels) state.gastosLabels={};
     state.gastosLabels[key]='';
     renderGastosTable();calcM1();
@@ -1868,8 +1933,8 @@
         const promNeto = vMean(netos);
         const variabilidad = promNeto>0 ? vStdDev(netos)/promNeto : 0;
         const salarioP = getSalarioPersonalActual();
-        const fondoMeses = salarioP>0 ? v.fondoActual/salarioP : 0;
-        const mesesMetaFondo = variabilidad>=0.5 ? 12 : variabilidad>=0.25 ? 9 : 6;
+        const metaFondo = getFondoMetaActual();                 // z·σ·√L
+        const fondoPct = metaFondo>0 ? Math.min(v.fondoActual/metaFondo,1) : 0;
   
         indicators.push({
           label:'Variabilidad de tu ingreso', tipKey:'variabilidad',
@@ -1880,9 +1945,9 @@
         });
         indicators.push({
           label:'Fondo de estabilización', tipKey:'fondo_estabilizacion',
-          desc:'Meses de salario personal cubiertos · meta '+mesesMetaFondo+' meses',
-          val:fondoMeses.toFixed(1)+' meses',bar:Math.min(fondoMeses/mesesMetaFondo,1),
-          color:fondoMeses>=mesesMetaFondo?'var(--pos)':fondoMeses>=3?'var(--warn)':'var(--neg)',
+          desc:'Colchón para suavizar tu variabilidad · meta '+fmt(metaFondo),
+          val:metaFondo>0?pct(fondoPct):'—',bar:fondoPct,
+          color:fondoPct>=1?'var(--pos)':fondoPct>=0.5?'var(--warn)':'var(--neg)',
           metaKey:'meta_fondo_estab',meta:tbl.meta_fondo_estab||0,money:true
         });
   
@@ -2834,17 +2899,24 @@
   function metaFuenteOptions(sel){
     const opts = [
       {v:'manual', l:'Lo ingreso manualmente'},
-      {v:'liquido_total', l:'Todos mis activos líquidos (M3)'},
+      {v:'liquido_total', l:'Todos mis activos líquidos disponibles (M3)'},
       {v:'fondo_provisiones', l:'Fondo de provisiones (M5)'}
     ];
     if(state.varIncome && state.varIncome.active) opts.push({v:'fondo_estabilizacion', l:'Fondo de estabilización'});
-    (state.activos||[]).forEach(a=>{ if(a.tipo==='LÍQUIDO' && a.nombre) opts.push({v:'activo:'+a.nombre, l:'Activo · '+a.nombre}); });
+    // Activos individuales: líquidos disponibles + restringidos (cesantías, etc. sirven para metas específicas como vivienda)
+    (state.activos||[]).forEach(a=>{
+      if(!a.nombre) return;
+      const incluir = (a.tipo==='LÍQUIDO') || a.restringido;
+      if(!incluir) return;
+      const l = a.restringido ? ('Activo restringido · ' + a.nombre + ' (uso específico)') : ('Activo · ' + a.nombre);
+      opts.push({v:'activo:'+a.nombre, l:l});
+    });
     return opts.map(o=>'<option value="'+String(o.v).replace(/"/g,'&quot;')+'"'+(o.v===sel?' selected':'')+'>'+o.l+'</option>').join('');
   }
   function metaSaldoActual(m){
     const f = m.fuente || 'manual';
     if(f === 'manual') return m.saldoManual || 0;
-    if(f === 'liquido_total') return (state.activos||[]).filter(a=>a.tipo==='LÍQUIDO').reduce((s,a)=>s+(a.valor||0),0);
+    if(f === 'liquido_total') return (state.activos||[]).filter(a=>a.tipo==='LÍQUIDO' && !a.restringido).reduce((s,a)=>s+(a.valor||0),0);
     if(f === 'fondo_provisiones') return state.p5.fondoProvisiones || 0;
     if(f === 'fondo_estabilizacion') return (state.varIncome && state.varIncome.fondoActual) || 0;
     if(f.indexOf('activo:') === 0){ const nombre = f.slice(7); const a = (state.activos||[]).find(x=>x.nombre===nombre); return a ? (a.valor||0) : 0; }
@@ -3136,7 +3208,7 @@
         const totalGas = Object.values(state.gastos||{}).reduce((a,b)=>a+(b||0),0);
         return {
           fuentes_ingreso:(state.ingresos||[]).filter(ing=>!ing.linkedToMVar).map(ing=>({nombre:ing.nombre,monto:ing.monto})),
-          gastos:state.gastos, gastosLabels:state.gastosLabels,
+          gastos:state.gastos, gastosLabels:state.gastosLabels, gastosItems:state.gastosItems,
           tipoIngreso:state.profile.tipoIngreso, total_ingresos:totalIng, total_gastos:totalGas
         };
       }
@@ -3255,6 +3327,8 @@
       if(m1.fuentes_ingreso) state.ingresos=m1.fuentes_ingreso;
       if(m1.gastos) Object.assign(state.gastos,m1.gastos);
       if(m1.gastosLabels) Object.assign(state.gastosLabels,m1.gastosLabels);
+      if(m1.gastosItems && typeof m1.gastosItems==='object') state.gastosItems = m1.gastosItems;
+      ensureGastosItems(); recomputeGastosTotales();
       if(m1.tipoIngreso) state.profile.tipoIngreso = m1.tipoIngreso;
       completedModules.add(1);
     }
@@ -4157,18 +4231,19 @@
   }
 
   /* Meta del fondo de estabilización según variabilidad combinada */
+  /* Meta del fondo de ESTABILIZACIÓN: solo suaviza la fluctuación normal del ingreso.
+     Fórmula: z · σ · √L  (z=1,65 ≈ 95%, σ = desv. estándar mensual del neto, L=6 meses).
+     No cubre pérdida de contrato — eso es el fondo de emergencia (meta aparte). */
   function getFondoMetaActual(){
     const v = state.varIncome;
     if(!v || !v.active) return 0;
-    const salario = getSalarioPersonalActual();
-    if(salario<=0) return 0;
     const meses = getCombinedMeses().filter(m => (m.bruto||0) > 0);
-    if(meses.length<3) return salario*6;
+    if(meses.length < 3) return 0;                 // sin historial suficiente, no estimamos
     const netos = meses.map(m => m.neto||0);
-    const promedio = vMean(netos);
-    const variabilidad = promedio>0 ? vStdDev(netos)/promedio : 0;
-    const mesesMeta = variabilidad>=0.5 ? 12 : variabilidad>=0.25 ? 9 : 6;
-    return salario * mesesMeta;
+    const sigma = vStdDev(netos);                  // variabilidad absoluta en pesos
+    const Z = 1.65, L = 6;
+    const meta = Z * sigma * Math.sqrt(L);
+    return meta > 0 ? Math.round(meta/50000)*50000 : 0;
   }
   
   /* Render principal */
@@ -4639,33 +4714,31 @@
   
   function renderMVarFondo(salario, variabilidad){
     const v = state.varIncome;
-    const mesesMeta = variabilidad>=0.5 ? 12 : variabilidad>=0.25 ? 9 : 6;
-    const meta = salario * mesesMeta;
-    const cobertura = salario>0 ? v.fondoActual/salario : 0;
-    const pctMeta = meta>0 ? Math.min(v.fondoActual/meta, 1) : 0;
-  
-    document.getElementById('fondo-actual-val').textContent = fmt(v.fondoActual);
-    document.getElementById('fondo-meta-val').textContent = fmt(meta);
-    document.getElementById('fondo-meta-sub').textContent = mesesMeta + ' meses de salario · variabilidad ' + pct(variabilidad);
-    document.getElementById('fondo-cobertura-val').textContent = cobertura.toFixed(1) + ' meses';
+    const meta = getFondoMetaActual();             // z·σ·√L
+    const actual = v.fondoActual || 0;
+    const pctMeta = meta>0 ? Math.min(actual/meta, 1) : 0;
+
+    document.getElementById('fondo-actual-val').textContent = fmt(actual);
+    document.getElementById('fondo-meta-val').textContent = meta>0 ? fmt(meta) : '—';
+    document.getElementById('fondo-meta-sub').textContent = meta>0
+      ? 'Colchón para suavizar tu variabilidad (' + pct(variabilidad) + ') · fórmula 1,65·σ·√6'
+      : 'Necesitas al menos 3 meses de historial';
+    document.getElementById('fondo-cobertura-val').textContent = meta>0 ? pct(pctMeta) : '—';
     document.getElementById('fondo-progress').style.width = (pctMeta*100) + '%';
-    document.getElementById('fondo-progress-meta').innerHTML = '<span>' + fmt(v.fondoActual) + '</span><span>' + pct(pctMeta) + ' de la meta · ' + fmt(meta) + '</span>';
-  
+    document.getElementById('fondo-progress-meta').innerHTML = '<span>' + fmt(actual) + '</span><span>' + pct(pctMeta) + ' de la meta · ' + fmt(meta) + '</span>';
+
     const alertEl = document.getElementById('fondo-alert');
-    if(salario<=0){
+    if(meta<=0){
       alertEl.style.display = 'none';
-    } else if(cobertura < 1){
+    } else if(pctMeta < 0.5){
       alertEl.className = 'alert neg';alertEl.style.display = 'flex';
-      alertEl.innerHTML = SVG_WARN + '<div><strong>Prioridad máxima.</strong> Tu fondo no cubre ni un mes de salario. Si tienes un mes bajo ahora mismo, no tienes colchón. Empieza por aquí antes que cualquier otro objetivo financiero.</div>';
-    } else if(cobertura < 3){
+      alertEl.innerHTML = SVG_WARN + '<div><strong>Prioridad.</strong> Tu fondo cubre menos de la mitad del colchón que necesitas para suavizar tus meses flojos. Te faltan <strong>' + fmt(meta-actual) + '</strong>.</div>';
+    } else if(pctMeta < 1){
       alertEl.className = 'alert warn';alertEl.style.display = 'flex';
-      alertEl.innerHTML = SVG_WARN + '<div><strong>Estás empezando a construirlo.</strong> Tu fondo cubre ' + cobertura.toFixed(1) + ' meses. La meta inmediata son <strong>3 meses</strong> antes de pensar en otras inversiones.</div>';
-    } else if(cobertura < mesesMeta){
-      alertEl.className = 'alert warn';alertEl.style.display = 'flex';
-      alertEl.innerHTML = SVG_INFO + '<div>Vas bien. Te faltan <strong>' + fmt(meta-v.fondoActual) + '</strong> para llegar a la meta de ' + mesesMeta + ' meses, que es la apropiada para tu nivel de variabilidad.</div>';
+      alertEl.innerHTML = SVG_INFO + '<div>Vas bien. Te faltan <strong>' + fmt(meta-actual) + '</strong> para completar tu colchón de estabilización.</div>';
     } else {
       alertEl.className = 'alert pos';alertEl.style.display = 'flex';
-      alertEl.innerHTML = SVG_CHECK + '<div><strong>Fondo completo.</strong> Tienes la cobertura adecuada. El excedente que entre en meses buenos ya puede ir a inversión, pago de deuda cara, o aportes a pensión voluntaria.</div>';
+      alertEl.innerHTML = SVG_CHECK + '<div><strong>Colchón completo.</strong> Tienes lo necesario para suavizar la variabilidad de tu ingreso. Cubrir la pérdida de un contrato es tarea del <strong>fondo de emergencia</strong>, que es una meta aparte.</div>';
     }
   }
   
@@ -4834,6 +4907,7 @@
       alimentacion:1800000, vivienda:2400000, transporte:950000,
       salud:680000, entretenimiento:450000, comunicaciones:220000, otros:380000
     };
+    state.gastosItems = {};
     state.deudas = [
       {nombre:'Tarjeta Bancolombia', saldo:8500000, cuota_mensual:850000, tasa_anual:0.288, tipo:'CONSUMO_TARJETA', grupo:'consumo'},
       {nombre:'Crédito vehicular Davivienda', saldo:32000000, cuota_mensual:980000, tasa_anual:0.158, tipo:'OTRO_VEHICULO', grupo:'otro'}
@@ -4920,6 +4994,7 @@
       alimentacion:1450000, vivienda:1800000, transporte:550000,
       salud:280000, entretenimiento:380000, comunicaciones:180000, otros:240000
     };
+    state.gastosItems = {};
     state.deudas = [
       {nombre:'Tarjeta Davivienda', saldo:4200000, cuota_mensual:520000, tasa_anual:0.305, tipo:'CONSUMO_TARJETA', grupo:'consumo'},
       {nombre:'Libranza educativa', saldo:12500000, cuota_mensual:380000, tasa_anual:0.165, tipo:'LIBRANZA', grupo:'consumo'}
@@ -5018,7 +5093,7 @@
   const DEFINITIONS = {
     fondo_estabilizacion: {
       title: 'Fondo de estabilización',
-      text: 'Cuenta separada que cubre los meses bajos de un ingreso variable. <strong>Distinto al fondo de emergencias</strong>: este suaviza tu negocio mes a mes, no eventos imprevistos. Meta: 6 a 12 meses de salario personal según tu nivel de variabilidad.'
+      text: 'Cuenta separada que suaviza los meses bajos de un ingreso variable para que puedas pagarte un salario estable. <strong>Distinto al fondo de emergencia</strong>: este amortigua la fluctuación normal mes a mes; la pérdida de un contrato la cubre el fondo de emergencia (meta aparte). Su tamaño se calcula con tu variabilidad real (≈ 1,65 × desviación estándar × √6): pequeño si tu ingreso es estable, grande si es volátil.'
     },
     fondo_provisiones: {
       title: 'Fondo de provisiones',

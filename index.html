@@ -242,6 +242,26 @@
 .mvar-mes-periodo select[data-f=anio]{max-width:90px;flex:0 0 auto}
 
 
+/* Categorías de gasto con items (M1) */
+.gasto-cat{border:1px solid rgba(0,0,0,.1);border-radius:12px;padding:12px 14px;margin-bottom:10px;background:rgba(0,0,0,.012)}
+.gasto-cat-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.gasto-cat-name{flex:1;min-width:140px;font-family:'Fraunces',Georgia,serif;font-size:15.5px;font-weight:600;color:#1a1a1a;
+  border:1px solid transparent;background:transparent;padding:6px 8px;border-radius:8px;transition:.15s}
+.gasto-cat-name::placeholder{font-family:'Geist',sans-serif;font-weight:500;color:rgba(0,0,0,.3)}
+.gasto-cat-name:hover{background:rgba(0,0,0,.03)}
+.gasto-cat-name:focus{outline:none;background:#fff;border-color:var(--accent,#0e4d3a);box-shadow:0 0 0 3px rgba(14,77,58,.12)}
+.gasto-cat-total{display:flex;flex-direction:column;align-items:flex-end;line-height:1.1;padding:0 4px}
+.gasto-cat-total-label{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:rgba(0,0,0,.4)}
+.gasto-cat-total-val{font-family:'JetBrains Mono',monospace;font-size:14.5px;font-weight:600;color:var(--accent,#0e4d3a)}
+.gasto-add-btn{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:500;color:var(--accent,#0e4d3a);
+  background:rgba(14,77,58,.08);border:none;border-radius:8px;padding:7px 11px;cursor:pointer;transition:.15s}
+.gasto-add-btn:hover{background:rgba(14,77,58,.16)}
+.gasto-add-btn svg{width:14px;height:14px}
+.gasto-cat-del{flex-shrink:0}
+.gasto-cat-items{margin-top:10px;padding-left:12px;border-left:2px solid rgba(14,77,58,.12);display:flex;flex-direction:column;gap:7px}
+.gasto-cat-empty{font-size:12.5px;color:rgba(0,0,0,.38);padding:2px 0}
+.gasto-item-row{margin:0}
+.gasto-cat-items .item-row{margin:0}
 </style>
 </head>
 <body>
@@ -560,6 +580,7 @@
           <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
           <h3>Gasto mensual por categoría</h3>
         </div>
+        <p class="mvar-hint" style="margin-top:-6px;margin-bottom:14px">Dentro de cada categoría registra tus gastos uno por uno (con "+ Gasto"). El <strong>total de la categoría se calcula solo</strong> sumando esos gastos; no se edita a mano.</p>
         <div class="item-list" id="gastos-body"></div>
         <button class="btn-add" id="add-gasto-cat">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -698,7 +719,7 @@
             <div class="fondo-stat">
               <div class="fondo-label">Cobertura actual</div>
               <div class="fondo-value" id="fondo-cobertura-val">—</div>
-              <div class="fondo-sub">Meses de salario cubiertos</div>
+              <div class="fondo-sub">de tu meta de estabilización</div>
             </div>
           </div>
           <div class="fondo-progress-wrap">
