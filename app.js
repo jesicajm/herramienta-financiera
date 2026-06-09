@@ -147,6 +147,7 @@
     gastos:{alimentacion:0,vivienda:0,transporte:0,salud:0,entretenimiento:0,comunicaciones:0,otros:0},
     gastosItems:{},   // por categoría: [{nombre,monto}]; el total de la categoría = suma de sus items
     gastosLabels:{},
+    gastosOrder:['alimentacion','vivienda','transporte','salud','entretenimiento','comunicaciones','otros'], // orden persistente de categorías (los objetos no conservan orden en Firestore)
     deudas:[],
     activos:[
       {nombre:'Dinero ahorrado en cuenta',valor:0,tipo:'LÍQUIDO'},
@@ -286,6 +287,28 @@
     document.getElementById('modal-overlay').classList.add('show');
   }
   function closeModal(){document.getElementById('modal-overlay').classList.remove('show');}
+
+  /* Modal de confirmación con diseño consistente (reemplaza confirm() nativo).
+     opts: {title, msg, confirmText, cancelText, danger, onConfirm, onCancel} */
+  function showConfirm(opts){
+    opts = opts || {};
+    const ov = document.getElementById('confirm-overlay');
+    if(!ov){ if(window.confirm(opts.msg||'¿Confirmar?')){ if(opts.onConfirm) opts.onConfirm(); } return; }
+    document.getElementById('confirm-title').textContent = opts.title || '¿Confirmar?';
+    document.getElementById('confirm-msg').textContent   = opts.msg || '';
+    let okBtn = document.getElementById('confirm-ok');
+    let cancelBtn = document.getElementById('confirm-cancel');
+    okBtn.textContent = opts.confirmText || 'Confirmar';
+    cancelBtn.textContent = opts.cancelText || 'Cancelar';
+    okBtn.classList.toggle('btn-modal-danger', !!opts.danger);
+    // Clonar para limpiar listeners de invocaciones previas
+    const okNew = okBtn.cloneNode(true); okBtn.parentNode.replaceChild(okNew, okBtn);
+    const cancelNew = cancelBtn.cloneNode(true); cancelBtn.parentNode.replaceChild(cancelNew, cancelBtn);
+    function close(){ ov.classList.remove('show'); }
+    okNew.addEventListener('click', function(){ close(); if(opts.onConfirm) opts.onConfirm(); });
+    cancelNew.addEventListener('click', function(){ close(); if(opts.onCancel) opts.onCancel(); });
+    ov.classList.add('show');
+  }
   function toggleAcc(h){h.parentElement.classList.toggle('open');}
   
   function navigateTo(num){
@@ -377,8 +400,18 @@
       if(grupo==='consumo'){totConsumo+=saldo;pagosConsumo+=cuota;}
       else if(grupo==='apalancamiento'){totApal+=saldo;pagosApal+=cuota;}
       else totOtro+=saldo;
-      state.deudas.push({nombre,saldo,cuota_mensual:cuota,tasa_anual:tasa,tipo,grupo});
+      // Cargos recurrentes: solo tarjetas de crédito
+      let cargos=[];
+      if(tipo==='CONSUMO_TARJETA'){
+        r.querySelectorAll('[data-cargos-list] .deuda-cargo-row').forEach(cr=>{
+          const cn=cr.querySelector('[data-cf=nombre]')?.value||'';
+          const cm=n(cr.querySelector('[data-cf=monto]')?.value);
+          if(cm>0 || cn.trim()) cargos.push({nombre:cn, monto:cm});
+        });
+      }
+      state.deudas.push({nombre,saldo,cuota_mensual:cuota,tasa_anual:tasa,tipo,grupo,cargos});
     });
+    syncCargosTarjeta();   // refleja los cargos de tarjeta en la categoría sincronizada de gastos
     const tasaProm     = totalDeuda>0 ? sumaPond/totalDeuda : 0;
     const pctConsumoIng= totalIng>0   ? pagosConsumo/totalIng : 0;
     const pctTotalIng  = totalIng>0   ? totalPagos/totalIng   : 0;
@@ -1022,6 +1055,32 @@
   }
   function isGastoCustom(k){ return !(k in GASTO_LABELS); }
 
+  /* Clave de la categoría sincronizada de cargos de tarjeta */
+  const CARGOS_CAT_KEY = 'cargos_comisiones';
+
+  /* Orden persistente de las categorías de gasto. Los objetos no conservan el orden
+     de claves al releer desde Firestore, por eso el orden vive en este arreglo. */
+  function gastoCatOrder(){
+    if(!Array.isArray(state.gastosOrder)) state.gastosOrder = [];
+    Object.keys(state.gastos).forEach(k=>{ if(!state.gastosOrder.includes(k)) state.gastosOrder.push(k); });
+    state.gastosOrder = state.gastosOrder.filter(k => k in state.gastos);
+    return state.gastosOrder;
+  }
+
+  /* Snapshot persistible de gastos: excluye ítems sincronizados (linkedToDeuda) y omite la
+     categoría de cargos si solo tenía ítems sincronizados. Lo sincronizado se regenera desde M2. */
+  function gastosForSave(){
+    const gastos={}, gastosItems={}, gastosOrder=[];
+    gastoCatOrder().forEach(k=>{
+      const its=(state.gastosItems[k]||[]).filter(it=>!it.linkedToDeuda);
+      if(k===CARGOS_CAT_KEY && its.length===0) return; // categoría auto-generada y vacía: no persistir
+      gastosItems[k]=its;
+      gastos[k]=its.reduce((s,it)=>s+(it.monto||0),0);
+      gastosOrder.push(k);
+    });
+    return {gastos, gastosItems, gastosLabels:state.gastosLabels||{}, gastosOrder};
+  }
+
   /* Asegura la estructura de items por categoría y migra montos antiguos a un item. */
   function ensureGastosItems(){
     if(!state.gastosItems || typeof state.gastosItems!=='object') state.gastosItems={};
@@ -1045,7 +1104,7 @@
     ensureGastosItems();
     const body=document.getElementById('gastos-body');
     body.innerHTML='';
-    Object.keys(state.gastos).forEach(k=>{
+    gastoCatOrder().forEach(k=>{
       const custom = isGastoCustom(k);
       const items = state.gastosItems[k] || (state.gastosItems[k]=[]);
       recomputeGastoTotal(k);
@@ -1077,6 +1136,21 @@
           itemsWrap.innerHTML=`<div class="gasto-cat-empty">Sin gastos registrados. Usa “+ Gasto”.</div>`;
         }
         items.forEach((it,idx)=>{
+          if(it.linkedToDeuda){
+            const lrow=document.createElement('div');
+            lrow.className='item-row gasto-item-row item-row-locked';
+            lrow.style.gridTemplateColumns='1fr auto auto';
+            lrow.dataset.itemIdx=idx;
+            lrow.innerHTML =
+              `<div class="it-locked-wrap"><div class="it-locked-name">${String(it.nombre||'').replace(/</g,'&lt;')} <span class="it-locked-badge">sincronizado</span></div>`
+              + `<div class="it-locked-sub">Cargo de una tarjeta · <a href="#" class="it-locked-link" data-go-m2>Ajustar en Endeudamiento</a></div></div>`
+              + `<span class="it-prefix">${currency}</span>`
+              + `<span class="it-locked-amount num">${fmtInput(it.monto||0) || '0'}</span>`;
+            itemsWrap.appendChild(lrow);
+            const lnk=lrow.querySelector('[data-go-m2]');
+            if(lnk) lnk.addEventListener('click',function(e){e.preventDefault();navigateTo(2);});
+            return;
+          }
           const row=document.createElement('div');
           row.className='item-row gasto-item-row';
           row.style.gridTemplateColumns='auto 1fr auto auto auto';
@@ -1142,6 +1216,7 @@
         delete state.gastos[k];
         delete state.gastosItems[k];
         if(state.gastosLabels) delete state.gastosLabels[k];
+        if(Array.isArray(state.gastosOrder)) state.gastosOrder = state.gastosOrder.filter(x=>x!==k);
         renderGastosTable();calcM1();
         if(typeof scheduleSave==='function') scheduleSave('ingresos_gastos');
       });
@@ -1169,15 +1244,8 @@
         document.removeEventListener('pointercancel',end);
         document.body.style.userSelect=''; document.body.style.cursor='';
         catDiv.classList.remove('p5-cat-dragging');
-        // Reconstruir state.gastos / gastosItems / gastosLabels según el nuevo orden del DOM
-        const order=Array.from(body.querySelectorAll('.gasto-cat')).map(c=>c.dataset.catkey);
-        const ng={}, ni={}, nl={};
-        order.forEach(key=>{
-          if(key in state.gastos) ng[key]=state.gastos[key];
-          if(state.gastosItems && key in state.gastosItems) ni[key]=state.gastosItems[key];
-          if(state.gastosLabels && key in state.gastosLabels) nl[key]=state.gastosLabels[key];
-        });
-        state.gastos=ng; state.gastosItems=ni; state.gastosLabels=nl;
+        // Guardar el nuevo orden en el arreglo persistente (Firestore no conserva orden de claves)
+        state.gastosOrder = Array.from(body.querySelectorAll('.gasto-cat')).map(c=>c.dataset.catkey);
         calcM1();
         if(typeof scheduleSave==='function') scheduleSave('ingresos_gastos');
       }
@@ -1221,6 +1289,8 @@
     state.gastosItems[key]=[{nombre:'',monto:0}];
     if(!state.gastosLabels) state.gastosLabels={};
     state.gastosLabels[key]='';
+    if(!Array.isArray(state.gastosOrder)) state.gastosOrder=[];
+    state.gastosOrder.push(key);
     renderGastosTable();calcM1();
     const nuevo=document.querySelector(`#gastos-body input[data-labelkey="${key}"]`);
     if(nuevo) nuevo.focus();
@@ -1261,6 +1331,92 @@
     const cIn=row.querySelector('input[data-f=cuota]'); cIn.value=d.cuota_mensual>0?fmtInput(d.cuota_mensual):'';attachMoneyInput(cIn);
     row.querySelectorAll('input,select').forEach(el=>{el.addEventListener('input',calcM2);if(el.tagName==='SELECT')el.addEventListener('change',calcM2);});
     row.querySelector('.it-del').addEventListener('click',()=>{row.remove();calcM2();});
+
+    // ── Cargos recurrentes (solo tarjetas de crédito) ──
+    const grid=row.querySelector('.mr-grid');
+    const cargosCell=document.createElement('div');
+    cargosCell.className='mr-field full deuda-cargos-cell';
+    cargosCell.dataset.cargosCell='';
+    cargosCell.innerHTML=
+      '<div class="deuda-cargos-head">'
+      + '<span class="deuda-cargos-title">Cargos recurrentes</span>'
+      + '<span class="deuda-cargos-hint">cuota de manejo, seguro… (aparte de la cuota)</span>'
+      + '</div>'
+      + '<div class="deuda-cargos-list" data-cargos-list></div>'
+      + '<button type="button" class="deuda-cargo-add" data-cargo-add><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Agregar cargo</button>'
+      + '<div class="deuda-cargos-sync">' + SVG_INFO + '<span>Aparece como gasto sincronizado en Ingresos y Gastos, categoría “Cargos y comisiones”. No se suma a la cuota.</span></div>';
+    grid.appendChild(cargosCell);
+    const listEl=cargosCell.querySelector('[data-cargos-list]');
+    (d.cargos||[]).forEach(cg=>buildCargoRow(cg, listEl));
+    cargosCell.querySelector('[data-cargo-add]').addEventListener('click',function(){
+      const r=buildCargoRow({nombre:'',monto:0}, listEl);
+      const ni=r.querySelector('[data-cf=nombre]'); if(ni) ni.focus();
+      calcM2();
+    });
+    const tipoSel=row.querySelector('select[data-f=tipo]');
+    function toggleCargos(){ cargosCell.style.display = (tipoSel && tipoSel.value==='CONSUMO_TARJETA') ? '' : 'none'; }
+    if(tipoSel) tipoSel.addEventListener('change', toggleCargos);
+    toggleCargos();
+  }
+
+  /* Una fila de cargo recurrente dentro de una deuda */
+  function buildCargoRow(cg, listEl){
+    const r=document.createElement('div');
+    r.className='deuda-cargo-row';
+    r.innerHTML=
+      '<input type="text" class="it-name" data-cf="nombre" placeholder="Cargo (ej: cuota de manejo)">'
+      + '<span class="it-prefix">'+currency+'</span>'
+      + '<input class="money-input" data-cf="monto">'
+      + '<button type="button" class="it-del" data-cargo-del title="Eliminar cargo">'+SVG_X+'</button>';
+    listEl.appendChild(r);
+    r.querySelector('[data-cf=nombre]').value = cg.nombre||'';
+    const m=r.querySelector('[data-cf=monto]'); m.value = (cg.monto>0)?fmtInput(cg.monto):''; m.placeholder='0'; attachMoneyInput(m);
+    r.querySelectorAll('input').forEach(inp=>inp.addEventListener('input',calcM2));
+    r.querySelector('[data-cargo-del]').addEventListener('click',function(){ r.remove(); calcM2(); });
+    return r;
+  }
+
+  /* Sincroniza los cargos de las tarjetas de crédito hacia la categoría "Cargos y comisiones" de M1.
+     Se regenera por completo el subconjunto vinculado, así el borrado de una tarjeta arrastra su cargo. */
+  let _cargoSig='';
+  function syncCargosTarjeta(){
+    const cargoItems=[];
+    (state.deudas||[]).forEach(d=>{
+      if(d.tipo!=='CONSUMO_TARJETA') return;
+      (d.cargos||[]).forEach(cg=>{
+        const monto=cg.monto||0;
+        const cn=(cg.nombre||'').trim();
+        if(monto<=0 && !cn) return;
+        const dn=(d.nombre||'').trim()||'Tarjeta';
+        cargoItems.push({nombre: dn+' · '+(cn||'Cargo'), monto, linkedToDeuda:true});
+      });
+    });
+    if(!state.gastosItems) state.gastosItems={};
+    const existing = Array.isArray(state.gastosItems[CARGOS_CAT_KEY]) ? state.gastosItems[CARGOS_CAT_KEY] : [];
+    const manual = existing.filter(it=>!it.linkedToDeuda);
+    if(cargoItems.length===0 && manual.length===0){
+      // nada que mostrar: elimina la categoría auto-generada si existía
+      if(CARGOS_CAT_KEY in state.gastos){
+        delete state.gastos[CARGOS_CAT_KEY];
+        delete state.gastosItems[CARGOS_CAT_KEY];
+        if(state.gastosLabels) delete state.gastosLabels[CARGOS_CAT_KEY];
+        if(Array.isArray(state.gastosOrder)) state.gastosOrder=state.gastosOrder.filter(k=>k!==CARGOS_CAT_KEY);
+      }
+    } else {
+      if(!(CARGOS_CAT_KEY in state.gastos)) state.gastos[CARGOS_CAT_KEY]=0;
+      if(!state.gastosLabels) state.gastosLabels={};
+      if(!state.gastosLabels[CARGOS_CAT_KEY]) state.gastosLabels[CARGOS_CAT_KEY]='Cargos y comisiones';
+      state.gastosItems[CARGOS_CAT_KEY]=manual.concat(cargoItems);
+      if(!Array.isArray(state.gastosOrder)) state.gastosOrder=[];
+      if(!state.gastosOrder.includes(CARGOS_CAT_KEY)) state.gastosOrder.push(CARGOS_CAT_KEY);
+      recomputeGastoTotal(CARGOS_CAT_KEY);
+    }
+    const sig=JSON.stringify(cargoItems)+'|'+manual.length;
+    if(sig!==_cargoSig){
+      _cargoSig=sig;
+      if(document.getElementById('gastos-body')) renderGastosTable();
+      calcM1();
+    }
   }
   function addDeudaRow(){
     const cnt=document.querySelectorAll('#deudas-body .multi-row').length;
@@ -1628,10 +1784,16 @@
       const delBtn=div.querySelector('.p5-cat-del');
       delBtn.addEventListener('click',function(e){
         e.stopPropagation();
-        if(!confirm('¿Eliminar la categoría "'+(cat.label||'')+'" y todos sus gastos?')) return;
-        state.p5.gastoCats = p5Cats().filter(x=>x.id!==cat.id);
-        if(state.p5.gastos) delete state.p5.gastos[cat.id];
-        renderP5GastosAccordions(); calcP5Totals();
+        showConfirm({
+          title:'Eliminar categoría',
+          msg:'¿Eliminar la categoría "'+(cat.label||'')+'" y todos sus gastos?',
+          confirmText:'Eliminar', danger:true,
+          onConfirm:function(){
+            state.p5.gastoCats = p5Cats().filter(x=>x.id!==cat.id);
+            if(state.p5.gastos) delete state.p5.gastos[cat.id];
+            renderP5GastosAccordions(); calcP5Totals();
+          }
+        });
       });
       // Arrastrar categoría
       const dragH=div.querySelector('.p5-cat-drag');
@@ -3436,9 +3598,10 @@
       case 'ingresos_gastos':{
         const totalIng = (state.ingresos||[]).reduce((s,i)=>s+(i.monto||0),0);
         const totalGas = Object.values(state.gastos||{}).reduce((a,b)=>a+(b||0),0);
+        const gs = gastosForSave();
         return {
           fuentes_ingreso:(state.ingresos||[]).filter(ing=>!ing.linkedToMVar).map(ing=>({nombre:ing.nombre,monto:ing.monto})),
-          gastos:state.gastos, gastosLabels:state.gastosLabels, gastosItems:state.gastosItems,
+          gastos:gs.gastos, gastosLabels:gs.gastosLabels, gastosItems:gs.gastosItems, gastosOrder:gs.gastosOrder,
           tipoIngreso:state.profile.tipoIngreso, total_ingresos:totalIng, total_gastos:totalGas
         };
       }
@@ -3555,9 +3718,11 @@
     );
     if(m1){
       if(m1.fuentes_ingreso) state.ingresos=m1.fuentes_ingreso;
-      if(m1.gastos) state.gastos = {...m1.gastos};   // reemplazar (no fusionar) para respetar categorías eliminadas y su orden
+      if(m1.gastos) state.gastos = {...m1.gastos};   // reemplazar (no fusionar) para respetar categorías eliminadas
       if(m1.gastosLabels) Object.assign(state.gastosLabels,m1.gastosLabels);
       if(m1.gastosItems && typeof m1.gastosItems==='object') state.gastosItems = m1.gastosItems;
+      if(Array.isArray(m1.gastosOrder)) state.gastosOrder = m1.gastosOrder.slice();
+      else if(m1.gastos) state.gastosOrder = Object.keys(m1.gastos);   // saves antiguos: orden derivado de las claves
       ensureGastosItems(); recomputeGastosTotales();
       if(m1.tipoIngreso) state.profile.tipoIngreso = m1.tipoIngreso;
       completedModules.add(1);
@@ -3683,11 +3848,13 @@
       monto: ing.monto,
       esVariable: ing.esVariable || false
     }));
+    const gs = gastosForSave();
     await saveModule('ingresos_gastos',{
       fuentes_ingreso:fuentes,
-      gastos:state.gastos,
-      gastosLabels:state.gastosLabels,
-      gastosItems:state.gastosItems,
+      gastos:gs.gastos,
+      gastosLabels:gs.gastosLabels,
+      gastosItems:gs.gastosItems,
+      gastosOrder:gs.gastosOrder,
       tipoIngreso: state.profile.tipoIngreso,
       total_ingresos:totalIng,
       total_gastos:totalGas
@@ -4182,15 +4349,18 @@
       document.getElementById('user-dropdown').style.display = 'none';
     }
   });
-  document.getElementById('dd-logout').addEventListener('click', async function(e){
+  document.getElementById('dd-logout').addEventListener('click', function(e){
     e.preventDefault();
-    if(!confirm('¿Cerrar sesión?')) return;
-    // Limpiar state local antes de logout
-    completedModules.clear();
-    await authService.logout();
-    // onAuthStateChange se dispara y muestra login
-    // Recargar la página para asegurar estado limpio
-    setTimeout(()=>window.location.reload(), 200);
+    showConfirm({
+      title:'Cerrar sesión',
+      msg:'¿Quieres cerrar tu sesión?',
+      confirmText:'Cerrar sesión', danger:true,
+      onConfirm:async function(){
+        completedModules.clear();
+        await authService.logout();
+        setTimeout(()=>window.location.reload(), 200);
+      }
+    });
   });
   document.getElementById('dd-perfil').addEventListener('click', function(e){
     e.preventDefault();
@@ -4596,20 +4766,26 @@
         renderContratoMeses(c, mesesBody, mesCountEl); renderMVarStats(); scheduleSave('ingresos_variables');
       });
       card.querySelector('[data-fill-12]').addEventListener('click', function(){
-        if(c.meses.length>0 && !confirm('Esto reemplazará los meses de este contrato. ¿Continuar?')) return;
-        c.meses = generateRecent12Months();
-        renderContratoMeses(c, mesesBody, mesCountEl); renderMVarStats(); propagateMVarChanges();
+        const apply=function(){
+          c.meses = generateRecent12Months();
+          renderContratoMeses(c, mesesBody, mesCountEl); renderMVarStats(); propagateMVarChanges();
+        };
+        if(c.meses.length>0){
+          showConfirm({title:'Generar 12 meses', msg:'Esto reemplazará los meses de este contrato. ¿Continuar?', confirmText:'Reemplazar', danger:true, onConfirm:apply});
+        } else apply();
       });
       card.querySelector('[data-clear-mes]').addEventListener('click', function(){
         if(!c.meses.length) return;
-        if(!confirm('¿Borrar el historial de este contrato?')) return;
-        c.meses = [];
-        renderContratoMeses(c, mesesBody, mesCountEl); renderMVarStats(); propagateMVarChanges();
+        showConfirm({title:'Borrar historial', msg:'¿Borrar el historial de este contrato?', confirmText:'Borrar', danger:true, onConfirm:function(){
+          c.meses = [];
+          renderContratoMeses(c, mesesBody, mesCountEl); renderMVarStats(); propagateMVarChanges();
+        }});
       });
       card.querySelector('.mvar-contrato-del').addEventListener('click', function(){
-        if(!confirm('¿Eliminar este contrato y su historial?')) return;
-        v.contratos.splice(ci,1);
-        renderMVarContratos(); renderMVarStats(); propagateMVarChanges();
+        showConfirm({title:'Eliminar contrato', msg:'¿Eliminar este contrato y su historial?', confirmText:'Eliminar', danger:true, onConfirm:function(){
+          v.contratos.splice(ci,1);
+          renderMVarContratos(); renderMVarStats(); propagateMVarChanges();
+        }});
       });
     });
   }
@@ -4886,17 +5062,23 @@
     const btn = document.getElementById('btn-aplicar-reserva-sug');
     if(btn){
       btn.onclick = function(){
-        if(!confirm('Esto sobrescribirá la retención apartada en cada mes con el % de cada contrato (solo en los contratos donde aplica retención). ¿Continuar?')) return;
-        (state.varIncome.contratos||[]).forEach(function(c){
-          if(!c.retencionAplica) return;
-          (c.meses||[]).forEach(function(m){
-            if(m.bruto > 0) m.tributo = Math.round(m.bruto * (c.retencionPct||0)/100);
-          });
+        showConfirm({
+          title:'Aplicar reserva sugerida',
+          msg:'Esto sobrescribirá la retención apartada en cada mes con el % de cada contrato (solo donde aplica retención). ¿Continuar?',
+          confirmText:'Aplicar',
+          onConfirm:function(){
+            (state.varIncome.contratos||[]).forEach(function(c){
+              if(!c.retencionAplica) return;
+              (c.meses||[]).forEach(function(m){
+                if(m.bruto > 0) m.tributo = Math.round(m.bruto * (c.retencionPct||0)/100);
+              });
+            });
+            renderMVarContratos();
+            renderMVarStats();
+            propagateMVarChanges();
+            showToast('Reservas actualizadas','success');
+          }
         });
-        renderMVarContratos();
-        renderMVarStats();
-        propagateMVarChanges();
-        showToast('Reservas actualizadas','success');
       };
     }
   }

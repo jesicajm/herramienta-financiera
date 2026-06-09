@@ -287,6 +287,30 @@
 .p5-row-dragging{opacity:.55}
 .mr-head{align-items:center}
 .mr-head .p5-row-drag{margin-right:4px}
+/* ── Modal de confirmación (mismo lenguaje visual que el modal informativo) ── */
+#confirm-overlay .modal-icon{background:rgba(138,90,20,.12);color:#8a5a14}
+.modal-btn-row{display:flex;gap:10px;margin-top:8px}
+.modal-btn-row .btn-modal,.modal-btn-row .btn-modal-cancel{flex:1;margin-top:0}
+.btn-modal-cancel{font-family:inherit;font-size:14px;font-weight:500;padding:12px 18px;border-radius:12px;cursor:pointer;
+  background:transparent;border:1px solid rgba(0,0,0,.16);color:rgba(0,0,0,.6);transition:.15s}
+.btn-modal-cancel:hover{background:rgba(0,0,0,.05);border-color:rgba(0,0,0,.28)}
+.btn-modal.btn-modal-danger{background:#b00020;border-color:#b00020;color:#fff}
+.btn-modal.btn-modal-danger:hover{background:#8f0019}
+
+/* ── Cargos recurrentes de una deuda (tarjeta de crédito) ── */
+.deuda-cargos-cell{margin-top:4px}
+.deuda-cargos-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.deuda-cargos-title{font-size:13px;font-weight:600;color:#1a1a1a}
+.deuda-cargos-hint{font-size:12px;color:rgba(0,0,0,.45)}
+.deuda-cargos-list{display:flex;flex-direction:column;gap:7px}
+.deuda-cargo-row{display:grid;grid-template-columns:1fr auto auto auto;align-items:center;gap:8px}
+.deuda-cargo-add{display:inline-flex;align-items:center;gap:5px;margin-top:8px;font-size:12.5px;font-weight:500;color:var(--accent,#0e4d3a);
+  background:rgba(14,77,58,.08);border:none;border-radius:8px;padding:7px 11px;cursor:pointer;transition:.15s}
+.deuda-cargo-add:hover{background:rgba(14,77,58,.16)}
+.deuda-cargo-add svg{width:14px;height:14px}
+.deuda-cargos-sync{display:flex;align-items:flex-start;gap:7px;margin-top:10px;font-size:12px;line-height:1.45;
+  color:#185fa5;background:rgba(24,95,165,.07);border-radius:10px;padding:9px 11px}
+.deuda-cargos-sync svg{width:15px;height:15px;flex-shrink:0;margin-top:1px}
 </style>
 </head>
 <body>
@@ -1394,6 +1418,19 @@
     <h3 id="modal-title">Guardado</h3>
     <p id="modal-msg">Los datos se guardaron correctamente.</p>
     <button class="btn-modal" onclick="closeModal()">Continuar</button>
+  </div>
+</div>
+<div class="modal-overlay" id="confirm-overlay">
+  <div class="modal">
+    <div class="modal-icon modal-icon-confirm">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    </div>
+    <h3 id="confirm-title">¿Confirmar?</h3>
+    <p id="confirm-msg"></p>
+    <div class="modal-btn-row">
+      <button class="btn-modal-cancel" id="confirm-cancel">Cancelar</button>
+      <button class="btn-modal" id="confirm-ok">Confirmar</button>
+    </div>
   </div>
 </div>
 <script src="app.js"></script>
