@@ -160,7 +160,7 @@
       {nombre:'Fondo de Emergencias',monto:0},{nombre:'Viaje',monto:0},
       {nombre:'Retiro',monto:0},{nombre:'Inversión',monto:0}
     ],
-    p5:{socio1:'',socio2:'',ingresos:[],deudas:[],ahorro:[],gastos:{},
+    p5:{socio1:'',socio2:'',ingresos:[],deudas:[],ahorro:[],gastos:{},gastoCats:[],
         ingMensual:0,ingAnual:0,deuMensual:0,deuAnual:0,
         ahoMensual:0,ahoAnual:0,gastosMensual:0,gastosAnual:0,saldo:0,
         fondoProvisiones:0},
@@ -527,7 +527,9 @@
     const {totalIng,totalGas}=calcM1();
     const {totalDeuda}=calcM2();
     const {totalActivos,totalLiquido}=calcM3();
-    const pctAho     = totalIng>0  ? totalAhorro/totalIng     : 0;
+    const provisionAporte = (state.ahorro||[]).filter(a=>a.linkedToProvisionesAporte).reduce((s,a)=>s+(a.monto_mensual||0),0);
+    const ahorroReal = totalAhorro - provisionAporte;   // las provisiones fondean gastos futuros, no son ahorro/inversión
+    const pctAho     = totalIng>0  ? ahorroReal/totalIng     : 0;
     const solvencia  = totalDeuda>0? totalActivos/totalDeuda  : 0;
     const fondoEmerg = totalGas>0  ? totalLiquido/totalGas    : 0;
     const ca = pctAho>=.2     ? 'is-pos' : pctAho>=.1     ? 'is-warn' : 'is-neg';
@@ -535,9 +537,9 @@
     const cf = fondoEmerg>6   ? 'is-pos' : fondoEmerg>=3  ? 'is-warn' : 'is-neg';
     document.getElementById('m4-kpis').innerHTML = `
       <div class="kpi is-info span-2">
-        <div class="kpi-label">Ahorro mensual total</div>
-        <div class="kpi-value">${fmt(totalAhorro)}</div>
-        <div class="kpi-sub">Suma de objetivos</div>
+        <div class="kpi-label">Ahorro/inversión mensual</div>
+        <div class="kpi-value">${fmt(ahorroReal)}</div>
+        <div class="kpi-sub">${provisionAporte>0 ? 'Provisiones aparte: '+fmt(provisionAporte)+'/mes' : 'Suma de objetivos de ahorro'}</div>
       </div>
       <div class="kpi ${ca}">
         <div class="kpi-label">Capacidad de ahorro</div>
@@ -572,7 +574,7 @@
     const {m:dM,a:dA} = readRows('p5-deudas-body');
     const {m:aM,a:aA} = readRows('p5-ahorro-body');
     let gM=0,gA=0;
-    P5_GASTO_CATS.forEach(cat=>{
+    p5Cats().forEach(cat=>{
       const {m,a}=readRows('p5-gas-'+cat.id+'-body');
       gM+=m;gA+=a;
       const eM=document.getElementById('acc-gas-'+cat.id+'-m');
@@ -603,7 +605,7 @@
     // Para gastos anuales del M5: solo cuentan los que el cliente NO marcó como "ya está en M1"
     // (el flag yaEnM1 lo agrego en p5Cells y collectP5Rows)
     let gastosAnualM5Real = 0;
-    P5_GASTO_CATS.forEach(cat=>{
+    p5Cats().forEach(cat=>{
       document.querySelectorAll('#p5-gas-'+cat.id+'-body .multi-row').forEach(r=>{
         const frec  = r.querySelector('select[data-f=frec]')?.value;
         const monto = n(r.querySelector('input[data-f=monto]')?.value);
@@ -611,8 +613,8 @@
         const yaEnM1Input = r.querySelector('input[data-f=yaEnM1]');
         const yaEnM1 = yaEnM1Input ? yaEnM1Input.checked : false;
         if(frec === 'NO ES TODOS LOS MESES'){
-          // Si paga en cuotas y dice que ya está en M1, NO sumar (evitar doble registro)
-          if(formaPago === 'cuotas' && yaEnM1) return;
+          // Si el cliente dice que ya está sumado en Ingresos y Gastos, NO sumar (evitar doble registro)
+          if(yaEnM1) return;
           gastosAnualM5Real += monto;
         }
       });
@@ -633,9 +635,9 @@
       + '<div class="m5-bk-item m5-bk-pos"><span class="m5-bk-label">Ingresos mensuales × 12</span><span class="m5-bk-value">+' + fmt(ingresosAnualM1) + '</span><span class="m5-bk-sub">' + fmt(m1IngresoMensual) + ' mensuales</span></div>'
       + '<div class="m5-bk-item m5-bk-pos"><span class="m5-bk-label">Ingresos no mensuales</span><span class="m5-bk-value">+' + fmt(iA) + '</span><span class="m5-bk-sub">Primas, dividendos, devoluciones</span></div>'
       + '<div class="m5-bk-item m5-bk-neg"><span class="m5-bk-label">Gastos mensuales × 12</span><span class="m5-bk-value">−' + fmt(gastosAnualM1Mensuales) + '</span><span class="m5-bk-sub">' + fmt(m1GastoMensual) + ' mensuales</span></div>'
-      + '<div class="m5-bk-item m5-bk-neg"><span class="m5-bk-label">Gastos anuales</span><span class="m5-bk-value">−' + fmt(gastosAnualM5Real) + '</span><span class="m5-bk-sub">No incluye los marcados como "ya en M1"</span></div>'
-      + '<div class="m5-bk-item m5-bk-neg"><span class="m5-bk-label">Cuotas de deudas × 12</span><span class="m5-bk-value">−' + fmt(m1DeudaMensual*12) + '</span><span class="m5-bk-sub">Compromisos de M2</span></div>'
-      + '<div class="m5-bk-item m5-bk-neg"><span class="m5-bk-label">Ahorro mensual × 12</span><span class="m5-bk-value">−' + fmt(m1AhorroMensual*12) + '</span><span class="m5-bk-sub">Tus objetivos del M4</span></div>'
+      + '<div class="m5-bk-item m5-bk-neg"><span class="m5-bk-label">Gastos anuales</span><span class="m5-bk-value">−' + fmt(gastosAnualM5Real) + '</span><span class="m5-bk-sub">No incluye los marcados como "ya en Ingresos y Gastos"</span></div>'
+      + '<div class="m5-bk-item m5-bk-neg"><span class="m5-bk-label">Cuotas de deudas × 12</span><span class="m5-bk-value">−' + fmt(m1DeudaMensual*12) + '</span><span class="m5-bk-sub">Compromisos de Endeudamiento</span></div>'
+      + '<div class="m5-bk-item m5-bk-neg"><span class="m5-bk-label">Ahorro mensual × 12</span><span class="m5-bk-value">−' + fmt(m1AhorroMensual*12) + '</span><span class="m5-bk-sub">Tus objetivos de Ahorro y Solvencia</span></div>'
       + '</div>'
       + '<div class="m5-bk-totals">'
       + '<div class="m5-bk-total"><span>Total ingresos del año</span><strong style="color:var(--pos)">' + fmt(totalIngresosAnio) + '</strong></div>'
@@ -660,7 +662,7 @@
   /* Suma de TODOS los gastos anuales del M5 (frec NO ES TODOS LOS MESES) */
   function getTotalGastosAnualesP5(){
     let total = 0;
-    P5_GASTO_CATS.forEach(cat=>{
+    p5Cats().forEach(cat=>{
       document.querySelectorAll('#p5-gas-'+cat.id+'-body .multi-row').forEach(r=>{
         const frec = r.querySelector('select[data-f=frec]')?.value;
         const monto = n(r.querySelector('input[data-f=monto]')?.value);
@@ -673,7 +675,7 @@
   /* Suma SOLO de los gastos anuales que el usuario marcó como "provisionar mensualmente" */
   function getTotalGastosProvisionablesP5(){
     let total = 0;
-    P5_GASTO_CATS.forEach(cat=>{
+    p5Cats().forEach(cat=>{
       document.querySelectorAll('#p5-gas-'+cat.id+'-body .multi-row').forEach(r=>{
         const frec = r.querySelector('select[data-f=frec]')?.value;
         const monto = n(r.querySelector('input[data-f=monto]')?.value);
@@ -697,7 +699,7 @@
       mesesProximos.push(String(m).padStart(2,'0'));
     }
     let total = 0;
-    P5_GASTO_CATS.forEach(cat=>{
+    p5Cats().forEach(cat=>{
       document.querySelectorAll('#p5-gas-'+cat.id+'-body .multi-row').forEach(r=>{
         const frec = r.querySelector('select[data-f=frec]')?.value;
         const mes  = r.querySelector('select[data-f=mes]')?.value;
@@ -794,7 +796,7 @@
   function recolectarEventosAnuales(){
     const eventos = [];
   
-    P5_GASTO_CATS.forEach(cat=>{
+    p5Cats().forEach(cat=>{
       document.querySelectorAll('#p5-gas-'+cat.id+'-body .multi-row').forEach(r=>{
         const frec  = r.querySelector('select[data-f=frec]')?.value;
         const mes   = r.querySelector('select[data-f=mes]')?.value;
@@ -1050,15 +1052,17 @@
 
       const cat=document.createElement('div');
       cat.className='gasto-cat';
+      cat.dataset.catkey=k;
 
-      // Encabezado: nombre editable + total automático + acciones
+      // Encabezado: handle de arrastre + nombre editable + total automático + acciones
       const head=document.createElement('div');
       head.className='gasto-cat-head';
       head.innerHTML =
-        `<input class="it-cat-name gasto-cat-name" data-labelkey="${k}" value="${String(gastoLabel(k)).replace(/"/g,'&quot;')}" placeholder="${custom?'Nombre de la categoría':GASTO_LABELS[k]}">`
+        `<button class="gasto-cat-drag" title="Arrastra para reordenar la categoría">${SVG_DRAG_HANDLE}</button>`
+        + `<input class="it-cat-name gasto-cat-name" data-labelkey="${k}" value="${String(gastoLabel(k)).replace(/"/g,'&quot;')}" placeholder="${custom?'Nombre de la categoría':GASTO_LABELS[k]}">`
         + `<div class="gasto-cat-total"><span class="gasto-cat-total-label">Total</span><span class="gasto-cat-total-val" data-cat-total="${k}">${fmt(state.gastos[k])}</span></div>`
         + `<button class="gasto-add-btn" title="Agregar gasto a esta categoría" data-add-item="${k}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span>Gasto</span></button>`
-        + (custom?`<button class="it-del gasto-cat-del" title="Eliminar categoría">${SVG_X}</button>`:'');
+        + `<button class="it-del gasto-cat-del" title="Eliminar categoría">${SVG_X}</button>`;
       cat.appendChild(head);
 
       // Items
@@ -1075,9 +1079,11 @@
         items.forEach((it,idx)=>{
           const row=document.createElement('div');
           row.className='item-row gasto-item-row';
-          row.style.gridTemplateColumns='1fr auto auto auto';
+          row.style.gridTemplateColumns='auto 1fr auto auto auto';
+          row.dataset.itemIdx=idx;
           row.innerHTML =
-            `<input type="text" class="it-name" data-f="nombre" value="${String(it.nombre||'').replace(/"/g,'&quot;')}" placeholder="¿En qué? (ej: arriendo, mercado)">`
+            `<button class="gasto-item-drag" title="Arrastra para reordenar el gasto">${SVG_DRAG_HANDLE}</button>`
+            + `<input type="text" class="it-name" data-f="nombre" value="${String(it.nombre||'').replace(/"/g,'&quot;')}" placeholder="¿En qué? (ej: arriendo, mercado)">`
             + `<span class="it-prefix">${currency}</span>`
             + `<input class="money-input" data-f="monto">`
             + `<button class="it-del" title="Eliminar gasto">${SVG_X}</button>`;
@@ -1104,6 +1110,16 @@
             renderItems();calcM1();
             if(typeof scheduleSave==='function') scheduleSave('ingresos_gastos');
           });
+          // Arrastre del gasto dentro de la categoría
+          wireGastoItemDrag(row.querySelector('.gasto-item-drag'), row, itemsWrap, function(){
+            const order=Array.from(itemsWrap.querySelectorAll('.gasto-item-row')).map(r=>parseInt(r.dataset.itemIdx,10));
+            const reordered=order.map(i=>items[i]).filter(v=>v!==undefined);
+            items.length=0; reordered.forEach(it=>items.push(it));
+            const tot=recomputeGastoTotal(k);
+            head.querySelector(`[data-cat-total="${k}"]`).textContent=fmt(tot);
+            renderItems();calcM1();
+            if(typeof scheduleSave==='function') scheduleSave('ingresos_gastos');
+          });
         });
       };
       renderItems();
@@ -1121,15 +1137,80 @@
         const last=itemsWrap.querySelector('.gasto-item-row:last-child .it-name');
         if(last) last.focus();
       });
-      // Eliminar categoría (solo custom)
-      if(custom){
-        head.querySelector('.gasto-cat-del').addEventListener('click',function(){
-          delete state.gastos[k];
-          delete state.gastosItems[k];
-          if(state.gastosLabels) delete state.gastosLabels[k];
-          renderGastosTable();calcM1();
-        });
+      // Eliminar categoría (cualquiera, incluidas las predeterminadas)
+      head.querySelector('.gasto-cat-del').addEventListener('click',function(){
+        delete state.gastos[k];
+        delete state.gastosItems[k];
+        if(state.gastosLabels) delete state.gastosLabels[k];
+        renderGastosTable();calcM1();
+        if(typeof scheduleSave==='function') scheduleSave('ingresos_gastos');
+      });
+      // Arrastre para reordenar la categoría
+      wireGastoCatDrag(head.querySelector('.gasto-cat-drag'), cat, body);
+    });
+  }
+
+  /* Arrastre de CATEGORÍAS de gasto (M1) */
+  function wireGastoCatDrag(handle, catDiv, body){
+    if(!handle) return;
+    handle.addEventListener('pointerdown', function(e){
+      e.preventDefault();
+      catDiv.classList.add('p5-cat-dragging');
+      document.body.style.userSelect='none'; document.body.style.cursor='grabbing';
+      function move(ev){
+        const sibs=Array.from(body.querySelectorAll('.gasto-cat:not(.p5-cat-dragging)'));
+        let placed=false;
+        for(const sib of sibs){ const r=sib.getBoundingClientRect(); if(ev.clientY < r.top+r.height/2){ body.insertBefore(catDiv, sib); placed=true; break; } }
+        if(!placed) body.appendChild(catDiv);
       }
+      function end(){
+        document.removeEventListener('pointermove',move);
+        document.removeEventListener('pointerup',end);
+        document.removeEventListener('pointercancel',end);
+        document.body.style.userSelect=''; document.body.style.cursor='';
+        catDiv.classList.remove('p5-cat-dragging');
+        // Reconstruir state.gastos / gastosItems / gastosLabels según el nuevo orden del DOM
+        const order=Array.from(body.querySelectorAll('.gasto-cat')).map(c=>c.dataset.catkey);
+        const ng={}, ni={}, nl={};
+        order.forEach(key=>{
+          if(key in state.gastos) ng[key]=state.gastos[key];
+          if(state.gastosItems && key in state.gastosItems) ni[key]=state.gastosItems[key];
+          if(state.gastosLabels && key in state.gastosLabels) nl[key]=state.gastosLabels[key];
+        });
+        state.gastos=ng; state.gastosItems=ni; state.gastosLabels=nl;
+        calcM1();
+        if(typeof scheduleSave==='function') scheduleSave('ingresos_gastos');
+      }
+      document.addEventListener('pointermove',move);
+      document.addEventListener('pointerup',end);
+      document.addEventListener('pointercancel',end);
+    });
+  }
+
+  /* Arrastre de un GASTO dentro de su categoría (M1) */
+  function wireGastoItemDrag(handle, rowDiv, itemsWrap, onDrop){
+    if(!handle) return;
+    handle.addEventListener('pointerdown', function(e){
+      e.preventDefault();
+      rowDiv.classList.add('p5-row-dragging');
+      document.body.style.userSelect='none'; document.body.style.cursor='grabbing';
+      function move(ev){
+        const sibs=Array.from(itemsWrap.querySelectorAll('.gasto-item-row:not(.p5-row-dragging)'));
+        let placed=false;
+        for(const sib of sibs){ const r=sib.getBoundingClientRect(); if(ev.clientY < r.top+r.height/2){ itemsWrap.insertBefore(rowDiv, sib); placed=true; break; } }
+        if(!placed) itemsWrap.appendChild(rowDiv);
+      }
+      function end(){
+        document.removeEventListener('pointermove',move);
+        document.removeEventListener('pointerup',end);
+        document.removeEventListener('pointercancel',end);
+        document.body.style.userSelect=''; document.body.style.cursor='';
+        rowDiv.classList.remove('p5-row-dragging');
+        if(typeof onDrop==='function') onDrop();
+      }
+      document.addEventListener('pointermove',move);
+      document.addEventListener('pointerup',end);
+      document.addEventListener('pointercancel',end);
     });
   }
 
@@ -1468,6 +1549,20 @@
     ]},
     {id:'otros_gastos',label:'Otros',items:['Otro']}
   ];
+
+  /* Lista VIVA de categorías de gasto del Presupuesto Anual (editable/reordenable).
+     Se siembra desde P5_GASTO_CATS la primera vez. */
+  function p5Cats(){
+    if(!Array.isArray(state.p5.gastoCats) || !state.p5.gastoCats.length){
+      state.p5.gastoCats = P5_GASTO_CATS.map(c=>({id:c.id, label:c.label}));
+    }
+    return state.p5.gastoCats;
+  }
+  /* Items por defecto de una categoría semilla (para la primera carga) */
+  function p5DefaultItems(catId){
+    const c = P5_GASTO_CATS.find(x=>x.id===catId);
+    return c ? c.items : [];
+  }
   
   /* Plantillas pre-cargadas de ingresos no mensuales según tipo de cliente */
   function getP5IngresosPrecarga(tipo){
@@ -1493,14 +1588,16 @@
   function renderP5GastosAccordions(){
     const container=document.getElementById('p5-gastos-accordions');
     container.innerHTML='';
-    P5_GASTO_CATS.forEach(cat=>{
+    p5Cats().forEach(cat=>{
       const saved=state.p5.gastos[cat.id]||[];
       const div=document.createElement('div');
       div.className='acc';
       div.dataset.acc=cat.id;
       div.innerHTML=`<div class="acc-head" onclick="toggleAcc(this)">
-          <h4>${cat.label}</h4>
+          <button class="p5-cat-drag" title="Arrastra para reordenar">${SVG_DRAG_HANDLE}</button>
+          <input class="p5-cat-name" value="${String(cat.label||'').replace(/"/g,'&quot;')}" placeholder="Nombre de la categoría">
           <div class="acc-meta"><span id="acc-gas-${cat.id}-m">— mensual</span><span id="acc-gas-${cat.id}-a">— anual</span></div>
+          <button class="p5-cat-del" title="Eliminar categoría">${SVG_X}</button>
           <div class="acc-chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="6 9 12 15 18 9"/></svg></div>
         </div>
         <div class="acc-body">
@@ -1511,13 +1608,107 @@
           </button>
         </div>`;
       container.appendChild(div);
+
       if(saved.length>0) saved.forEach(item=>addP5GastoRowData(cat.id,item));
-      else cat.items.forEach(item=>{
+      else p5DefaultItems(cat.id).forEach(item=>{
         const data = typeof item === 'string'
           ? {nombre:item, frec:'TODOS LOS MESES', monto:0, mes:'', pertenece:'', obs:''}
           : Object.assign({nombre:'', frec:'TODOS LOS MESES', monto:0, mes:'', pertenece:'', obs:''}, item);
         addP5GastoRowData(cat.id, data);
       });
+
+      // Nombre editable (no debe disparar el toggle del acordeón)
+      const nameInp=div.querySelector('.p5-cat-name');
+      ['click','pointerdown'].forEach(ev=>nameInp.addEventListener(ev,e=>e.stopPropagation()));
+      nameInp.addEventListener('input',function(){
+        const c=p5Cats().find(x=>x.id===cat.id); if(c) c.label=this.value;
+        if(typeof scheduleSave==='function') scheduleSave('presupuesto_anual');
+      });
+      // Eliminar categoría
+      const delBtn=div.querySelector('.p5-cat-del');
+      delBtn.addEventListener('click',function(e){
+        e.stopPropagation();
+        if(!confirm('¿Eliminar la categoría "'+(cat.label||'')+'" y todos sus gastos?')) return;
+        state.p5.gastoCats = p5Cats().filter(x=>x.id!==cat.id);
+        if(state.p5.gastos) delete state.p5.gastos[cat.id];
+        renderP5GastosAccordions(); calcP5Totals();
+      });
+      // Arrastrar categoría
+      const dragH=div.querySelector('.p5-cat-drag');
+      dragH.addEventListener('click',e=>e.stopPropagation());
+      wireP5CatDrag(dragH, div, container);
+    });
+
+    // Botón agregar categoría
+    const addCat=document.createElement('button');
+    addCat.className='btn-add p5-add-cat';
+    addCat.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Agregar categoría';
+    addCat.addEventListener('click',function(){
+      const id='gc_'+Date.now().toString(36)+Math.floor(Math.random()*1000).toString(36);
+      p5Cats().push({id, label:'Nueva categoría'});
+      if(!state.p5.gastos) state.p5.gastos={};
+      state.p5.gastos[id]=[];
+      renderP5GastosAccordions(); calcP5Totals();
+      const ni=document.querySelector('.acc[data-acc="'+id+'"] .p5-cat-name');
+      if(ni){ ni.focus(); ni.select(); }
+    });
+    container.appendChild(addCat);
+  }
+
+  /* Arrastre de CATEGORÍAS (acordeones) */
+  function wireP5CatDrag(handle, accDiv, container){
+    if(!handle) return;
+    handle.addEventListener('pointerdown', function(e){
+      e.preventDefault();
+      accDiv.classList.add('p5-cat-dragging');
+      document.body.style.userSelect='none'; document.body.style.cursor='grabbing';
+      function move(ev){
+        const sibs=Array.from(container.querySelectorAll('.acc:not(.p5-cat-dragging)'));
+        let placed=false;
+        for(const sib of sibs){ const r=sib.getBoundingClientRect(); if(ev.clientY < r.top+r.height/2){ container.insertBefore(accDiv, sib); placed=true; break; } }
+        if(!placed){ const addB=container.querySelector('.p5-add-cat'); addB ? container.insertBefore(accDiv, addB) : container.appendChild(accDiv); }
+      }
+      function end(){
+        document.removeEventListener('pointermove',move);
+        document.removeEventListener('pointerup',end);
+        document.removeEventListener('pointercancel',end);
+        document.body.style.userSelect=''; document.body.style.cursor='';
+        accDiv.classList.remove('p5-cat-dragging');
+        const orden=Array.from(container.querySelectorAll('.acc')).map(a=>a.dataset.acc);
+        const byId={}; p5Cats().forEach(c=>byId[c.id]=c);
+        state.p5.gastoCats = orden.map(id=>byId[id]).filter(Boolean);
+        if(typeof scheduleSave==='function') scheduleSave('presupuesto_anual');
+      }
+      document.addEventListener('pointermove',move);
+      document.addEventListener('pointerup',end);
+      document.addEventListener('pointercancel',end);
+    });
+  }
+
+  /* Arrastre de GASTOS dentro de una categoría */
+  function wireP5RowDrag(handle, rowDiv, body){
+    if(!handle) return;
+    handle.addEventListener('pointerdown', function(e){
+      e.preventDefault();
+      rowDiv.classList.add('p5-row-dragging');
+      document.body.style.userSelect='none'; document.body.style.cursor='grabbing';
+      function move(ev){
+        const sibs=Array.from(body.querySelectorAll('.multi-row:not(.p5-row-dragging)'));
+        let placed=false;
+        for(const sib of sibs){ const r=sib.getBoundingClientRect(); if(ev.clientY < r.top+r.height/2){ body.insertBefore(rowDiv, sib); placed=true; break; } }
+        if(!placed) body.appendChild(rowDiv);
+      }
+      function end(){
+        document.removeEventListener('pointermove',move);
+        document.removeEventListener('pointerup',end);
+        document.removeEventListener('pointercancel',end);
+        document.body.style.userSelect=''; document.body.style.cursor='';
+        rowDiv.classList.remove('p5-row-dragging');
+        calcP5Totals();   // recolecta el nuevo orden del DOM al estado y guarda
+      }
+      document.addEventListener('pointermove',move);
+      document.addEventListener('pointerup',end);
+      document.addEventListener('pointercancel',end);
     });
   }
   
@@ -1565,22 +1756,33 @@
         + '<option value="cuotas"'+(formaPago==='cuotas'?' selected':'')+'>Cuotas mensuales</option>'
         + '</select>'
         + '</div>');
+
+      // Clasificación 50/30/20: Necesidad o Deseo (solo anual · alimenta la Regla de presupuesto)
+      const bucketG = d.bucket || 'nec';
+      const bucketGClass = isAnual ? 'mr-field' : 'mr-field hide';
+      cells.push('<div class="'+bucketGClass+'" data-bucket-cell>'
+        + '<label>En la regla 50/30/20 cuenta como</label>'
+        + '<select data-f="bucket">'
+        + '<option value="nec"'+(bucketG==='nec'?' selected':'')+'>Necesidad</option>'
+        + '<option value="des"'+(bucketG==='des'?' selected':'')+'>Deseo</option>'
+        + '</select>'
+        + '</div>');
   
-      // Pregunta "¿ya está en el M1?" (visible solo si anual + cuotas)
-      const yaEnM1Visible = isAnual && formaPago === 'cuotas';
+      // Pregunta "¿ya está en el M1?" (visible para cualquier gasto anual)
+      const yaEnM1Visible = isAnual;
       const yaEnM1Class = yaEnM1Visible ? 'mr-field full ya-en-m1-cell' : 'mr-field full ya-en-m1-cell hide';
       cells.push('<div class="'+yaEnM1Class+'" data-ya-m1-cell>'
         + '<div class="ya-m1-row">'
         + '<label class="ya-m1-toggle">'
         + '<input type="checkbox" data-f="yaEnM1" ' + (yaEnM1?'checked':'') + '>'
         + '<span class="ya-m1-track"></span>'
-        + '<span class="ya-m1-text">Ya lo registré como gasto mensual en el Módulo 1</span>'
+        + '<span class="ya-m1-text">Ya lo registré como gasto mensual en Ingresos y Gastos</span>'
         + '</label>'
         + '</div>'
         + '<div class="ya-m1-hint">'
-        + 'Marca esta casilla si la cuota mensual ya está sumada en tus gastos del Módulo 1, '
-        + 'para no contarla dos veces. <strong>El gasto sigue contando como anual</strong> '
-        + 'porque es un compromiso financiado, y se sugiere provisionar para romper el ciclo de cuotas.'
+        + 'Marca esta casilla si este gasto ya está sumado en tus gastos del módulo de Ingresos y Gastos, '
+        + 'para no contarlo dos veces. <strong>El gasto sigue contando como anual</strong> '
+        + 'porque es un compromiso real, y se sugiere provisionar para no tener que financiarlo.'
         + '</div>'
         + '<div class="sobrecosto-info" data-sobrecosto>'
         + '</div>'
@@ -1627,6 +1829,7 @@
     const mesCell = row.querySelector('[data-mes-cell]');
     const provCell = row.querySelector('[data-prov-cell]');
     const formaCell = row.querySelector('[data-forma-cell]');
+    const bucketCell = row.querySelector('[data-bucket-cell]');
     const yaM1Cell = row.querySelector('[data-ya-m1-cell]');
     const formaSel = row.querySelector('select[data-f=formaPago]');
     const yaM1Input = row.querySelector('input[data-f=yaEnM1]');
@@ -1646,8 +1849,9 @@
       }
       if(provCell) isAnual ? provCell.classList.remove('hide') : provCell.classList.add('hide');
       if(formaCell) isAnual ? formaCell.classList.remove('hide') : formaCell.classList.add('hide');
+      if(bucketCell) isAnual ? bucketCell.classList.remove('hide') : bucketCell.classList.add('hide');
       if(yaM1Cell){
-        if(isAnual && isCuotas) yaM1Cell.classList.remove('hide');
+        if(isAnual) yaM1Cell.classList.remove('hide');
         else yaM1Cell.classList.add('hide');
       }
   
@@ -1710,6 +1914,16 @@
     if(!body) return;
     const isPoliza = catId === 'seguros';
     const row=makeMultiRow(data,{cells:[p5Cells(data,null,{isPoliza, isGasto:true})],namePlaceholder:'Concepto'});
+    // Manejador de arrastre al inicio del encabezado de la fila
+    const head=row.querySelector('.mr-head');
+    if(head){
+      const dh=document.createElement('button');
+      dh.className='p5-row-drag';
+      dh.title='Arrastra para reordenar';
+      dh.innerHTML=SVG_DRAG_HANDLE;
+      head.insertBefore(dh, head.firstChild);
+      wireP5RowDrag(dh, row, body);
+    }
     body.appendChild(row);
     const mIn=row.querySelector('input[data-f=monto]'); mIn.value=data.monto>0?fmtInput(data.monto):'';
     wireP5Row(row, isPoliza);
@@ -1781,6 +1995,7 @@
         mes:r.querySelector('select[data-f=mes]')?.value||'',
         formaPago:r.querySelector('select[data-f=formaPago]')?.value||'contado',
         yaEnM1: yaM1Input ? yaM1Input.checked : false,
+        bucket: r.querySelector('select[data-f=bucket]')?.value || 'nec',
         provisionar: provInput ? provInput.checked : true,
         compania:r.querySelector('input[data-f=compania]')?.value||'',
         pertenece:r.querySelector('select[data-f=pertenece]')?.value||'',
@@ -1888,7 +2103,7 @@
           mesesProximos.push(String(m).padStart(2,'0'));
         }
         let total = 0;
-        P5_GASTO_CATS.forEach(cat=>{
+        p5Cats().forEach(cat=>{
           document.querySelectorAll('#p5-gas-'+cat.id+'-body .multi-row').forEach(r=>{
             const frec = r.querySelector('select[data-f=frec]')?.value;
             const mes  = r.querySelector('select[data-f=mes]')?.value;
@@ -2676,11 +2891,26 @@
 
   function renderBudgetRuleResult(){
     const cont = document.getElementById('t6-rule-result'); if(!cont) return;
-    const ingreso = ingresoMensualHogar();
-    let nec = deudaServicioMensual(), des = 0, aho = (state.ahorro||[]).reduce((s,a)=>s+(a.monto_mensual||0),0);
+    // Ingreso base: mensual del hogar + ingresos no mensuales prorrateados (primas, dividendos)
+    const ingreso = ingresoMensualHogar() + (state.p5.ingAnual||0)/12;
+    // Ahorro real: excluye el aporte a provisiones (eso fondea gastos anuales, no es ahorro/inversión)
+    const provisionAporte = (state.ahorro||[]).filter(a=>a.linkedToProvisionesAporte).reduce((s,a)=>s+(a.monto_mensual||0),0);
+    let nec = deudaServicioMensual();
+    let des = 0;
+    let aho = (state.ahorro||[]).reduce((s,a)=>s+(a.monto_mensual||0),0) - provisionAporte;
     Object.entries(state.gastos||{}).forEach(([cat,val])=>{
       const b = gastoBucket(cat);
       if(b==='nec') nec += (val||0); else if(b==='aho') aho += (val||0); else des += (val||0);
+    });
+    // Gastos anuales del Presupuesto Anual (no marcados "ya en Ingresos y Gastos"), prorrateados a mensual y clasificados
+    Object.values(state.p5.gastos||{}).forEach(rows=>{
+      (rows||[]).forEach(r=>{
+        if(r.frec !== 'NO ES TODOS LOS MESES') return;
+        if(r.yaEnM1) return;   // ya está sumado en los gastos mensuales de Ingresos y Gastos
+        const mensual = (r.monto||0)/12;
+        if(mensual<=0) return;
+        if(r.bucket === 'des') des += mensual; else nec += mensual;
+      });
     });
     const targets = ruleTargets();
     const sumT = (+targets.nec||0)+(+targets.des||0)+(+targets.aho||0);
@@ -2688,7 +2918,7 @@
     const rows=[
       {key:'nec',label:'Necesidades',amt:nec,tgt:+targets.nec||0,color:'var(--accent,#0e4d3a)'},
       {key:'des',label:'Deseos',amt:des,tgt:+targets.des||0,color:'#8a5a14'},
-      {key:'aho',label:'Ahorro y deudas',amt:aho,tgt:+targets.aho||0,color:'#1f6f8b'}
+      {key:'aho',label:'Ahorro/inversión',amt:aho,tgt:+targets.aho||0,color:'#1f6f8b'}
     ];
     let html='';
     if(sumT!==100) html+='<div class="rule-warn">'+SVG_WARN+'<span>Tus porcentajes suman '+sumT+'% (deberían sumar 100%).</span></div>';
@@ -2716,7 +2946,7 @@
 
   function renderBudgetBuckets(){
     const cont=document.getElementById('t6-rule-buckets'); if(!cont) return;
-    let html='<p class="rule-bucket-note">Las cuotas mínimas de deuda cuentan como Necesidad y el ahorro del Módulo 4 como Ahorro. Reclasifica tus gastos si lo necesitas:</p>';
+    let html='<p class="rule-bucket-note">Las cuotas mínimas de deuda cuentan como Necesidad y el ahorro del Módulo 4 como Ahorro/inversión. Reclasifica tus gastos si lo necesitas:</p>';
     Object.keys(state.gastos||{}).forEach(cat=>{
       const b=gastoBucket(cat);
       html+='<div class="bucket-row"><span>'+gastoLabel(cat)+'</span>'
@@ -3325,7 +3555,7 @@
     );
     if(m1){
       if(m1.fuentes_ingreso) state.ingresos=m1.fuentes_ingreso;
-      if(m1.gastos) Object.assign(state.gastos,m1.gastos);
+      if(m1.gastos) state.gastos = {...m1.gastos};   // reemplazar (no fusionar) para respetar categorías eliminadas y su orden
       if(m1.gastosLabels) Object.assign(state.gastosLabels,m1.gastosLabels);
       if(m1.gastosItems && typeof m1.gastosItems==='object') state.gastosItems = m1.gastosItems;
       ensureGastosItems(); recomputeGastosTotales();
@@ -3424,7 +3654,7 @@
     state.p5.ingresos=collectP5Rows('p5-ingresos-body');
     state.p5.deudas  =collectP5Rows('p5-deudas-body');
     state.p5.ahorro  =collectP5Rows('p5-ahorro-body');
-    const g={};P5_GASTO_CATS.forEach(cat=>{g[cat.id]=collectP5Rows('p5-gas-'+cat.id+'-body');});
+    const g={};p5Cats().forEach(cat=>{g[cat.id]=collectP5Rows('p5-gas-'+cat.id+'-body');});
     state.p5.gastos=g;
   }
   function updateProgress(){
@@ -3457,6 +3687,7 @@
       fuentes_ingreso:fuentes,
       gastos:state.gastos,
       gastosLabels:state.gastosLabels,
+      gastosItems:state.gastosItems,
       tipoIngreso: state.profile.tipoIngreso,
       total_ingresos:totalIng,
       total_gastos:totalGas

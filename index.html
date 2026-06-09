@@ -260,8 +260,33 @@
 .gasto-cat-del{flex-shrink:0}
 .gasto-cat-items{margin-top:10px;padding-left:12px;border-left:2px solid rgba(14,77,58,.12);display:flex;flex-direction:column;gap:7px}
 .gasto-cat-empty{font-size:12.5px;color:rgba(0,0,0,.38);padding:2px 0}
-.gasto-item-row{margin:0}
+.gasto-item-row{margin:0;align-items:center}
 .gasto-cat-items .item-row{margin:0}
+/* Handles de arrastre del módulo Ingresos y Gastos (M1) */
+.gasto-cat-drag,.gasto-item-drag{display:inline-flex;align-items:center;justify-content:center;background:none;border:none;
+  cursor:grab;color:rgba(0,0,0,.26);padding:2px;flex-shrink:0;touch-action:none}
+.gasto-cat-drag:hover,.gasto-item-drag:hover{color:var(--accent,#0e4d3a)}
+.gasto-cat-drag svg,.gasto-item-drag svg{width:16px;height:16px}
+.gasto-item-drag svg{width:15px;height:15px}
+.gasto-cat.p5-cat-dragging{opacity:.6;background:rgba(14,77,58,.04)}
+/* Presupuesto Anual: categorías editables, borrables y arrastrables */
+.acc-head .p5-cat-name{flex:1;min-width:0;font-family:'Fraunces',Georgia,serif;font-size:15px;font-weight:600;color:#1a1a1a;
+  border:1px solid transparent;background:transparent;padding:6px 8px;border-radius:8px;transition:.15s}
+.acc-head .p5-cat-name::placeholder{font-family:'Geist',sans-serif;font-weight:500;color:rgba(0,0,0,.3)}
+.acc-head .p5-cat-name:hover{background:rgba(0,0,0,.04)}
+.acc-head .p5-cat-name:focus{outline:none;background:#fff;border-color:var(--accent,#0e4d3a);box-shadow:0 0 0 3px rgba(14,77,58,.12)}
+.p5-cat-drag,.p5-row-drag{display:inline-flex;align-items:center;justify-content:center;background:none;border:none;
+  cursor:grab;color:rgba(0,0,0,.28);padding:2px;flex-shrink:0;touch-action:none}
+.p5-cat-drag:hover,.p5-row-drag:hover{color:var(--accent,#0e4d3a)}
+.p5-cat-drag svg,.p5-row-drag svg{width:16px;height:16px}
+.p5-cat-del{display:inline-flex;align-items:center;justify-content:center;background:none;border:none;cursor:pointer;
+  color:rgba(176,0,32,.5);padding:2px;flex-shrink:0}
+.p5-cat-del:hover{color:#b00020}
+.p5-cat-del svg{width:15px;height:15px}
+.p5-cat-dragging{opacity:.6;background:rgba(14,77,58,.04);border-radius:12px}
+.p5-row-dragging{opacity:.55}
+.mr-head{align-items:center}
+.mr-head .p5-row-drag{margin-right:4px}
 </style>
 </head>
 <body>
@@ -1051,7 +1076,7 @@
           <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="8"/><rect x="12" y="6" width="3" height="12"/><rect x="17" y="13" width="3" height="5"/></svg></div>
           <h3>Regla de presupuesto</h3>
         </div>
-        <p class="ds-hint">Clasifica tu dinero del mes en Necesidades, Deseos y Ahorro/deudas, y compáralo con la regla que elijas. La base es tu ingreso mensual neto.</p>
+        <p class="ds-hint">Clasifica tu dinero del mes en Necesidades, Deseos y Ahorro/inversión, y compáralo con la regla que elijas. La base es tu ingreso mensual neto.</p>
         <div class="rule-seg" id="t6-rule-seg">
           <button class="rule-seg-btn active" data-rule="50/30/20" type="button">50/30/20</button>
           <button class="rule-seg-btn" data-rule="60/20/20" type="button">60/20/20</button>
@@ -1061,7 +1086,7 @@
         <div id="t6-rule-custom" class="rule-custom" style="display:none">
           <div class="mr-field"><label>Necesidades %</label><input type="number" id="rule-nec" min="0" max="100" step="1"></div>
           <div class="mr-field"><label>Deseos %</label><input type="number" id="rule-des" min="0" max="100" step="1"></div>
-          <div class="mr-field"><label>Ahorro/deudas %</label><input type="number" id="rule-aho" min="0" max="100" step="1"></div>
+          <div class="mr-field"><label>Ahorro/inversión %</label><input type="number" id="rule-aho" min="0" max="100" step="1"></div>
         </div>
         <div id="t6-rule-result"></div>
         <details class="rule-classify">
