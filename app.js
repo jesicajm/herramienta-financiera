@@ -189,12 +189,15 @@
       seeded:false,
       customized:false,        // true si el usuario editó la lista de deudas del simulador
       capacidadExtra:0,
-      estrategia:'avalancha',   // 'avalancha' | 'bola_nieve' | 'consolidacion'
+      estrategia:'avalancha',   // orden: 'avalancha' | 'bola_nieve' | 'personalizada'
+      consolidacionActiva:false,// capa de compra de cartera (independiente del orden)
       consolidacionTasa:18,     // % E.A.
       consolidacionPlazo:36,    // meses
+      ordenPersonalizado:[],    // orden personalizado por id de deuda (incluye el crédito consolidado)
+      ocultarPlanTablero:false, // ocultar "Tu plan de pago de deudas" en el Tablero
       abonoMonto:0,
       abonoMes:1,               // en cuántos meses se recibe (1 = este mes)
-      deudas:[]                 // [{nombre, saldo, tasa(decimal E.A.), pago, consolidar}]
+      deudas:[]                 // [{id, nombre, saldo, tasa(decimal E.A.), pago, consolidar}]
     },
     metas:{
       seeded:false,
@@ -554,15 +557,17 @@
         state.ahorro.push({...linkedRows[linkedIdx], nombre, monto_mensual:monto});
         linkedIdx++;
       } else {
-        state.ahorro.push({nombre,monto_mensual:monto});
+        const precaucion = r.querySelector('input[data-f=precaucion]')?.checked || false;
+        state.ahorro.push({nombre,monto_mensual:monto,precaucion});
       }
     });
     const {totalIng,totalGas}=calcM1();
     const {totalDeuda}=calcM2();
     const {totalActivos,totalLiquido}=calcM3();
-    const provisionAporte = (state.ahorro||[]).filter(a=>a.linkedToProvisionesAporte).reduce((s,a)=>s+(a.monto_mensual||0),0);
-    const ahorroReal = totalAhorro - provisionAporte;   // las provisiones fondean gastos futuros, no son ahorro/inversión
-    const pctAho     = totalIng>0  ? ahorroReal/totalIng     : 0;
+    const esPrecaucion = a => a.linkedToFondoAporte || a.linkedToProvisionesAporte || a.precaucion;
+    const ahorroPrecaucion = (state.ahorro||[]).filter(esPrecaucion).reduce((s,a)=>s+(a.monto_mensual||0),0);
+    const ahorroInversion  = totalAhorro - ahorroPrecaucion;   // "lo demás": ahorro/inversión, sin el colchón de precaución
+    const pctAho     = totalIng>0  ? ahorroInversion/totalIng     : 0;
     const solvencia  = totalDeuda>0? totalActivos/totalDeuda  : 0;
     const fondoEmerg = totalGas>0  ? totalLiquido/totalGas    : 0;
     const ca = pctAho>=.2     ? 'is-pos' : pctAho>=.1     ? 'is-warn' : 'is-neg';
@@ -571,8 +576,8 @@
     document.getElementById('m4-kpis').innerHTML = `
       <div class="kpi is-info span-2">
         <div class="kpi-label">Ahorro/inversión mensual</div>
-        <div class="kpi-value">${fmt(ahorroReal)}</div>
-        <div class="kpi-sub">${provisionAporte>0 ? 'Provisiones aparte: '+fmt(provisionAporte)+'/mes' : 'Suma de objetivos de ahorro'}</div>
+        <div class="kpi-value">${fmt(ahorroInversion)}</div>
+        <div class="kpi-sub">${ahorroPrecaucion>0 ? 'Precaución (colchón) aparte: '+fmt(ahorroPrecaucion)+'/mes' : 'Sin contar colchón de precaución'}</div>
       </div>
       <div class="kpi ${ca}">
         <div class="kpi-label">Capacidad de ahorro</div>
@@ -590,7 +595,7 @@
         <div class="kpi-sub">Meses de gastos cubiertos · meta &gt;6</div>
       </div>`;
     scheduleSave('ahorro');
-    return {totalAhorro};
+    return {totalAhorro, ahorroPrecaucion, ahorroInversion};
   }
   
   function calcP5Totals(){
@@ -1178,11 +1183,21 @@
             if(typeof scheduleSave==='function') scheduleSave('ingresos_gastos');
           });
           row.querySelector('.it-del').addEventListener('click',function(){
-            items.splice(idx,1);
-            const tot=recomputeGastoTotal(k);
-            head.querySelector(`[data-cat-total="${k}"]`).textContent=fmt(tot);
-            renderItems();calcM1();
-            if(typeof scheduleSave==='function') scheduleSave('ingresos_gastos');
+            const doDelete=function(){
+              items.splice(idx,1);
+              const tot=recomputeGastoTotal(k);
+              head.querySelector(`[data-cat-total="${k}"]`).textContent=fmt(tot);
+              renderItems();calcM1();
+              if(typeof scheduleSave==='function') scheduleSave('ingresos_gastos');
+            };
+            const tieneContenido=(it.nombre||'').trim() || (it.monto||0)>0;
+            if(tieneContenido){
+              showConfirm({
+                title:'Eliminar gasto',
+                msg: it.nombre ? ('¿Eliminar "'+it.nombre+'"?') : '¿Eliminar este gasto?',
+                confirmText:'Eliminar', danger:true, onConfirm:doDelete
+              });
+            } else doDelete();
           });
           // Arrastre del gasto dentro de la categoría
           wireGastoItemDrag(row.querySelector('.gasto-item-drag'), row, itemsWrap, function(){
@@ -1213,12 +1228,19 @@
       });
       // Eliminar categoría (cualquiera, incluidas las predeterminadas)
       head.querySelector('.gasto-cat-del').addEventListener('click',function(){
-        delete state.gastos[k];
-        delete state.gastosItems[k];
-        if(state.gastosLabels) delete state.gastosLabels[k];
-        if(Array.isArray(state.gastosOrder)) state.gastosOrder = state.gastosOrder.filter(x=>x!==k);
-        renderGastosTable();calcM1();
-        if(typeof scheduleSave==='function') scheduleSave('ingresos_gastos');
+        showConfirm({
+          title:'Eliminar categoría',
+          msg:'¿Eliminar la categoría "'+(gastoLabel(k)||'')+'" y todos sus gastos?',
+          confirmText:'Eliminar', danger:true,
+          onConfirm:function(){
+            delete state.gastos[k];
+            delete state.gastosItems[k];
+            if(state.gastosLabels) delete state.gastosLabels[k];
+            if(Array.isArray(state.gastosOrder)) state.gastosOrder = state.gastosOrder.filter(x=>x!==k);
+            renderGastosTable();calcM1();
+            if(typeof scheduleSave==='function') scheduleSave('ingresos_gastos');
+          }
+        });
       });
       // Arrastre para reordenar la categoría
       wireGastoCatDrag(head.querySelector('.gasto-cat-drag'), cat, body);
@@ -1629,6 +1651,7 @@
       row.innerHTML = '<div class="it-name-wrap">'
         + '<input type="text" class="it-name" data-f="nombre" value="' + (a.nombre||'') + '" readonly>'
         + sugLabel
+        + '<span class="it-precaucion-badge">Precaución</span>'
         + '</div>'
         + '<span class="it-prefix">' + currency + '</span>'
         + '<input class="money-input" data-f="monto">'
@@ -1644,7 +1667,10 @@
       return;
     }
   
-    row.innerHTML=`<input type="text" class="it-name" data-f="nombre" value="${a.nombre||''}" placeholder="Para qué ahorras">
+    row.innerHTML=`<div class="it-name-wrap">
+        <input type="text" class="it-name" data-f="nombre" value="${(a.nombre||'').replace(/"/g,'&quot;')}" placeholder="Para qué ahorras">
+        <label class="ahorro-precaucion" title="Colchón: emergencias, estabilización… no es inversión que hace crecer tu patrimonio"><input type="checkbox" data-f="precaucion" ${a.precaucion?'checked':''}><span>Precaución (colchón)</span></label>
+      </div>
       <span class="it-prefix">${currency}</span>
       <input class="money-input" data-f="monto">
       <button class="it-del" title="Eliminar">${SVG_X}</button>`;
@@ -1653,6 +1679,7 @@
     mIn.value=monto>0?fmtInput(monto):'';mIn.placeholder='0';
     attachMoneyInput(mIn);
     row.querySelectorAll('input').forEach(el=>el.addEventListener('input',calcM4));
+    row.querySelector('input[data-f=precaucion]')?.addEventListener('change',calcM4);
     row.querySelector('.it-del').addEventListener('click',()=>{
       if(state.ahorro.length<=1)return;
       state.ahorro.splice(i,1);renderAhorroTable();calcM4();
@@ -1985,7 +2012,18 @@
       if(!mIn.dataset.money) attachMoneyInput(mIn);
     }
     row.querySelectorAll('input,select').forEach(el=>{el.addEventListener('input',calcP5Totals);if(el.tagName==='SELECT')el.addEventListener('change',calcP5Totals);});
-    row.querySelector('.it-del').addEventListener('click',()=>{row.remove();calcP5Totals();});
+    row.querySelector('.it-del').addEventListener('click',function(){
+      const doDelete=function(){ row.remove(); calcP5Totals(); };
+      const nm=(row.querySelector('.it-name[data-f=nombre]')?.value||'').trim();
+      const mt=n(row.querySelector('input[data-f=monto]')?.value);
+      if(nm || mt>0){
+        showConfirm({
+          title:'Eliminar gasto',
+          msg: nm ? ('¿Eliminar "'+nm+'"?') : '¿Eliminar este gasto?',
+          confirmText:'Eliminar', danger:true, onConfirm:doDelete
+        });
+      } else doDelete();
+    });
   
     const frecSel = row.querySelector('select[data-f=frec]');
     const mesCell = row.querySelector('[data-mes-cell]');
@@ -2398,6 +2436,20 @@
   
     document.getElementById('t6-plan').value = tbl.plan||'';
     document.getElementById('t6-plan').oninput = function(){state.tablero.plan=this.value;scheduleSave('tablero');};
+    const planClear = document.getElementById('t6-plan-clear');
+    if(planClear) planClear.onclick = function(){
+      const ta = document.getElementById('t6-plan');
+      if(!ta || !(ta.value||'').trim()){ showToast('El plan ya está vacío','info'); return; }
+      showConfirm({
+        title:'Limpiar plan de acción',
+        msg:'¿Borrar todo el contenido de tu plan de acción? Esta acción no se puede deshacer.',
+        confirmText:'Limpiar', danger:true,
+        onConfirm:function(){
+          ta.value=''; state.tablero.plan=''; scheduleSave('tablero');
+          showToast('Plan de acción limpiado','success');
+        }
+      });
+    };
     renderTableroSimulador();
     renderBudgetRule();
     renderCouple();
@@ -2524,13 +2576,44 @@
     return MES_NAMES_ES[d.getMonth()] + ' ' + d.getFullYear();
   }
   function stratLabel(s){
-    return s === 'bola_nieve' ? 'Bola de nieve' : s === 'consolidacion' ? 'Consolidación' : s === 'personalizada' ? 'Orden personalizado' : 'Avalancha';
+    return s === 'bola_nieve' ? 'Bola de nieve' : s === 'personalizada' ? 'Orden personalizado' : 'Avalancha';
+  }
+  /* Etiqueta completa del plan: método + sufijo de compra de cartera si está activa */
+  function planLabel(){
+    const ds = state.debtSim || {};
+    return stratLabel(ds.estrategia) + (ds.consolidacionActiva ? ' · con compra de cartera' : '');
+  }
+  /* ¿La cuota de esta deuda apenas cubre los intereses? (no amortiza) */
+  function esSoloIntereses(d){
+    return d.saldo > 0.5 && d.pago > 0 && d.pago <= d.saldo * d.em * 1.001;
   }
   function ordenarEstrategia(lista, estrategia){
     const arr = [...lista];
-    if(estrategia === 'bola_nieve') arr.sort((a,b)=> a.saldo - b.saldo);
-    else if(estrategia === 'personalizada') arr.sort((a,b)=> (a.orden ?? 0) - (b.orden ?? 0));
-    else arr.sort((a,b)=> (b.em - a.em) || (a.saldo - b.saldo)); // avalancha
+    if(estrategia === 'personalizada'){
+      // Orden manual por id; respeta exactamente lo que el usuario arrastró.
+      const ord = (state.debtSim && state.debtSim.ordenPersonalizado) || [];
+      if(ord.length){
+        arr.sort((a,b)=>{
+          let ia = ord.indexOf(a.id), ib = ord.indexOf(b.id);
+          if(ia === -1) ia = 1e6 + (a.orden ?? 0);
+          if(ib === -1) ib = 1e6 + (b.orden ?? 0);
+          return ia - ib;
+        });
+      } else {
+        arr.sort((a,b)=> (a.orden ?? 0) - (b.orden ?? 0));
+      }
+      return arr;
+    }
+    // avalancha / bola de nieve: el orden base del método…
+    const cmp = estrategia === 'bola_nieve'
+      ? (a,b)=> a.saldo - b.saldo
+      : (a,b)=> (b.em - a.em) || (a.saldo - b.saldo); // avalancha
+    // …pero las deudas que solo pagan intereses (no amortizan) van primero: son el hueco negro.
+    arr.sort((a,b)=>{
+      const sa = esSoloIntereses(a) ? 0 : 1, sb = esSoloIntereses(b) ? 0 : 1;
+      if(sa !== sb) return sa - sb;
+      return cmp(a,b);
+    });
     return arr;
   }
 
@@ -2541,7 +2624,7 @@
   function simularDeuda(deudas, capacidadExtra, estrategia, abonos, opts){
     const MAX = 600;
     const lista = deudas.filter(d => d.saldo > 0.5)
-      .map((d,idx) => ({nombre:d.nombre, saldo:d.saldo, em:d.em, pago:d.pago, payoffMes:null, orden: (d.orden != null ? d.orden : idx)}));
+      .map((d,idx) => ({id:d.id, nombre:d.nombre, saldo:d.saldo, em:d.em, pago:d.pago, payoffMes:null, orden: (d.orden != null ? d.orden : idx)}));
     const baseMin = lista.reduce((s,d)=> s + d.pago, 0);
     const budget = baseMin + (opts.useExtra ? capacidadExtra : 0);
     let mes = 0, totalInteres = 0, totalPagado = 0, estancado = false;
@@ -2600,14 +2683,16 @@
     const P = aUnir.reduce((s,d)=> s + d.saldo, 0);
     const em = eaToMonthly(tasaEA);
     const pago = cuotaAmortizada(P, em, plazo);
-    const consolidada = {nombre:'Crédito consolidado (compra de cartera)', saldo:P, em, pago, consolidar:false, tasa:tasaEA};
+    const consolidada = {id:'__cons__', nombre:'Crédito consolidado (compra de cartera)', saldo:P, em, pago, consolidar:false, tasa:tasaEA, orden:-1};
     return {lista: [consolidada, ...resto], info: {P, pago, em, count: aUnir.length, plazo, tasaEA}};
   }
 
+  function genDebtId(){ return 'sd_' + Date.now().toString(36) + Math.floor(Math.random()*1e9).toString(36); }
   function seedDebtSimFromM2(){
     state.debtSim.deudas = (state.deudas || [])
       .filter(d => (d.saldo || 0) > 0)
       .map(d => ({
+        id: genDebtId(),
         nombre: d.nombre || 'Deuda',
         saldo: d.saldo || 0,
         tasa: d.tasa_anual || 0,
@@ -2627,6 +2712,8 @@
     if(!cap.dataset.wired){ cap.dataset.wired='1'; cap.addEventListener('input', recalcDebtSim); cap.addEventListener('change', recalcDebtSim); }
     document.getElementById('ds-cons-tasa').value = ds.consolidacionTasa;
     document.getElementById('ds-cons-plazo').value = ds.consolidacionPlazo;
+    const consToggle = document.getElementById('ds-cons-toggle');
+    if(consToggle) consToggle.checked = !!ds.consolidacionActiva;
     const ab = document.getElementById('ds-abono-monto');
     ab.value = ds.abonoMonto ? fmtInput(ds.abonoMonto) : '';
     if(!ab.dataset.money) attachMoneyInput(ab);
@@ -2635,8 +2722,8 @@
 
     document.querySelectorAll('#ds-strat .ds-strat-btn').forEach(b =>
       b.classList.toggle('active', b.dataset.strat === ds.estrategia));
-    document.getElementById('ds-cons-config').style.display = ds.estrategia === 'consolidacion' ? 'block' : 'none';
-    document.getElementById('modulo-7').classList.toggle('ds-cons-mode', ds.estrategia === 'consolidacion');
+    document.getElementById('ds-cons-config').style.display = ds.consolidacionActiva ? 'block' : 'none';
+    document.getElementById('modulo-7').classList.toggle('ds-cons-mode', !!ds.consolidacionActiva);
     document.getElementById('modulo-7').classList.toggle('ds-personal-mode', ds.estrategia === 'personalizada');
 
     renderDebtSimRows();
@@ -2654,6 +2741,7 @@
       return;
     }
     ds.deudas.forEach((d,i) => {
+      if(!d.id) d.id = genDebtId();
       const row = document.createElement('div');
       row.className = 'ds-deuda-row';
       row.dataset.i = i;
@@ -2667,7 +2755,7 @@
         + '<div class="mr-field"><label>Saldo actual</label><input class="money-input" data-f="saldo" placeholder="0"></div>'
         + '<div class="mr-field"><label>Tasa anual % (E.A.)</label><input type="number" data-f="tasa" min="0" max="200" step="0.1" value="' + tasaVal + '" placeholder="0"></div>'
         + '<div class="mr-field"><label>Cuota / pago mínimo</label><input class="money-input" data-f="pago" placeholder="0"></div>'
-        + '<label class="ds-cons-check"><input type="checkbox" data-f="consolidar" ' + (d.consolidar ? 'checked' : '') + '><span>Unificar</span></label>'
+        + (ds.consolidacionActiva ? '<label class="ds-cons-check"><input type="checkbox" data-f="consolidar" ' + (d.consolidar ? 'checked' : '') + '><span>Unificar</span></label>' : '')
         + '</div>'
         + '<div class="ds-dr-flag" data-flag></div>';
       body.appendChild(row);
@@ -2723,12 +2811,10 @@
         document.body.style.cursor = '';
         row.classList.remove('ds-dragging');
         state.debtSim.customized = true;
-        const shownIdx = Array.from(container.querySelectorAll('.ds-drag-row')).map(r => +r.dataset.i);
-        const all = state.debtSim.deudas;
-        const shownSet = new Set(shownIdx);
-        state.debtSim.deudas = [...shownIdx.map(i => all[i]), ...all.filter((_,i)=> !shownSet.has(i))];
-        renderDebtSimRows();   // resincroniza los data-i de las filas editables
-        recalcDebtSim();       // recalcula y reconstruye la lista de orden
+        // Guardar el orden personalizado por id (incluye el crédito consolidado si está activo)
+        state.debtSim.ordenPersonalizado = Array.from(container.querySelectorAll('.ds-drag-row'))
+          .map(r => r.dataset.id).filter(Boolean);
+        renderDebtSimResults();   // recalcula y reconstruye la lista en el nuevo orden
       }
       document.addEventListener('pointermove', move);
       document.addEventListener('pointerup', end);
@@ -2750,7 +2836,7 @@
       d.saldo  = n(row.querySelector('input[data-f=saldo]').value);
       d.tasa   = (parseFloat(row.querySelector('input[data-f=tasa]').value) || 0) / 100;
       d.pago   = n(row.querySelector('input[data-f=pago]').value);
-      d.consolidar = row.querySelector('input[data-f=consolidar]').checked;
+      const cb = row.querySelector('input[data-f=consolidar]'); if(cb) d.consolidar = cb.checked;
     });
     renderDebtSimResults();
     // El simulador NO se autoguarda: es un borrador. Solo persiste al pulsar "Agregar a mi plan de acción".
@@ -2775,7 +2861,7 @@
     });
 
     const base = ds.deudas.filter(d => d.saldo > 0.5).map((d,idx) => ({
-      nombre: d.nombre || 'Deuda', saldo: d.saldo, em: eaToMonthly(d.tasa),
+      id: d.id, nombre: d.nombre || 'Deuda', saldo: d.saldo, em: eaToMonthly(d.tasa),
       pago: d.pago, consolidar: d.consolidar, tasa: d.tasa, orden: idx
     }));
     const baseMin = base.reduce((s,d)=> s + d.pago, 0);
@@ -2791,19 +2877,22 @@
     const abonos = {};
     if(ds.abonoMonto > 0) abonos[Math.max(1, ds.abonoMes)] = ds.abonoMonto;
 
-    // Lista procesada según estrategia
+    // Capa de compra de cartera (independiente del orden), y luego el orden elegido
     let processed, ordering, consInfo = null;
-    if(ds.estrategia === 'consolidacion'){
+    if(ds.consolidacionActiva){
       const r = aplicarConsolidacion(base, ds.consolidacionTasa / 100, ds.consolidacionPlazo);
-      processed = r.lista; consInfo = r.info; ordering = 'avalancha';
+      processed = r.lista; consInfo = r.info;
     } else {
-      processed = base.map(d => ({...d})); ordering = ds.estrategia;
+      processed = base.map(d => ({...d}));
     }
+    ordering = ds.estrategia;
 
-    const plan    = simularDeuda(processed, ds.capacidadExtra, ordering, abonos, {rollover:true,  useExtra:true});
+    const plan    = simularDeuda(processed.map(d=>({...d})), ds.capacidadExtra, ordering, abonos, {rollover:true,  useExtra:true});
     const minimos = simularDeuda(base.map(d=>({...d})), 0, 'avalancha', {}, {rollover:false, useExtra:false});
-    const planAval  = simularDeuda(base.map(d=>({...d})), ds.capacidadExtra, 'avalancha',  abonos, {rollover:true, useExtra:true});
-    const planNieve = simularDeuda(base.map(d=>({...d})), ds.capacidadExtra, 'bola_nieve', abonos, {rollover:true, useExtra:true});
+    const planAval  = simularDeuda(processed.map(d=>({...d})), ds.capacidadExtra, 'avalancha',  abonos, {rollover:true, useExtra:true});
+    const planNieve = simularDeuda(processed.map(d=>({...d})), ds.capacidadExtra, 'bola_nieve', abonos, {rollover:true, useExtra:true});
+    // Mismo orden, pero SIN consolidar — para medir el efecto puro de la compra de cartera
+    const planSinCons = simularDeuda(base.map(d=>({...d})), ds.capacidadExtra, ordering, abonos, {rollover:true, useExtra:true});
 
     let ahorroVal, ahorroSub, ahorroPos = false;
     if(plan.estancado){
@@ -2851,37 +2940,33 @@
       + '<div class="ds-cmp">'
       + '<div class="ds-cmp-row head"><span>Escenario</span><span>Tiempo</span><span>Intereses</span></div>'
       + '<div class="ds-cmp-row"><span>Solo pagos mínimos</span><span>' + (minimos.estancado ? 'No termina' : mesesATexto(minimos.mes)) + '</span><span>' + (minimos.estancado ? '—' : fmt(minimos.totalInteres)) + '</span></div>'
-      + '<div class="ds-cmp-row best"><span>Tu plan · ' + stratLabel(ds.estrategia) + '</span><span>' + (plan.estancado ? 'No termina' : mesesATexto(plan.mes)) + '</span><span>' + (plan.estancado ? '—' : fmt(plan.totalInteres)) + '</span></div>'
+      + '<div class="ds-cmp-row best"><span>Tu plan · ' + planLabel() + '</span><span>' + (plan.estancado ? 'No termina' : mesesATexto(plan.mes)) + '</span><span>' + (plan.estancado ? '—' : fmt(plan.totalInteres)) + '</span></div>'
       + '</div></div>';
 
     /* ── Orden de ataque (refleja el método; arrastrable si es personalizado) ── */
     const esPersonal = ds.estrategia === 'personalizada';
-    // Mapa de fecha de liberación por nombre de deuda
-    const payoffByName = {};
-    plan.deudas.forEach(d => { payoffByName[d.nombre] = d.payoffMes; });
-    // Lista en el orden que dicta el método
-    let attackList;
-    if(esPersonal){
-      attackList = (ds.deudas||[]).map((d,idx)=>({nombre:d.nombre||'Deuda', stateIdx:idx, saldo:d.saldo, payoffMes:payoffByName[d.nombre||'Deuda']}))
-        .filter(x => x.saldo > 0.5);
-    } else {
-      attackList = ordenarEstrategia(processed, ordering).map(d=>({nombre:d.nombre, saldo:d.saldo, payoffMes:payoffByName[d.nombre]}));
-    }
+    // Fecha de liberación por id de deuda (robusto ante nombres repetidos)
+    const payoffById = {};
+    plan.deudas.forEach(d => { payoffById[d.id] = d.payoffMes; });
+    // La lista de ataque sale SIEMPRE de la lista procesada (incluye el crédito consolidado si aplica)
+    const attackList = ordenarEstrategia(processed, ordering)
+      .filter(d => d.saldo > 0.5)
+      .map(d => ({id:d.id, nombre:d.nombre, saldo:d.saldo, payoffMes:payoffById[d.id]}));
     html += '<div class="card" id="ds-order-card">'
       + '<div class="card-head"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div><h3>'
-      + (esPersonal ? 'Tu orden de ataque · arrástralas' : 'Orden de ataque · ' + stratLabel(ds.estrategia))
+      + (esPersonal ? 'Tu orden de ataque · arrástralas' : 'Orden de ataque · ' + planLabel())
       + '</h3></div>'
       + '<p class="ds-hint">'
       + (esPersonal
           ? 'Arrastra cada deuda por el asa para decidir cuál atacar primero (la de arriba recibe el abono extra). El plan se recalcula al soltar.'
-          : 'Este es el orden que estableció el método: a cuál diriges primero el abono extra. La fecha es cuándo queda saldada cada una.')
+          : 'Este es el orden que estableció el método: a cuál diriges primero el abono extra. Las deudas que solo pagan intereses van primero. La fecha es cuándo queda saldada cada una.')
       + '</p>'
       + '<div class="ds-order" id="ds-order-list">';
     attackList.forEach((d,idx) => {
       const liber = d.payoffMes != null
         ? ('Libre en ' + mesesATexto(d.payoffMes) + ' · ' + fechaLibertad(d.payoffMes))
         : 'No se liquida en el horizonte simulado';
-      html += '<div class="ds-order-item ds-drag-row' + (d.payoffMes==null?' pend':'') + '"' + (esPersonal ? (' data-i="' + d.stateIdx + '"') : '') + '>'
+      html += '<div class="ds-order-item ds-drag-row' + (d.payoffMes==null?' pend':'') + '" data-id="' + d.id + '">'
         + (esPersonal ? '<button class="ds-drag-handle" title="Arrastra para reordenar">' + SVG_DRAG_HANDLE + '</button>' : '')
         + '<div class="ds-order-num">' + (d.payoffMes==null && !esPersonal ? '!' : (idx + 1)) + '</div>'
         + '<div class="ds-order-body"><div class="ds-order-name">' + (d.nombre || 'Deuda') + '</div>'
@@ -2912,16 +2997,23 @@
       }
     }
     if(consInfo){
-      const dif = planAval.totalInteres - plan.totalInteres; // ahorro de consolidar vs avalancha actual
-      if(!plan.estancado && !planAval.estancado && dif > 1000){
-        tips.push('<strong>Consolidar te conviene:</strong> unificando ' + consInfo.count + ' deuda(s) pagas ' + fmt(dif) + ' menos en intereses y tu cuota del crédito unificado sería ' + fmt(consInfo.pago) + '/mes a ' + consInfo.plazo + ' meses.');
+      const dif = planSinCons.totalInteres - plan.totalInteres; // ahorro de consolidar, con el MISMO orden
+      const mesDif = planSinCons.mes - plan.mes;
+      if(!plan.estancado && !planSinCons.estancado && dif > 1000){
+        tips.push('<strong>Consolidar te conviene:</strong> unificando ' + consInfo.count + ' deuda(s) pagas ' + fmt(dif) + ' menos en intereses'
+          + (mesDif > 0 ? ' y quedas libre ' + mesDif + ' meses antes' : '')
+          + '; la cuota del crédito unificado sería ' + fmt(consInfo.pago) + '/mes a ' + consInfo.plazo + ' meses.');
       } else {
-        tips.push('<strong>Ojo con esta consolidación:</strong> con la tasa (' + (consInfo.tasaEA*100).toFixed(1) + '% E.A.) y plazo (' + consInfo.plazo + ' meses) indicados, no mejora tu situación frente a atacar por avalancha. Negocia una tasa más baja o acorta el plazo.');
+        tips.push('<strong>Ojo con esta consolidación:</strong> con la tasa (' + (consInfo.tasaEA*100).toFixed(1) + '% E.A.) y plazo (' + consInfo.plazo + ' meses) indicados, no mejora tu situación frente a no consolidar y atacar en el mismo orden. Negocia una tasa más baja o acorta el plazo.');
       }
     }
-    const interesSolo = ds.deudas.filter(d => d.saldo > 0 && d.pago > 0 && d.pago <= d.saldo * eaToMonthly(d.tasa) * 1.001);
+    const interesSolo = processed.filter(d => esSoloIntereses({saldo:d.saldo, pago:d.pago, em:d.em}));
     if(interesSolo.length){
-      tips.push('Tienes ' + interesSolo.length + ' deuda(s) donde la cuota <strong>solo cubre intereses</strong> (' + interesSolo.map(d=>d.nombre||'sin nombre').join(', ') + '). Con esa cuota nunca se acaban: son la prioridad #1.');
+      const nombres = interesSolo.map(d=>d.nombre||'sin nombre').join(', ');
+      tips.push('Tienes ' + interesSolo.length + ' deuda(s) donde la cuota <strong>solo cubre intereses</strong> (' + nombres + '): con esa cuota nunca se acaban. '
+        + (ds.estrategia === 'personalizada'
+            ? 'Te recomiendo arrastrarla(s) al inicio de tu orden de ataque.'
+            : 'Por eso el orden de ataque las pone <strong>de primeras</strong>.'));
     }
     if(ds.capacidadExtra === 0 && !plan.estancado){
       const sugerido = Math.max(200000, Math.round(baseMin * 0.1 / 50000) * 50000);
@@ -2940,7 +3032,14 @@
 
     html += '<div class="card"><div class="ds-plan-actions" style="display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap">'
       + '<div style="font-size:13.5px;color:rgba(0,0,0,.62)">¿Te convence este plan? Guárdalo en tu plan de acción.</div>'
+      + '<div style="display:flex;gap:10px;flex-wrap:wrap">'
+      + '<button class="btn-ghost" id="ds-toggle-tablero" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'
+      + (ds.ocultarPlanTablero
+          ? '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Mostrar en el tablero'
+          : '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>Quitar del tablero')
+      + '</button>'
       + '<button class="btn btn-primary" id="ds-add-plan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>Agregar a mi plan de acción</button>'
+      + '</div>'
       + '</div></div>';
 
     cont.innerHTML = html;
@@ -2951,6 +3050,13 @@
     }
     const addPlanBtn = document.getElementById('ds-add-plan');
     if(addPlanBtn) addPlanBtn.addEventListener('click', copiarPlanSimulador);
+    const togTab = document.getElementById('ds-toggle-tablero');
+    if(togTab) togTab.addEventListener('click', function(){
+      state.debtSim.ocultarPlanTablero = !state.debtSim.ocultarPlanTablero;
+      if(typeof persistModule === 'function') persistModule('simulador_deuda');
+      renderDebtSimResults();  // re-render para actualizar la etiqueta del botón
+      showToast(state.debtSim.ocultarPlanTablero ? 'Plan quitado del tablero de control' : 'Plan visible en el tablero de control', 'success');
+    });
     renderDebtSimChart(plan, minimos);
   }
 
@@ -3000,20 +3106,26 @@
   function computeDebtPlanSummary(){
     const ds = state.debtSim || {};
     const base = (ds.deudas || []).filter(d => d.saldo > 0.5).map((d,idx) => ({
-      nombre: d.nombre || 'Deuda', saldo: d.saldo, em: eaToMonthly(d.tasa),
+      id: d.id, nombre: d.nombre || 'Deuda', saldo: d.saldo, em: eaToMonthly(d.tasa),
       pago: d.pago, consolidar: d.consolidar, tasa: d.tasa, orden: idx
     }));
     if(!base.length) return {hasData:false};
     const abonos = {};
     if(ds.abonoMonto > 0) abonos[Math.max(1, ds.abonoMes || 1)] = ds.abonoMonto;
-    let processed, ordering;
-    if(ds.estrategia === 'consolidacion'){
+    let processed;
+    if(ds.consolidacionActiva){
       const r = aplicarConsolidacion(base, (ds.consolidacionTasa||0)/100, ds.consolidacionPlazo||36);
-      processed = r.lista; ordering = 'avalancha';
-    } else { processed = base.map(d=>({...d})); ordering = ds.estrategia || 'avalancha'; }
+      processed = r.lista;
+    } else { processed = base.map(d=>({...d})); }
+    const ordering = ds.estrategia || 'avalancha';
     const plan = simularDeuda(processed, ds.capacidadExtra||0, ordering, abonos, {rollover:true, useExtra:true});
-    const orden = plan.deudas.filter(d => d.payoffMes != null).sort((a,b)=> a.payoffMes - b.payoffMes);
-    return {hasData:true, estrategia:ds.estrategia||'avalancha', mes:plan.mes, estancado:plan.estancado, totalInteres:plan.totalInteres, orden};
+    // El orden mostrado es el ORDEN DE ATAQUE (el que configuraste), no el de fecha de pago.
+    const payoffById = {};
+    plan.deudas.forEach(d => { payoffById[d.id] = d.payoffMes; });
+    const orden = ordenarEstrategia(processed, ordering)
+      .filter(d => d.saldo > 0.5)
+      .map(d => ({ nombre: d.nombre, id: d.id, payoffMes: payoffById[d.id] }));
+    return {hasData:true, estrategia:ds.estrategia||'avalancha', label:planLabel(), mes:plan.mes, estancado:plan.estancado, totalInteres:plan.totalInteres, orden};
   }
 
   /* ═══════════════════════════════════════════════════════════
@@ -3201,6 +3313,14 @@
   function renderTableroSimulador(){
     const cont = document.getElementById('t6-simulador');
     if(!cont) return;
+    const ds = state.debtSim || {};
+    if(ds.ocultarPlanTablero){
+      cont.innerHTML = '<div class="t6-sim-empty">Quitaste tu plan de pago de deudas del tablero. <a href="#" id="t6-sim-show">Mostrarlo de nuevo</a> o edítalo en el <a href="#" data-go-m7>simulador</a>.</div>';
+      const showLink = cont.querySelector('#t6-sim-show');
+      if(showLink) showLink.addEventListener('click', e=>{ e.preventDefault(); state.debtSim.ocultarPlanTablero=false; if(typeof persistModule==='function') persistModule('simulador_deuda'); renderTableroSimulador(); });
+      cont.querySelectorAll('[data-go-m7]').forEach(l => l.addEventListener('click', e=>{e.preventDefault();navigateTo(7);}));
+      return;
+    }
     const s = computeDebtPlanSummary();
     if(!s.hasData){
       cont.innerHTML = '<div class="t6-sim-empty">Aún no has configurado tu plan de pago de deudas. <a href="#" data-go-m7>Ábrelo en el simulador</a> para ver aquí tu fecha de libertad y el orden de ataque.</div>';
@@ -3209,14 +3329,14 @@
       return;
     }
     let html = '<div class="t6-sim-head">'
-      + '<div class="t6-sim-kpi"><div class="t6-sim-label">Estrategia</div><div class="t6-sim-strong">' + stratLabel(s.estrategia) + '</div></div>'
+      + '<div class="t6-sim-kpi"><div class="t6-sim-label">Estrategia</div><div class="t6-sim-strong">' + (s.label || stratLabel(s.estrategia)) + '</div></div>'
       + '<div class="t6-sim-kpi"><div class="t6-sim-label">Libre de deudas</div><div class="t6-sim-strong">' + (s.estancado ? 'No se liquida' : mesesATexto(s.mes)) + '</div>' + (s.estancado ? '' : '<div class="t6-sim-sub">' + fechaLibertad(s.mes) + '</div>') + '</div>'
       + '<div class="t6-sim-kpi"><div class="t6-sim-label">Intereses del plan</div><div class="t6-sim-strong">' + (s.estancado ? '—' : fmt(s.totalInteres)) + '</div></div>'
       + '</div>';
     if(s.orden.length){
       html += '<div class="t6-sim-order">';
       s.orden.forEach((d,i)=>{
-        html += '<div class="t6-sim-step"><span class="t6-sim-num">' + (i+1) + '</span><span class="t6-sim-name">' + (d.nombre || 'Deuda') + '</span><span class="t6-sim-date">' + fechaLibertad(d.payoffMes) + '</span></div>';
+        html += '<div class="t6-sim-step"><span class="t6-sim-num">' + (i+1) + '</span><span class="t6-sim-name">' + (d.nombre || 'Deuda') + '</span><span class="t6-sim-date">' + (d.payoffMes != null ? fechaLibertad(d.payoffMes) : 'No se liquida') + '</span></div>';
       });
       html += '</div>';
     }
@@ -3231,25 +3351,32 @@
   function copiarPlanSimulador(){
     const s = computeDebtPlanSummary();
     if(!s.hasData){ showToast('Primero define tus deudas en el simulador','info'); return; }
-    let txt = '— Plan de pago de deudas (' + stratLabel(s.estrategia) + ') —\n';
+    let txt = '— Plan de pago de deudas (' + (s.label || stratLabel(s.estrategia)) + ') —\n';
     if(s.estancado){
       txt += 'Con el abono actual la deuda no se liquida; aumentar la capacidad de pago o consolidar.\n';
     } else {
       txt += 'Quedo libre de deudas en ' + mesesATexto(s.mes) + ' (' + fechaLibertad(s.mes) + ').\n';
       if(s.totalInteres) txt += 'Intereses estimados del plan: ' + fmt(s.totalInteres) + '.\n';
-      txt += 'Orden de liberación:\n';
-      s.orden.forEach((d,i)=>{ txt += '  ' + (i+1) + '. ' + (d.nombre||'Deuda') + ' — ' + fechaLibertad(d.payoffMes) + '\n'; });
+      txt += 'Orden de ataque (a cuál diriges primero el abono extra):\n';
+      s.orden.forEach((d,i)=>{ txt += '  ' + (i+1) + '. ' + (d.nombre||'Deuda') + ' — ' + (d.payoffMes != null ? ('libre en ' + fechaLibertad(d.payoffMes)) : 'no se liquida en el horizonte') + '\n'; });
     }
     const ta = document.getElementById('t6-plan');
     if(!ta) return;
-    ta.value = (ta.value ? ta.value.trim() + '\n\n' : '') + txt.trim();
+    const MARK = '— Plan de pago de deudas';
+    // Quita cualquier bloque de plan de deudas anterior y conserva el resto de las notas
+    const previos = (ta.value || '')
+      .split(/\n{2,}/)
+      .map(b => b.trim())
+      .filter(b => b && !b.startsWith(MARK));
+    previos.push(txt.trim());
+    ta.value = previos.join('\n\n');
     state.tablero.plan = ta.value;
     // Al comprometer el plan, recién ahí persistimos el simulador y el plan de acción.
     if(typeof persistModule === 'function'){
       persistModule('simulador_deuda');
       scheduleSave('tablero');
     }
-    showToast('Plan agregado a tu plan de acción · guardado','success');
+    showToast('Plan de deudas actualizado en tu plan de acción · guardado','success');
   }
 
   async function saveM7(){
@@ -3387,6 +3514,7 @@
       const manualHide = (m.fuente && m.fuente !== 'manual') ? ' hide' : '';
       card.innerHTML =
         '<div class="meta-head">'
+        + '<button class="meta-drag" title="Arrastra para reordenar la meta">' + SVG_DRAG_HANDLE + '</button>'
         + '<input type="text" class="it-name" data-f="nombre" value="' + String(m.nombre||'').replace(/"/g,'&quot;') + '" placeholder="Nombre de la meta">'
         + '<button class="it-del" title="Quitar">' + SVG_X + '</button>'
         + '</div>'
@@ -3403,7 +3531,47 @@
       const sIn = card.querySelector('input[data-f=saldoManual]'); sIn.value = m.saldoManual>0?fmtInput(m.saldoManual):''; attachMoneyInput(sIn);
       const aIn = card.querySelector('input[data-f=aporte]'); aIn.value = m.aporte>0?fmtInput(m.aporte):''; attachMoneyInput(aIn);
       card.querySelectorAll('input,select').forEach(el=>{ el.addEventListener('input', recalcMetas); el.addEventListener('change', recalcMetas); });
-      card.querySelector('.it-del').addEventListener('click', ()=>{ state.metas.items.splice(i,1); renderMetasRows(); recalcMetas(); });
+      card.querySelector('.it-del').addEventListener('click', ()=>{
+        const nombre = (m.nombre||'').trim();
+        showConfirm({
+          title:'Eliminar meta',
+          msg: nombre ? ('¿Eliminar la meta "'+nombre+'"?') : '¿Eliminar esta meta?',
+          confirmText:'Eliminar', danger:true,
+          onConfirm:()=>{ state.metas.items.splice(i,1); renderMetasRows(); recalcMetas(); }
+        });
+      });
+      wireMetaDrag(card.querySelector('.meta-drag'), card, body);
+    });
+  }
+
+  /* Arrastre para reordenar las metas (Módulo 8) */
+  function wireMetaDrag(handle, card, body){
+    if(!handle) return;
+    handle.addEventListener('pointerdown', function(e){
+      e.preventDefault();
+      card.classList.add('meta-dragging');
+      document.body.style.userSelect='none'; document.body.style.cursor='grabbing';
+      function move(ev){
+        const sibs = Array.from(body.querySelectorAll('.meta-card:not(.meta-dragging)'));
+        let placed=false;
+        for(const sib of sibs){ const r=sib.getBoundingClientRect(); if(ev.clientY < r.top + r.height/2){ body.insertBefore(card, sib); placed=true; break; } }
+        if(!placed) body.appendChild(card);
+      }
+      function end(){
+        document.removeEventListener('pointermove',move);
+        document.removeEventListener('pointerup',end);
+        document.removeEventListener('pointercancel',end);
+        document.body.style.userSelect=''; document.body.style.cursor='';
+        card.classList.remove('meta-dragging');
+        // Reordenar state.metas.items según el nuevo orden del DOM
+        const items = state.metas.items || [];
+        const order = Array.from(body.querySelectorAll('.meta-card')).map(c => +c.dataset.i);
+        state.metas.items = order.map(idx => items[idx]).filter(Boolean);
+        renderMetasRows(); recalcMetas();
+      }
+      document.addEventListener('pointermove',move);
+      document.addEventListener('pointerup',end);
+      document.addEventListener('pointercancel',end);
     });
   }
 
@@ -3739,6 +3907,14 @@
     delete state.varIncome.meses; delete state.varIncome.actividad; delete state.varIncome.tributoPct;
     if(mSim){
       state.debtSim = {...state.debtSim, ...mSim};
+      // Migración: la consolidación dejó de ser un método; ahora es una capa independiente
+      if(state.debtSim.estrategia === 'consolidacion'){
+        state.debtSim.estrategia = 'avalancha';
+        state.debtSim.consolidacionActiva = true;
+      }
+      if(!Array.isArray(state.debtSim.ordenPersonalizado)) state.debtSim.ordenPersonalizado = [];
+      // Backfill de ids estables (datos guardados antes de los ids)
+      (state.debtSim.deudas || []).forEach(d => { if(!d.id) d.id = genDebtId(); });
       if(mSim.deudas && mSim.deudas.length){ state.debtSim.seeded = true; completedModules.add(7); }
     }
     if(mMetas){
@@ -4388,8 +4564,6 @@
       state.debtSim.estrategia = this.dataset.strat;
       document.querySelectorAll('#ds-strat .ds-strat-btn').forEach(b=>b.classList.remove('active'));
       this.classList.add('active');
-      document.getElementById('ds-cons-config').style.display = state.debtSim.estrategia==='consolidacion' ? 'block' : 'none';
-      document.getElementById('modulo-7').classList.toggle('ds-cons-mode', state.debtSim.estrategia==='consolidacion');
       document.getElementById('modulo-7').classList.toggle('ds-personal-mode', state.debtSim.estrategia==='personalizada');
       recalcDebtSim();
       requestAnimationFrame(()=>{
@@ -4398,9 +4572,17 @@
       });
     });
   });
+  // Interruptor de compra de cartera (capa independiente del orden)
+  (function(){
+    const t = document.getElementById('ds-cons-toggle');
+    if(t) t.addEventListener('change', function(){
+      state.debtSim.consolidacionActiva = this.checked;
+      renderDebtSim();   // re-render completo: cambia el render de las filas (casillas "Unificar")
+    });
+  })();
   document.getElementById('ds-add-deuda').addEventListener('click', function(){
     state.debtSim.customized = true;
-    state.debtSim.deudas.push({nombre:'',saldo:0,tasa:0,pago:0,consolidar:false});
+    state.debtSim.deudas.push({id:genDebtId(),nombre:'',saldo:0,tasa:0,pago:0,consolidar:false});
     renderDebtSimRows(); recalcDebtSim();
   });
   document.getElementById('ds-reload').addEventListener('click', function(){
