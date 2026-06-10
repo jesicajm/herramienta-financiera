@@ -23,6 +23,13 @@
 .ds-cap-stat{background:rgba(0,0,0,.03);border:1px solid rgba(0,0,0,.06);border-radius:12px;padding:12px 14px}
 .ds-cap-label{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:rgba(0,0,0,.5);margin-bottom:6px}
 .ds-cap-value{font-family:'JetBrains Mono',monospace;font-size:17px;font-weight:500;color:var(--ink,#0c0c0d)}
+.ds-use-superavit{margin-top:7px;background:none;border:none;padding:0;font-size:12.5px;font-weight:500;color:var(--accent,#0e4d3a);cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.ds-use-superavit:hover{opacity:.75}
+.ds-cap-warn{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.45;color:#8a5a14;background:rgba(138,90,20,.09);border:1px solid rgba(138,90,20,.18);border-radius:11px;padding:11px 13px;margin-top:14px}
+.ds-cap-warn svg{width:17px;height:17px;flex-shrink:0;margin-top:1px}
+.ds-budget-toggle{display:flex;gap:10px;align-items:flex-start;margin-top:14px;padding-top:14px;border-top:1px solid rgba(0,0,0,.08);font-size:13px;line-height:1.45;color:rgba(0,0,0,.7);cursor:pointer;user-select:none}
+.ds-budget-toggle input{width:18px;height:18px;margin:1px 0 0;accent-color:var(--accent,#0e4d3a);cursor:pointer;flex-shrink:0}
+.rule-note{font-size:11.5px;color:#1f6f8b;margin-top:3px}
 /* Debt rows */
 .ds-deuda-row{border:1px solid rgba(0,0,0,.08);border-radius:14px;padding:14px;margin-bottom:12px;background:rgba(255,255,255,.5)}
 .ds-dr-head{display:flex;gap:8px;align-items:center;margin-bottom:10px}
@@ -336,6 +343,10 @@
   .ds-plan-actions > div:last-child{flex-direction:column}
   #ds-add-plan,#ds-toggle-tablero{width:100%}
 }
+/* ── Filas y notas del plan de deuda comprometido en el tablero ── */
+.use-row.plan-extra{color:#1f6f8b;font-size:13px;background:rgba(31,111,139,.05)}
+.use-row.plan-extra .ur-amount{color:#1f6f8b;font-weight:500}
+.use-row-note{font-size:11.5px;color:#1f6f8b;padding:5px 12px 9px;line-height:1.45}
 </style>
 </head>
 <body>
@@ -1214,6 +1225,11 @@
           <div class="mr-field">
             <label>Capacidad de abono extra mensual</label>
             <input class="money-input" id="ds-capacidad" placeholder="0">
+            <button type="button" id="ds-use-superavit" class="ds-use-superavit">Usar mi superávit disponible</button>
+          </div>
+          <div class="ds-cap-stat">
+            <div class="ds-cap-label">Tu superávit mensual disponible</div>
+            <div class="ds-cap-value" id="ds-superavit">—</div>
           </div>
           <div class="ds-cap-stat">
             <div class="ds-cap-label">Hoy pagas en cuotas mínimas</div>
@@ -1224,6 +1240,7 @@
             <div class="ds-cap-value" id="ds-budget">—</div>
           </div>
         </div>
+        <div class="ds-cap-warn" id="ds-cap-warn" style="display:none"></div>
       </div>
 
       <!-- Deudas a incluir -->
@@ -1296,6 +1313,12 @@
         <div class="ds-cap-grid">
           <div class="mr-field"><label>Monto del abono</label><input class="money-input" id="ds-abono-monto" placeholder="0"></div>
           <div class="mr-field"><label>¿En cuántos meses lo recibes?</label><input type="number" id="ds-abono-mes" min="1" max="120" step="1" value="1"></div>
+          <div class="mr-field"><label>¿De dónde sale este abono?</label>
+            <select id="ds-abono-fuente">
+              <option value="ingreso">Ingreso nuevo (prima/bono) aún no presupuestado</option>
+              <option value="ahorro">Traslado de mis ahorros</option>
+            </select>
+          </div>
         </div>
       </div>
 

@@ -171,6 +171,7 @@
       meta_consumo:0,meta_deuda_total:0,meta_pct_liquidos:0,meta_pct_noliquidos:0,
       meta_fondo_emerg:0,meta_solvencia:0,meta_ratio_consumo:0,meta_ratio_apal:0,
       objetivos:Array(15).fill(''),plan:'',
+      planDeuda:{activo:false, extraMensual:0, abono:{monto:0, mes:1, fuente:'ingreso'}},
       budgetRule:{rule:'50/30/20', custom:{nec:50,des:30,aho:20}, buckets:{}},
       couple:{ingreso1:null, ingreso2:null, compartido:null, modo:'proporcional'}
     },
@@ -197,6 +198,7 @@
       ocultarPlanTablero:false, // ocultar "Tu plan de pago de deudas" en el Tablero
       abonoMonto:0,
       abonoMes:1,               // en cuántos meses se recibe (1 = este mes)
+      abonoFuente:'ingreso',    // fuente del abono extraordinario: 'ingreso' (prima nueva) | 'ahorro' (traslado)
       deudas:[]                 // [{id, nombre, saldo, tasa(decimal E.A.), pago, consolidar}]
     },
     metas:{
@@ -2216,15 +2218,19 @@
     const {totalActivos,totalLiquido,totalNoLiquido,pctL,pctNL}=calcM3();
     const {totalAhorro}=calcM4();
     const ingresoAnual = totalIng*12 + (state.p5.ingAnual||0);
+    // Abono extra mensual comprometido desde el simulador (capa reversible) → va a "Pago a deudas"
+    const pd = state.tablero.planDeuda || {};
+    const abonoExtraMensual = (pd.activo && pd.extraMensual > 0) ? pd.extraMensual : 0;
+    const pagosConExtra = totalPagos + abonoExtraMensual;
     const pctAho = totalIng>0 ? totalAhorro/totalIng : 0;
-    const pctDeu = totalIng>0 ? totalPagos/totalIng  : 0;
+    const pctDeu = totalIng>0 ? pagosConExtra/totalIng  : 0;
     const pctGas2= totalIng>0 ? totalGas/totalIng    : 0;
     const pctTotal = pctAho+pctDeu+pctGas2;
     const tbl=state.tablero;
   
     const exceso=document.getElementById('t6-aviso-exceso');
     if(pctTotal>1){
-      exceso.innerHTML=`<div class="alert warn">${SVG_WARN}<div>La suma de gastos + deudas + ahorro supera el 100% de tus ingresos. Revisa los números.</div></div>`;
+      exceso.innerHTML=`<div class="alert warn">${SVG_WARN}<div>La suma de gastos + deudas + ahorro supera el 100% de tus ingresos. Para sostenerlo tendrías que ajustar tus gastos.</div></div>`;
     } else exceso.innerHTML='';
   
     document.getElementById('t6-uso-mensual').innerHTML = `
@@ -2233,11 +2239,12 @@
       </div>
       ${useRow('Ingresos mensuales', totalIng, 1, tbl.meta_ingresos, 'meta_ingresos', true)}
       ${useRow('Ahorro mensual',     totalAhorro, pctAho, tbl.meta_ahorro,  'meta_ahorro')}
-      ${useRow('Pago a deudas',      totalPagos,  pctDeu, tbl.meta_deudas,  'meta_deudas')}
+      ${useRow('Pago a deudas',      pagosConExtra,  pctDeu, tbl.meta_deudas,  'meta_deudas')}
+      ${abonoExtraMensual>0 ? '<div class="use-row-note">Incluye '+fmt(abonoExtraMensual)+' de abono extra a deuda de tu simulador</div>' : ''}
       ${useRow('Gastos mensuales',   totalGas,    pctGas2,tbl.meta_gastos,  'meta_gastos')}
       <div class="use-row total">
         <span class="ur-name"><strong>Total</strong></span>
-        <span class="ur-amount">${fmt(totalAhorro+totalPagos+totalGas)}</span>
+        <span class="ur-amount">${fmt(totalAhorro+pagosConExtra+totalGas)}</span>
         <span class="ur-pct">${pct(pctTotal)}</span>
         <span></span>
       </div>`;
@@ -2247,12 +2254,24 @@
     const ahoAnual=state.p5.ahoAnual||0;
     const deuAnual=state.p5.deuAnual||0;
     const gasAnual=state.p5.gastosAnual||0;
-    document.getElementById('t6-anuales').innerHTML = `
+    const pdA = state.tablero.planDeuda || {};
+    const abonoExt = (pdA.activo && pdA.abono && pdA.abono.monto > 0) ? pdA.abono : null;
+    let anualHtml = `
       <div class="use-row head"><span>Concepto</span><span>Valor</span><span>%</span><span>Mi meta</span></div>
       ${useRow('Otros ingresos',    ingAnual, ingresoAnual>0?ingAnual/ingresoAnual:0, tbl.meta_otros_ingresos,'meta_otros_ingresos')}
       ${useRow('Otro ahorro',       ahoAnual, ingresoAnual>0?ahoAnual/ingresoAnual:0, tbl.meta_otro_ahorro,   'meta_otro_ahorro')}
       ${useRow('Otros pagos deuda', deuAnual, ingresoAnual>0?deuAnual/ingresoAnual:0, tbl.meta_otros_deudas,  'meta_otros_deudas')}
       ${useRow('Otros gastos',      gasAnual, ingresoAnual>0?gasAnual/ingresoAnual:0, tbl.meta_otros_gastos,  'meta_otros_gastos')}`;
+    if(abonoExt){
+      const esAhorro = abonoExt.fuente === 'ahorro';
+      const fuenteLinea = esAhorro ? 'Traslado desde tus ahorros (financia el abono)' : 'Ingreso nuevo / prima (financia el abono)';
+      const fuenteTxt   = esAhorro ? 'un traslado de tus ahorros' : 'una prima o ingreso nuevo';
+      anualHtml += `
+        <div class="use-row plan-extra"><span class="ur-name">Abono extraordinario a deuda · mes ${abonoExt.mes}</span><span class="ur-amount">${fmt(abonoExt.monto)}</span><span class="ur-pct"></span><span></span></div>
+        <div class="use-row plan-extra"><span class="ur-name">${fuenteLinea}</span><span class="ur-amount">+${fmt(abonoExt.monto)}</span><span class="ur-pct"></span><span></span></div>
+        <div class="use-row-note">Tu plan incluye un abono extraordinario de ${fmt(abonoExt.monto)} en el mes ${abonoExt.mes}, financiado con ${fuenteTxt}. Al estar financiado, no cambia tu saldo anual proyectado.</div>`;
+    }
+    document.getElementById('t6-anuales').innerHTML = anualHtml;
     bindMetaInputs();
   
     const saldo=state.p5.saldo||0;
@@ -2710,6 +2729,17 @@
     cap.value = ds.capacidadExtra ? fmtInput(ds.capacidadExtra) : '';
     if(!cap.dataset.money) attachMoneyInput(cap);
     if(!cap.dataset.wired){ cap.dataset.wired='1'; cap.addEventListener('input', recalcDebtSim); cap.addEventListener('change', recalcDebtSim); }
+    const useSup = document.getElementById('ds-use-superavit');
+    if(useSup && !useSup.dataset.wired){
+      useSup.dataset.wired='1';
+      useSup.addEventListener('click', function(){
+        const sup = Math.max(0, Math.round(superavitMensual()));
+        state.debtSim.capacidadExtra = sup;
+        const capIn = document.getElementById('ds-capacidad');
+        if(capIn) capIn.value = sup ? fmtInput(sup) : '';
+        recalcDebtSim();
+      });
+    }
     document.getElementById('ds-cons-tasa').value = ds.consolidacionTasa;
     document.getElementById('ds-cons-plazo').value = ds.consolidacionPlazo;
     const consToggle = document.getElementById('ds-cons-toggle');
@@ -2719,6 +2749,11 @@
     if(!ab.dataset.money) attachMoneyInput(ab);
     if(!ab.dataset.wired){ ab.dataset.wired='1'; ab.addEventListener('input', recalcDebtSim); ab.addEventListener('change', recalcDebtSim); }
     document.getElementById('ds-abono-mes').value = ds.abonoMes;
+    const fuenteSel = document.getElementById('ds-abono-fuente');
+    if(fuenteSel){
+      fuenteSel.value = ds.abonoFuente || 'ingreso';
+      if(!fuenteSel.dataset.wired){ fuenteSel.dataset.wired='1'; fuenteSel.addEventListener('change', recalcDebtSim); }
+    }
 
     document.querySelectorAll('#ds-strat .ds-strat-btn').forEach(b =>
       b.classList.toggle('active', b.dataset.strat === ds.estrategia));
@@ -2826,10 +2861,22 @@
     const ds = state.debtSim;
     const capEl = document.getElementById('ds-capacidad'); if(!capEl) return;
     ds.capacidadExtra   = n(capEl.value);
+    // Si el plan está incluido en los presupuestos, mantener la foto al día
+    if(state.tablero.planDeuda && state.tablero.planDeuda.activo){
+      state.tablero.planDeuda.extraMensual = ds.capacidadExtra || 0;
+      scheduleSave('tablero');
+    }
     ds.consolidacionTasa  = parseFloat(document.getElementById('ds-cons-tasa').value) || 0;
     ds.consolidacionPlazo = parseInt(document.getElementById('ds-cons-plazo').value) || 36;
     ds.abonoMonto = n(document.getElementById('ds-abono-monto').value);
     ds.abonoMes   = Math.max(1, parseInt(document.getElementById('ds-abono-mes').value) || 1);
+    const fuenteEl = document.getElementById('ds-abono-fuente');
+    if(fuenteEl) ds.abonoFuente = fuenteEl.value || 'ingreso';
+    // Si el plan está incluido en los presupuestos, mantener la foto del abono al día
+    if(state.tablero.planDeuda && state.tablero.planDeuda.activo){
+      state.tablero.planDeuda.abono = {monto: ds.abonoMonto||0, mes: ds.abonoMes||1, fuente: ds.abonoFuente||'ingreso'};
+      scheduleSave('tablero');
+    }
     document.querySelectorAll('#ds-deudas-body .ds-deuda-row').forEach(row => {
       const i = +row.dataset.i; const d = ds.deudas[i]; if(!d) return;
       d.nombre = row.querySelector('input[data-f=nombre]').value;
@@ -2867,6 +2914,21 @@
     const baseMin = base.reduce((s,d)=> s + d.pago, 0);
     document.getElementById('ds-base-min').textContent = fmt(baseMin);
     document.getElementById('ds-budget').textContent = fmt(baseMin + ds.capacidadExtra);
+    // Ancla al superávit real + aviso (solo informa, no bloquea)
+    const sup = superavitMensual();
+    const supEl = document.getElementById('ds-superavit');
+    if(supEl) supEl.textContent = fmt(sup);
+    const warnEl = document.getElementById('ds-cap-warn');
+    if(warnEl){
+      const exceso = (ds.capacidadExtra||0) - sup;
+      if(exceso > 0.5){
+        warnEl.style.display = 'flex';
+        warnEl.innerHTML = SVG_WARN + '<span>Estás abonando <strong>' + fmt(exceso) + ' más</strong> de lo que te queda libre cada mes. El plan podría no ser sostenible: para lograrlo tendrías que <strong>ajustar tus gastos</strong> y liberar ese margen.</span>';
+      } else {
+        warnEl.style.display = 'none';
+        warnEl.innerHTML = '';
+      }
+    }
 
     if(!base.length){
       cont.innerHTML = '<div class="card"><div class="ds-empty">Agrega al menos una deuda con saldo para ver tu plan.</div></div>';
@@ -3040,7 +3102,10 @@
       + '</button>'
       + '<button class="btn btn-primary" id="ds-add-plan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>Agregar a mi plan de acción</button>'
       + '</div>'
-      + '</div></div>';
+      + '</div>'
+      + '<label class="ds-budget-toggle"><input type="checkbox" id="ds-include-budget"' + ((state.tablero.planDeuda && state.tablero.planDeuda.activo) ? ' checked' : '') + '>'
+      + '<span><strong>Incluir este plan en mis presupuestos.</strong> Tu abono extra mensual (' + fmt(ds.capacidadExtra||0) + ') entra al presupuesto mensual del tablero, y tu abono extraordinario' + (ds.abonoMonto>0 ? ' (' + fmt(ds.abonoMonto) + ')' : '') + ' al presupuesto anual. Es reversible: desmárcalo y se quita.</span></label>'
+      + '</div>';
 
     cont.innerHTML = html;
     if(ds.estrategia === 'personalizada'){
@@ -3056,6 +3121,17 @@
       if(typeof persistModule === 'function') persistModule('simulador_deuda');
       renderDebtSimResults();  // re-render para actualizar la etiqueta del botón
       showToast(state.debtSim.ocultarPlanTablero ? 'Plan quitado del tablero de control' : 'Plan visible en el tablero de control', 'success');
+    });
+    const incBudget = document.getElementById('ds-include-budget');
+    if(incBudget) incBudget.addEventListener('change', function(){
+      if(!state.tablero.planDeuda) state.tablero.planDeuda = {activo:false, extraMensual:0, abono:{monto:0,mes:1,fuente:'ingreso'}};
+      state.tablero.planDeuda.activo = this.checked;
+      state.tablero.planDeuda.extraMensual = this.checked ? (state.debtSim.capacidadExtra||0) : 0;
+      state.tablero.planDeuda.abono = this.checked
+        ? {monto: state.debtSim.abonoMonto||0, mes: state.debtSim.abonoMes||1, fuente: state.debtSim.abonoFuente||'ingreso'}
+        : {monto:0, mes:1, fuente:'ingreso'};
+      scheduleSave('tablero');
+      showToast(this.checked ? 'Plan incluido en tus presupuestos (mensual y anual)' : 'Plan quitado de tus presupuestos', 'success');
     });
     renderDebtSimChart(plan, minimos);
   }
@@ -3146,6 +3222,14 @@
   function ingresoMensualHogar(){ return (state.ingresos||[]).reduce((s,i)=>s+(i.monto||0),0); }
   function gastoMensualTotal(){ return Object.values(state.gastos||{}).reduce((a,b)=>a+(b||0),0); }
   function deudaServicioMensual(){ return (state.deudas||[]).reduce((s,d)=>s+(d.cuota_mensual||0),0); }
+  /* Superávit mensual real: lo que queda libre tras gastos, cuotas mínimas y ahorro */
+  function superavitMensual(){
+    const ing = ingresoMensualHogar();
+    const gas = Object.values(state.gastos||{}).reduce((s,v)=>s+(v||0),0);
+    const cuotas = deudaServicioMensual();
+    const aho = (state.ahorro||[]).reduce((s,a)=>s+(a.monto_mensual||0),0);
+    return ing - gas - cuotas - aho;
+  }
 
   function renderBudgetRule(){
     const br = state.tablero.budgetRule;
@@ -3186,16 +3270,23 @@
         if(r.bucket === 'des') des += mensual; else nec += mensual;
       });
     });
+    // Abono extra a deuda comprometido desde el simulador (capa reversible, solo el monto incremental)
+    const planDeuda = state.tablero.planDeuda || {};
+    const abonoExtraDeuda = (planDeuda.activo && planDeuda.extraMensual > 0) ? planDeuda.extraMensual : 0;
+    aho += abonoExtraDeuda;
     const targets = ruleTargets();
     const sumT = (+targets.nec||0)+(+targets.des||0)+(+targets.aho||0);
     if(ingreso<=0){ cont.innerHTML='<div class="rule-empty">Registra tu ingreso mensual en el Módulo 1 para ver tu regla.</div>'; return; }
     const rows=[
       {key:'nec',label:'Necesidades',amt:nec,tgt:+targets.nec||0,color:'var(--accent,#0e4d3a)'},
       {key:'des',label:'Deseos',amt:des,tgt:+targets.des||0,color:'#8a5a14'},
-      {key:'aho',label:'Ahorro/inversión',amt:aho,tgt:+targets.aho||0,color:'#1f6f8b'}
+      {key:'aho',label:'Ahorro/inversión',amt:aho,tgt:+targets.aho||0,color:'#1f6f8b',
+        note: abonoExtraDeuda>0 ? ('Incluye '+fmt(abonoExtraDeuda)+' de abono extra a deuda de tu simulador') : ''}
     ];
     let html='';
     if(sumT!==100) html+='<div class="rule-warn">'+SVG_WARN+'<span>Tus porcentajes suman '+sumT+'% (deberían sumar 100%).</span></div>';
+    const exceso = (nec+des+aho) - ingreso;
+    if(exceso > 0.5) html+='<div class="rule-warn">'+SVG_WARN+'<span>Tu plan asigna <strong>'+fmt(exceso)+' más</strong> de lo que ganas al mes. Para sostenerlo tendrías que <strong>ajustar tus gastos</strong>.</span></div>';
     rows.forEach(r=>{
       const actualPct = r.amt/ingreso*100;
       const targetAmt = ingreso*r.tgt/100;
@@ -3213,6 +3304,7 @@
         +'<div class="rule-bar"><div class="rule-bar-fill" style="width:'+Math.min(actualPct,100).toFixed(1)+'%;background:'+r.color+'"></div>'
         +'<span class="rule-bar-marker" style="left:'+Math.min(r.tgt,100)+'%"></span></div>'
         +'<div class="rule-verdict '+vClass+'">'+verdict+'</div>'
+        +(r.note ? '<div class="rule-note">'+r.note+'</div>' : '')
         +'</div>';
     });
     cont.innerHTML=html;
