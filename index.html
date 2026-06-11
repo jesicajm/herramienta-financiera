@@ -347,6 +347,9 @@
 .use-row.plan-extra{color:#1f6f8b;font-size:13px;background:rgba(31,111,139,.05)}
 .use-row.plan-extra .ur-amount{color:#1f6f8b;font-weight:500}
 .use-row-note{font-size:11.5px;color:#1f6f8b;padding:5px 12px 9px;line-height:1.45}
+.m9-include{list-style:none;margin:6px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px 18px}
+.m9-include li{position:relative;padding-left:22px;font-size:13.5px;color:rgba(0,0,0,.7);line-height:1.4}
+.m9-include li::before{content:'';position:absolute;left:4px;top:7px;width:7px;height:7px;border-radius:50%;background:var(--accent,#0e4d3a)}
 </style>
 </head>
 <body>
@@ -595,6 +598,11 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
       Tablero de Control
       <span class="sb-dot" id="dot-6"></span>
+    </a>
+    <a class="sb-item" data-module="9" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/></svg>
+      Informe para mi Asesor
+      <span class="sb-dot" id="dot-9"></span>
     </a>
   </aside>
 
@@ -1415,6 +1423,55 @@
       </div>
     </div>
 
+    <!-- ─── MÓDULO 9 · INFORME PARA MI ASESOR ─── -->
+    <div id="modulo-9" class="module">
+      <div class="module-head">
+        <div class="module-eyebrow"><span class="dot"></span>Resultado</div>
+        <h1 class="module-title">Un <em>informe</em> completo para tu asesor</h1>
+        <p class="module-desc">Exporta en un clic un PDF con el resumen detallado de tus finanzas —patrimonio, deudas, ahorro, presupuesto, metas y un diagnóstico automático— para compartirlo con tu asesor y diseñar juntos tu plan financiero.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+          <h3>Datos del informe</h3>
+        </div>
+        <div class="ds-cap-grid">
+          <div class="mr-field"><label>Nombre del hogar (aparece en la portada)</label><input type="text" id="m9-nombre" placeholder="Tu nombre"></div>
+        </div>
+        <div class="mr-field" style="margin-top:14px">
+          <label>Mensaje para tu asesor (opcional)</label>
+          <textarea class="plan-area" id="m9-nota" placeholder="Escribe aquí cualquier contexto que quieras darle a tu asesor…"></textarea>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>
+          <h3>Tu informe incluye</h3>
+        </div>
+        <p class="ds-hint">Todas las secciones van siempre incluidas, para que tu asesor tenga la fotografía completa:</p>
+        <ul class="m9-include">
+          <li>Resumen ejecutivo con semáforo de salud financiera</li>
+          <li>Ingresos, gastos y composición del hogar</li>
+          <li>Endeudamiento con ratios y alertas</li>
+          <li>Activos y patrimonio neto</li>
+          <li>Ahorro, solvencia y fondo de emergencia</li>
+          <li>Presupuesto 50/30/20, uso mensual y proyección anual</li>
+          <li>Plan de pago de deudas del simulador</li>
+          <li>Metas y proyección de patrimonio</li>
+          <li>Diagnóstico automático con fortalezas y alertas</li>
+        </ul>
+      </div>
+
+      <div class="actions" style="justify-content:center">
+        <button class="btn btn-primary" id="m9-export" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Exportar PDF
+        </button>
+      </div>
+    </div>
+
   </main>
 
   <!-- Bottom nav (mobile) -->
@@ -1490,6 +1547,8 @@
     </div>
   </div>
 </div>
+<script src="https://cdn.jsdelivr.net/npm/pdfmake@0.2.10/build/pdfmake.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdfmake@0.2.10/build/vfs_fonts.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

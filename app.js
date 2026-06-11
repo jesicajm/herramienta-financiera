@@ -122,6 +122,7 @@
     4:'Ahorro y Solvencia',5:'Presupuesto Anual',6:'Tablero de Control',
     7:'Simulador de Deuda',
     8:'Metas y Proyección',
+    9:'Informe para mi Asesor',
     'var':'Ingresos Variables'
   };
   
@@ -333,6 +334,7 @@
     if(id===6){renderTablero();renderCharts();}
     if(id===7){renderDebtSim();}
     if(id===8){renderMetas();}
+    if(id===9){renderInformeM9();}
     if(id==='var'){renderMVar();}
     window.scrollTo({top:0,behavior:'smooth'});
   }
@@ -5895,3 +5897,510 @@
   });
   window.addEventListener('resize', closeTipPopover);
   window.addEventListener('scroll', closeTipPopover, true);
+  /* ═══════════════════════════════════════════════════════════
+     MÓDULO 9 — INFORME PDF PARA EL ASESOR
+     Todo se calcula DESDE EL ESTADO (no del DOM), para que el
+     informe sea correcto sin importar en qué módulo esté el usuario.
+     ═══════════════════════════════════════════════════════════ */
+  function debtTypeLabel(tipo){ const dt = DEBT_TYPES.find(d=>d.val===tipo); return dt ? dt.label : 'Otra'; }
+  function metaFuenteLabel(f){
+    f = f || 'manual';
+    if(f==='manual') return 'Manual';
+    if(f==='liquido_total') return 'Activos líquidos';
+    if(f==='fondo_provisiones') return 'Fondo de provisiones';
+    if(f==='fondo_estabilizacion') return 'Fondo de estabilización';
+    if(f.indexOf('activo:')===0) return 'Activo · ' + f.slice(7);
+    return 'Manual';
+  }
+  function reportClientName(){
+    const ov = (state.tablero.informeNombre||'').trim();
+    if(ov) return ov;
+    const s1=(state.p5.socio1||'').trim(), s2=(state.p5.socio2||'').trim();
+    if(s1 && s2) return s1 + ' y ' + s2;
+    return s1 || s2 || 'Cliente';
+  }
+
+  function buildReportData(){
+    const montoAh = a => (a.monto_mensual!=null ? a.monto_mensual : a.monto) || 0;
+    // ── Ingresos ──
+    const ingresosFilas = (state.ingresos||[])
+      .filter(i => (i.monto||0)!==0 || (i.nombre||'').trim())
+      .map(i => ({nombre:i.nombre||'Ingreso', monto:i.monto||0}));
+    const ingresoMensual = (state.ingresos||[]).reduce((s,i)=>s+(i.monto||0),0);
+    // ── Ingresos variables (detalle: histórico, retenciones, gastos asociados) ──
+    let varDetalle = null;
+    if(state.varIncome && state.varIncome.active){
+      const contratosD = (state.varIncome.contratos||[]).map(c=>{
+        const meses = (c.meses||[]).map(m=>{
+          recalcMesNetoC(c, m);
+          return { label: mesLabelFmt(m), bruto:m.bruto||0, costos:m.costos||0,
+                   tributo:(c.retencionAplica?Math.max(0,m.tributo||0):0), neto:m.neto||0 };
+        });
+        return { nombre:c.nombre||'Contrato', tipo:c.tipo||'—',
+                 retencion: c.retencionAplica ? ('Sí · '+(c.retencionPct||0)+'%') : 'No',
+                 meses };
+      });
+      const comb = getCombinedMeses();
+      varDetalle = {
+        contratos: contratosD,
+        combinado: comb.map(m=>({label:m.label, bruto:m.bruto||0, costos:m.costos||0, tributo:m.tributo||0, neto:m.neto||0})),
+        totales: {
+          bruto: comb.reduce((s,m)=>s+(m.bruto||0),0), costos: comb.reduce((s,m)=>s+(m.costos||0),0),
+          tributo: comb.reduce((s,m)=>s+(m.tributo||0),0), neto: comb.reduce((s,m)=>s+(m.neto||0),0)
+        },
+        salarioSostenible: (typeof getSalarioPersonalActual==='function' ? getSalarioPersonalActual() : (state.varIncome.salarioPersonal||0)),
+        fondoActual: state.varIncome.fondoActual||0,
+        fondoMeta: (typeof getFondoMetaActual==='function' ? getFondoMetaActual() : 0)
+      };
+    }
+    // ── Gastos ──
+    const gastosFilas=[]; const gastosDetalle=[]; let totalNec=0, totalDes=0, totalGastos=0;
+    const orden = (state.gastosOrder && state.gastosOrder.length) ? state.gastosOrder : Object.keys(state.gastos||{});
+    orden.forEach(cat=>{
+      if(!(cat in (state.gastos||{}))) return;
+      const val = state.gastos[cat]||0;
+      const b = gastoBucket(cat);
+      const bLabel = b==='nec'?'Necesidad':b==='aho'?'Ahorro':'Deseo';
+      gastosFilas.push({cat:gastoLabel(cat), bucket:bLabel, monto:val});
+      totalGastos += val;
+      if(b==='nec') totalNec+=val; else if(b!=='aho') totalDes+=val;
+      // Detalle por ítem dentro de la categoría
+      const items = Array.isArray(state.gastosItems && state.gastosItems[cat]) ? state.gastosItems[cat] : null;
+      if(items && items.length){
+        items.forEach(it=>{
+          gastosDetalle.push({cat:gastoLabel(cat), concepto:(it.nombre||'').trim()||'(sin nombre)', bucket:bLabel, monto:it.monto||0});
+        });
+      } else if(val>0){
+        gastosDetalle.push({cat:gastoLabel(cat), concepto:'(total de la categoría)', bucket:bLabel, monto:val});
+      }
+    });
+    const anualesGastos=[];
+    Object.values(state.p5.gastos||{}).forEach(rows=>{
+      (rows||[]).forEach(r=>{
+        if(r.frec==='NO ES TODOS LOS MESES' && (r.monto||0)>0){
+          const mn = parseInt(r.mes);
+          const mesLbl = (mn>=1 && mn<=12) ? MES_NAMES_FULL[mn-1] : 'Sin mes';
+          anualesGastos.push({concepto:r.nombre||'Gasto anual', mes:mesLbl, monto:r.monto||0});
+        }
+      });
+    });
+    // ── Deudas ──
+    const deudasFilas=[]; let totalDeuda=0, servicioDeuda=0, totConsumo=0, totApal=0, pagosConsumo=0, sumaPond=0;
+    const soloIntereses=[];
+    (state.deudas||[]).forEach(d=>{
+      const saldo=d.saldo||0, cuota=d.cuota_mensual||0, tasa=d.tasa_anual||0;
+      const grupo = d.grupo || debtGroup(d.tipo||'');
+      totalDeuda+=saldo; servicioDeuda+=cuota; sumaPond+=saldo*tasa;
+      if(grupo==='consumo'){ totConsumo+=saldo; pagosConsumo+=cuota; } else if(grupo==='apalancamiento'){ totApal+=saldo; }
+      const em = eaToMonthly(tasa);
+      const si = saldo>0.5 && cuota>0 && cuota <= saldo*em*1.001;
+      if(si) soloIntereses.push(d.nombre||'Deuda');
+      deudasFilas.push({nombre:d.nombre||'Deuda', tipo:debtTypeLabel(d.tipo), saldo, tasa, cuota, soloIntereses:si});
+    });
+    const tasaProm = totalDeuda>0 ? sumaPond/totalDeuda : 0;
+    const ratioConsumo = totalDeuda>0 ? totConsumo/totalDeuda : 0;
+    const ratioApal = totalDeuda>0 ? totApal/totalDeuda : 0;
+    const pctConsumoIng = ingresoMensual>0 ? pagosConsumo/ingresoMensual : 0;
+    // ── Activos ──
+    const activosFilas=[]; let totalLiquido=0, totalNoLiquido=0;
+    (state.activos||[]).forEach(a=>{
+      const v=a.valor||0;
+      activosFilas.push({nombre:a.nombre||'Activo', tipo:a.tipo||'NO LÍQUIDO', valor:v});
+      if(a.tipo==='LÍQUIDO') totalLiquido+=v; else totalNoLiquido+=v;
+    });
+    const totalActivos = totalLiquido+totalNoLiquido;
+    const patrimonio = totalActivos - totalDeuda;
+    const solvencia = totalDeuda>0 ? totalActivos/totalDeuda : 0;
+    const pctLiquidos = totalActivos>0 ? totalLiquido/totalActivos : 0;
+    // ── Ahorro ──
+    const ahorroArr = state.ahorro||[];
+    const totalAhorro = ahorroArr.reduce((s,a)=>s+montoAh(a),0);
+    const esPrec = a => a.linkedToFondoAporte||a.linkedToProvisionesAporte||a.precaucion;
+    const ahorroPrec = ahorroArr.filter(esPrec).reduce((s,a)=>s+montoAh(a),0);
+    const ahorroInv = totalAhorro - ahorroPrec;
+    const capacidadPct = ingresoMensual>0 ? ahorroInv/ingresoMensual : 0;
+    const fondoEmergMeses = totalGastos>0 ? totalLiquido/totalGastos : 0;
+    const fondoEstab = (state.varIncome && state.varIncome.fondoActual) || 0;
+    const provisiones = state.p5.fondoProvisiones || 0;
+    // ── 50/30/20 (réplica de renderBudgetRuleResult) ──
+    const ingresoRegla = ingresoMensual + (state.p5.ingAnual||0)/12;
+    const provisionAporte = ahorroArr.filter(a=>a.linkedToProvisionesAporte).reduce((s,a)=>s+montoAh(a),0);
+    let nec = servicioDeuda, des = 0, aho = totalAhorro - provisionAporte;
+    Object.entries(state.gastos||{}).forEach(([cat,val])=>{ const b=gastoBucket(cat); if(b==='nec')nec+=(val||0); else if(b==='aho')aho+=(val||0); else des+=(val||0); });
+    Object.values(state.p5.gastos||{}).forEach(rows=>{ (rows||[]).forEach(r=>{ if(r.frec!=='NO ES TODOS LOS MESES')return; if(r.yaEnM1)return; const m=(r.monto||0)/12; if(m<=0)return; if(r.bucket==='des')des+=m; else nec+=m; }); });
+    const pdPlan = state.tablero.planDeuda||{};
+    const abonoExtraMensual = (pdPlan.activo && pdPlan.extraMensual>0) ? pdPlan.extraMensual : 0;
+    aho += abonoExtraMensual;
+    const tg = ruleTargets();
+    const brRule = state.tablero.budgetRule || {};
+    const reglaNombre = (brRule.rule==='custom')
+      ? ('Personalizada (' + (brRule.custom&&brRule.custom.nec||0) + '/' + (brRule.custom&&brRule.custom.des||0) + '/' + (brRule.custom&&brRule.custom.aho||0) + ')')
+      : (brRule.rule || '50/30/20');
+    function reglaFila(cubeta, real, metaPct, tipo){
+      const metaAmt = ingresoRegla * metaPct / 100;
+      const dif = real - metaAmt; // + = por encima del monto meta
+      let estado, detalle;
+      if(tipo==='piso'){ // ahorro: cumplir es estar por encima
+        if(real >= metaAmt){ estado='ok'; detalle = fmt(Math.abs(dif)) + ' por encima de la meta'; }
+        else { estado='falta'; detalle = fmt(Math.abs(dif)) + ' por debajo de la meta'; }
+      } else { // necesidades/deseos: cumplir es estar por debajo (techo)
+        if(real <= metaAmt){ estado='ok'; detalle = fmt(Math.abs(dif)) + ' de margen bajo la meta'; }
+        else { estado='excede'; detalle = fmt(Math.abs(dif)) + ' por encima de la meta'; }
+      }
+      return {cubeta, real, pct: ingresoRegla>0?real/ingresoRegla:0, meta:metaPct, metaAmt, dif, estado, detalle, tipo};
+    }
+    const reglaRows = [
+      reglaFila('Necesidades', nec, +tg.nec||0, 'techo'),
+      reglaFila('Deseos', des, +tg.des||0, 'techo'),
+      reglaFila('Ahorro/inversión', aho, +tg.aho||0, 'piso')
+    ];
+    const reglaOk = (nec <= ingresoRegla*(+tg.nec||50)/100) && (des <= ingresoRegla*(+tg.des||30)/100) && (aho >= ingresoRegla*(+tg.aho||20)/100);
+    // ── Uso mensual ──
+    const pagosConExtra = servicioDeuda + abonoExtraMensual;
+    const usoRows = [
+      {concepto:'Ingresos mensuales', valor:ingresoMensual, pct:1},
+      {concepto:'Ahorro mensual', valor:totalAhorro, pct: ingresoMensual>0?totalAhorro/ingresoMensual:0},
+      {concepto:'Pago a deudas', valor:pagosConExtra, pct: ingresoMensual>0?pagosConExtra/ingresoMensual:0},
+      {concepto:'Gastos mensuales', valor:totalGastos, pct: ingresoMensual>0?totalGastos/ingresoMensual:0}
+    ];
+    const anual = {
+      ing: state.p5.ingAnual||0, aho: state.p5.ahoAnual||0, deu: state.p5.deuAnual||0,
+      gas: state.p5.gastosAnual||0, saldo: state.p5.saldo||0,
+      abono: (pdPlan.activo && pdPlan.abono && pdPlan.abono.monto>0) ? pdPlan.abono : null,
+      abonoMensual: abonoExtraMensual
+    };
+    const superavit = ingresoMensual - totalGastos - servicioDeuda - totalAhorro;
+    // ── Plan de deudas ──
+    const plan = computeDebtPlanSummary();
+    // ── Metas ──
+    const metas = (state.metas.items||[]).filter(m=>(m.nombre||'').trim()||m.objetivo>0).map(m=>{
+      const saldo = metaSaldoActual(m);
+      return {nombre:m.nombre||'Meta', objetivo:m.objetivo||0, saldo, aporte:m.aporte||0, fecha:m.fecha||'—', fuente:metaFuenteLabel(m.fuente), avance:(m.objetivo>0)?Math.min(saldo/m.objetivo,1):0};
+    });
+    // ── Semáforo ──
+    const eSolv = totalDeuda>0 ? (solvencia>1.5?'verde':solvencia>=1?'amarillo':'rojo') : 'neutro';
+    const eFE   = totalGastos>0 ? (fondoEmergMeses>6?'verde':fondoEmergMeses>=3?'amarillo':'rojo') : 'neutro';
+    const eCI   = (pctConsumoIng<.2?'verde':pctConsumoIng<.3?'amarillo':'rojo');
+    const eRA   = totalDeuda>0 ? (ratioApal>.5?'verde':ratioApal>.25?'amarillo':'rojo') : 'neutro';
+    const eRegla= reglaOk?'verde':'amarillo';
+    const eSaldo= anual.saldo>=0?'verde':'rojo';
+    const eSup  = superavit>=0?'verde':'rojo';
+    const semaforo = [
+      {area:'Nivel de solvencia', estado:eSolv, valor: totalDeuda>0?(solvencia.toFixed(2)+'×'):'Sin deuda'},
+      {area:'Fondo de emergencia', estado:eFE, valor: fondoEmergMeses.toFixed(1)+' meses'},
+      {area:'Deuda de consumo / ingreso', estado:eCI, valor: pct(pctConsumoIng)},
+      {area:'Apalancamiento de deuda', estado:eRA, valor: totalDeuda>0?pct(ratioApal):'Sin deuda'},
+      {area:'Regla de presupuesto', estado:eRegla, valor: reglaOk?'En meta':'Por ajustar'},
+      {area:'Saldo anual proyectado', estado:eSaldo, valor: fmt(anual.saldo)},
+      {area:'Superávit mensual', estado:eSup, valor: fmt(superavit)}
+    ];
+    // ── Diagnóstico ──
+    const fortalezas=[], alertas=[];
+    semaforo.forEach(s=>{
+      if(s.estado==='verde') fortalezas.push(s.area + ' — ' + s.valor);
+      else if(s.estado==='amarillo'||s.estado==='rojo') alertas.push({txt:s.area + ' — ' + s.valor, estado:s.estado});
+    });
+    if(soloIntereses.length) alertas.unshift({txt:'Deudas que solo pagan intereses (no amortizan): ' + soloIntereses.join(', '), estado:'rojo'});
+    if(superavit<0) alertas.push({txt:'Tu salida mensual supera tus ingresos; conviene ajustar gastos.', estado:'rojo'});
+    if(ratioConsumo>=.6) alertas.push({txt:'Alta concentración de deuda de consumo ('+pct(ratioConsumo)+').', estado:'rojo'});
+
+    return {
+      cliente: reportClientName(),
+      fecha: new Date().toLocaleDateString('es-CO',{day:'numeric',month:'long',year:'numeric'}),
+      nota: (state.tablero.informeNota||'').trim(),
+      resumen: {patrimonio, ingresoMensual, totalGastos, servicioDeuda, totalAhorro, superavit},
+      semaforo,
+      ingresos: {filas:ingresosFilas, total:ingresoMensual, variable: varDetalle,
+                 hogar:{socio1:state.p5.socio1||'', socio2:state.p5.socio2||'', modo:(state.tablero.couple&&state.tablero.couple.modo)||'proporcional'}},
+      gastos: {filas:gastosFilas, detalle:gastosDetalle, totalNec, totalDes, total:totalGastos, anuales:anualesGastos},
+      deudas: {filas:deudasFilas, totalDeuda, servicioDeuda, tasaProm, pctConsumoIng, ratioConsumo, ratioApal, soloIntereses},
+      activos: {filas:activosFilas, totalLiquido, totalNoLiquido, total:totalActivos, patrimonio, solvencia, pctLiquidos},
+      ahorro: {precaucion:ahorroPrec, inversion:ahorroInv, total:totalAhorro, capacidadPct, fondoEmergMeses, fondoEstab, provisiones},
+      presupuesto: {regla:reglaRows, uso:usoRows, anual, ingresoRegla, ingresoMensualBase:ingresoMensual, ingresoAnualProrr:(state.p5.ingAnual||0)/12, reglaNombre, reglaOk},
+      plan, metas,
+      diagnostico: {fortalezas, alertas}
+    };
+  }
+
+  /* ── Helpers de armado del PDF ── */
+  function rptSemHex(e){ return e==='verde'?'#1a7f4b':e==='amarillo'?'#9a6b00':e==='rojo'?'#b3261e':'#777'; }
+  function rptSemTxt(e){ return e==='verde'?'Bien':e==='amarillo'?'Atención':e==='rojo'?'Crítico':'—'; }
+  var RPT_ACCENT = '#0e4d3a';
+  function rptTableLayout(){
+    return {
+      fillColor: (rowIndex) => rowIndex===0 ? RPT_ACCENT : (rowIndex%2===0 ? '#f3f6f5' : null),
+      hLineWidth: ()=>0.5, vLineWidth: ()=>0, hLineColor: ()=>'#e3e6e5',
+      paddingTop: ()=>5, paddingBottom: ()=>5, paddingLeft: ()=>7, paddingRight: ()=>7
+    };
+  }
+  function rptSection(t){ return {text:t, style:'h2', margin:[0,16,0,7]}; }
+  function rptKpiGrid(items){
+    const rows=[]; for(let i=0;i<items.length;i+=3){
+      const slice = items.slice(i,i+3);
+      while(slice.length<3) slice.push(null);
+      rows.push(slice.map(it=> it ? {
+        stack:[ {text:it.label, fontSize:8, color:'#6a6f6d', margin:[0,0,0,2]}, {text:it.value, fontSize:13, bold:true, color:it.color||'#16201c'} ],
+        margin:[0,3,0,3]
+      } : {text:''}));
+    }
+    return {table:{widths:['*','*','*'], body:rows}, layout:'noBorders', margin:[0,0,0,4]};
+  }
+  function rptTable(headers, rows, widths){
+    const body=[ headers.map(h=>({text:h, color:'#ffffff', bold:true, fontSize:8.5})) ];
+    rows.forEach(r=> body.push(r));
+    return {table:{headerRows:1, widths:widths, body:body}, layout:rptTableLayout(), fontSize:9, margin:[0,2,0,6]};
+  }
+  function rptCell(t){ return {text:(t==null?'':t), fontSize:9}; }
+  function rptCellR(t){ return {text:(t==null?'':t), fontSize:9, alignment:'right'}; }
+
+  function buildReportDoc(d, logo){
+    const content=[];
+    // ── Portada ──
+    if(logo) content.push({image:logo, width:150, alignment:'center', margin:[0,40,0,18]});
+    else content.push({text:'ABBA', style:'cover', alignment:'center', margin:[0,60,0,18]});
+    content.push({text:'Resumen financiero detallado', fontSize:22, bold:true, color:RPT_ACCENT, alignment:'center', margin:[0,0,0,4]});
+    content.push({text:'Preparado para mi asesor financiero', fontSize:12, color:'#6a6f6d', alignment:'center', margin:[0,0,0,26]});
+    content.push({text:d.cliente, fontSize:15, bold:true, alignment:'center', margin:[0,0,0,3]});
+    content.push({text:'Generado el ' + d.fecha, fontSize:10, color:'#6a6f6d', alignment:'center', margin:[0,0,0,24]});
+    if(d.nota) content.push({table:{widths:['*'], body:[[{stack:[{text:'Mensaje para mi asesor', bold:true, fontSize:9, color:RPT_ACCENT, margin:[0,0,0,4]},{text:d.nota, fontSize:10}], margin:[4,4,4,4]}]]}, layout:{fillColor:()=>'#f3f6f5', hLineWidth:()=>0, vLineWidth:()=>0}, margin:[30,0,30,0]});
+    content.push({text:'Información al ' + d.fecha + '. Es una foto del momento. Documento informativo; no constituye asesoría financiera.', fontSize:7.5, color:'#9aa0a8', italics:true, alignment:'center', margin:[0,40,0,0]});
+
+    // ── Resumen ejecutivo ──
+    content.push({text:'Resumen ejecutivo', style:'h1', pageBreak:'before', margin:[0,0,0,8]});
+    content.push(rptKpiGrid([
+      {label:'Patrimonio neto', value:fmt(d.resumen.patrimonio), color:d.resumen.patrimonio>=0?'#1a7f4b':'#b3261e'},
+      {label:'Ingreso mensual', value:fmt(d.resumen.ingresoMensual)},
+      {label:'Gastos mensuales', value:fmt(d.resumen.totalGastos)},
+      {label:'Servicio de deuda', value:fmt(d.resumen.servicioDeuda)},
+      {label:'Ahorro mensual', value:fmt(d.resumen.totalAhorro)},
+      {label:'Superávit mensual', value:fmt(d.resumen.superavit), color:d.resumen.superavit>=0?'#1a7f4b':'#b3261e'}
+    ]));
+    content.push(rptSection('Semáforo de salud financiera'));
+    content.push(rptTable(['Área','Estado','Valor'], d.semaforo.map(s=>[
+      rptCell(s.area), {text:rptSemTxt(s.estado), fontSize:9, bold:true, color:rptSemHex(s.estado)}, rptCellR(s.valor)
+    ]), ['*',70,90]));
+
+    // ── Ingresos ──
+    content.push({text:'Ingresos', style:'h1', pageBreak:'before', margin:[0,0,0,8]});
+    content.push(rptTable(['Fuente','Monto mensual'], d.ingresos.filas.map(i=>[rptCell(i.nombre), rptCellR(fmt(i.monto))]).concat([[{text:'Total', bold:true, fontSize:9}, {text:fmt(d.ingresos.total), bold:true, fontSize:9, alignment:'right'}]]), ['*',120]));
+    if(d.ingresos.variable){
+      const v = d.ingresos.variable;
+      content.push(rptSection('Ingresos variables — detalle'));
+      v.contratos.forEach(c=>{
+        content.push({text: c.nombre + (c.tipo && c.tipo!=='—' ? (' · ' + c.tipo) : '') + '   ·   Retención: ' + c.retencion, fontSize:9.5, bold:true, color:RPT_ACCENT, margin:[0,6,0,3]});
+        if(c.meses.length){
+          content.push(rptTable(['Mes','Bruto','Gastos asociados','Retención','Neto'],
+            c.meses.map(m=>[rptCell(m.label), rptCellR(fmt(m.bruto)), rptCellR(fmt(m.costos)), rptCellR(fmt(m.tributo)), rptCellR(fmt(m.neto))]),
+            ['*','auto','auto','auto','auto']));
+        } else content.push({text:'Sin historial registrado.', fontSize:9, color:'#6a6f6d', margin:[0,0,0,4]});
+      });
+      content.push({text:'Total combinado del historial', fontSize:9.5, bold:true, margin:[0,6,0,3]});
+      content.push(rptTable(['Concepto','Valor'], [
+        [rptCell('Bruto acumulado'), rptCellR(fmt(v.totales.bruto))],
+        [rptCell('Gastos asociados acumulados'), rptCellR(fmt(v.totales.costos))],
+        [rptCell('Retención reservada acumulada'), rptCellR(fmt(v.totales.tributo))],
+        [{text:'Neto acumulado', bold:true, fontSize:9}, {text:fmt(v.totales.neto), bold:true, fontSize:9, alignment:'right'}]
+      ], ['*',130]));
+      content.push(rptKpiGrid([
+        {label:'Salario sostenible (base mensual)', value:fmt(v.salarioSostenible)},
+        {label:'Fondo de estabilización actual', value:fmt(v.fondoActual)},
+        {label:'Meta del fondo de estabilización', value:fmt(v.fondoMeta)}
+      ]));
+    }
+    if(d.ingresos.hogar.socio1 || d.ingresos.hogar.socio2) content.push({text:'Hogar: ' + (d.ingresos.hogar.socio1||'—') + (d.ingresos.hogar.socio2?(' y ' + d.ingresos.hogar.socio2):'') + ' · reparto ' + d.ingresos.hogar.modo, fontSize:9, color:'#6a6f6d'});
+
+    // ── Gastos ──
+    content.push({text:'Gastos', style:'h1', pageBreak:'before', margin:[0,0,0,8]});
+    content.push({text:'Detalle de todos los gastos por concepto', fontSize:9, color:'#6a6f6d', margin:[0,0,0,4]});
+    content.push(rptTable(['Categoría','Concepto','Clasificación','Monto mensual'],
+      d.gastos.detalle.map(g=>[rptCell(g.cat), rptCell(g.concepto), rptCell(g.bucket), rptCellR(fmt(g.monto))]),
+      ['auto','*','auto','auto']));
+    content.push({text:'Necesidades: ' + fmt(d.gastos.totalNec) + '  ·  Deseos: ' + fmt(d.gastos.totalDes) + '  ·  Total: ' + fmt(d.gastos.total), fontSize:9, bold:true, margin:[0,0,0,6]});
+    if(d.gastos.anuales.length){
+      content.push(rptSection('Gastos anuales / estacionales'));
+      content.push(rptTable(['Concepto','Mes','Monto'], d.gastos.anuales.map(a=>[rptCell(a.concepto), rptCell(a.mes), rptCellR(fmt(a.monto))]), ['*',90,110]));
+    }
+
+    // ── Endeudamiento ──
+    content.push({text:'Endeudamiento', style:'h1', pageBreak:'before', margin:[0,0,0,8]});
+    if(d.deudas.filas.length){
+      content.push(rptTable(['Deuda','Tipo','Saldo','Tasa E.A.','Cuota','Solo interés'], d.deudas.filas.map(x=>[
+        rptCell(x.nombre), {text:x.tipo, fontSize:8}, rptCellR(fmt(x.saldo)), rptCellR((x.tasa*100).toFixed(1)+'%'), rptCellR(fmt(x.cuota)),
+        {text:x.soloIntereses?'Sí':'—', fontSize:9, alignment:'center', color:x.soloIntereses?'#b3261e':'#777', bold:x.soloIntereses}
+      ]), ['*',88,'auto','auto','auto',46]));
+      content.push({text:'Deuda total: ' + fmt(d.deudas.totalDeuda) + '  ·  Servicio mensual: ' + fmt(d.deudas.servicioDeuda) + '  ·  Tasa promedio: ' + (d.deudas.tasaProm*100).toFixed(1) + '% E.A.', fontSize:9, bold:true, margin:[0,0,0,8]});
+      content.push(rptSection('Ratios de deuda'));
+      content.push(rptTable(['Indicador','Valor'], [
+        [rptCell('Pagos de consumo / ingreso'), rptCellR(pct(d.deudas.pctConsumoIng))],
+        [rptCell('Ratio de deuda de consumo'), rptCellR(pct(d.deudas.ratioConsumo))],
+        [rptCell('Ratio de apalancamiento'), rptCellR(pct(d.deudas.ratioApal))]
+      ], ['*',120]));
+      if(d.deudas.soloIntereses.length) content.push({text:'⚠ Deudas que solo pagan intereses (no amortizan): ' + d.deudas.soloIntereses.join(', '), fontSize:9, color:'#b3261e', bold:true, margin:[0,4,0,0]});
+    } else content.push({text:'No hay deudas registradas.', fontSize:10, color:'#6a6f6d'});
+
+    // ── Activos y patrimonio ──
+    content.push({text:'Activos y patrimonio', style:'h1', pageBreak:'before', margin:[0,0,0,8]});
+    content.push(rptTable(['Activo','Tipo','Valor'], d.activos.filas.map(a=>[rptCell(a.nombre), rptCell(a.tipo), rptCellR(fmt(a.valor))]), ['*',100,120]));
+    content.push({text:'Líquidos: ' + fmt(d.activos.totalLiquido) + '  ·  No líquidos: ' + fmt(d.activos.totalNoLiquido) + '  ·  Total: ' + fmt(d.activos.total), fontSize:9, bold:true, margin:[0,0,0,6]});
+    content.push(rptKpiGrid([
+      {label:'Patrimonio neto (activos − deuda)', value:fmt(d.activos.patrimonio), color:d.activos.patrimonio>=0?'#1a7f4b':'#b3261e'},
+      {label:'Nivel de solvencia', value: d.deudas.totalDeuda>0?(d.activos.solvencia.toFixed(2)+'×'):'Sin deuda'},
+      {label:'% activos líquidos', value:pct(d.activos.pctLiquidos)}
+    ]));
+
+    // ── Ahorro y solvencia ──
+    content.push({text:'Ahorro y solvencia', style:'h1', pageBreak:'before', margin:[0,0,0,8]});
+    content.push(rptTable(['Concepto','Monto mensual'], [
+      [rptCell('Ahorro de precaución (colchón)'), rptCellR(fmt(d.ahorro.precaucion))],
+      [rptCell('Ahorro / inversión'), rptCellR(fmt(d.ahorro.inversion))],
+      [{text:'Total ahorro mensual', bold:true, fontSize:9}, {text:fmt(d.ahorro.total), bold:true, fontSize:9, alignment:'right'}]
+    ], ['*',120]));
+    content.push(rptKpiGrid([
+      {label:'Capacidad de ahorro/inversión', value:pct(d.ahorro.capacidadPct)},
+      {label:'Fondo de emergencia', value:d.ahorro.fondoEmergMeses.toFixed(1)+' meses'},
+      {label:'Fondo de estabilización', value:fmt(d.ahorro.fondoEstab)},
+      {label:'Fondo de provisiones', value:fmt(d.ahorro.provisiones)}
+    ]));
+
+    // ── Presupuesto ──
+    content.push({text:'Presupuesto', style:'h1', pageBreak:'before', margin:[0,0,0,8]});
+    content.push({text:'Regla elegida: ' + d.presupuesto.reglaNombre, fontSize:11, bold:true, color:RPT_ACCENT, margin:[0,0,0,3]});
+    content.push({text:'Calculada sobre un ingreso base de ' + fmt(d.presupuesto.ingresoRegla) + ' al mes (ingreso mensual del hogar ' + fmt(d.presupuesto.ingresoMensualBase) + (d.presupuesto.ingresoAnualProrr>0 ? (' + ingresos anuales prorrateados ' + fmt(d.presupuesto.ingresoAnualProrr)) : '') + ').', fontSize:9, color:'#6a6f6d', margin:[0,0,0,7]});
+    content.push(rptTable(['Cubeta','Real','% real','Meta %','Meta $','Diferencia vs meta'], d.presupuesto.regla.map(r=>{
+      const ok = r.estado==='ok';
+      return [
+        rptCell(r.cubeta), rptCellR(fmt(r.real)), rptCellR((r.pct*100).toFixed(0)+'%'),
+        rptCellR(r.meta+'%'), rptCellR(fmt(r.metaAmt)),
+        {text:r.detalle, fontSize:8.5, color: ok?'#1a7f4b':(r.estado==='excede'?'#b3261e':'#9a6b00'), alignment:'right'}
+      ];
+    }), ['*','auto','auto','auto','auto',140]));
+    content.push({text: d.presupuesto.reglaOk ? '✓ Estás dentro de la regla en las tres cubetas.' : 'Hay cubetas fuera de la meta (ver diferencia arriba).', fontSize:9, bold:true, color: d.presupuesto.reglaOk?'#1a7f4b':'#9a6b00', margin:[0,2,0,4]});
+    content.push(rptSection('Uso mensual del dinero'));
+    content.push(rptTable(['Concepto','Valor','% ingreso'], d.presupuesto.uso.map(u=>[rptCell(u.concepto), rptCellR(fmt(u.valor)), rptCellR((u.pct*100).toFixed(0)+'%')]), ['*',120,80]));
+    if(d.presupuesto.anual.abonoMensual>0) content.push({text:'Incluye ' + fmt(d.presupuesto.anual.abonoMensual) + ' de abono extra a deuda comprometido en el simulador.', fontSize:8.5, color:'#1f6f8b', margin:[0,0,0,6]});
+    content.push(rptSection('Proyección anual'));
+    const an=d.presupuesto.anual;
+    content.push(rptTable(['Concepto','Anual'], [
+      [rptCell('Otros ingresos'), rptCellR(fmt(an.ing))],
+      [rptCell('Otro ahorro'), rptCellR(fmt(an.aho))],
+      [rptCell('Otros pagos de deuda'), rptCellR(fmt(an.deu))],
+      [rptCell('Otros gastos'), rptCellR(fmt(an.gas))],
+      [{text:'Saldo anual proyectado', bold:true, fontSize:9}, {text:fmt(an.saldo), bold:true, fontSize:9, alignment:'right', color:an.saldo>=0?'#1a7f4b':'#b3261e'}]
+    ], ['*',120]));
+    if(an.abono) content.push({text:'Abono extraordinario a deuda de ' + fmt(an.abono.monto) + ' en el mes ' + an.abono.mes + ', financiado con ' + (an.abono.fuente==='ahorro'?'traslado de ahorros':'ingreso nuevo/prima') + '. Al estar financiado, no cambia el saldo anual.', fontSize:8.5, color:'#1f6f8b', margin:[0,0,0,0]});
+
+    // ── Plan de deudas ──
+    content.push({text:'Plan de pago de deudas', style:'h1', pageBreak:'before', margin:[0,0,0,8]});
+    if(d.plan && d.plan.hasData){
+      content.push(rptKpiGrid([
+        {label:'Método', value:d.plan.label||'—'},
+        {label:'Tiempo a libertad', value:d.plan.estancado?'No termina':mesesATexto(d.plan.mes)},
+        {label:'Intereses estimados', value:d.plan.estancado?'—':fmt(d.plan.totalInteres)}
+      ]));
+      if(d.plan.orden && d.plan.orden.length){
+        content.push(rptSection('Orden de ataque'));
+        content.push(rptTable(['#','Deuda','Fecha de liberación'], d.plan.orden.map((o,i)=>[
+          {text:String(i+1), fontSize:9, alignment:'center'}, rptCell(o.nombre), rptCellR(o.payoffMes!=null?fechaLibertad(o.payoffMes):'No se liquida')
+        ]), [26,'*',150]));
+      }
+      if(d.presupuesto.anual.abonoMensual>0 || (d.presupuesto.anual.abono)) content.push({text:'Este plan está incluido en tus presupuestos (mensual y/o anual).', fontSize:9, color:'#1f6f8b', margin:[0,4,0,0]});
+    } else content.push({text:'No has configurado un plan en el simulador de deuda.', fontSize:10, color:'#6a6f6d'});
+
+    // ── Metas ──
+    content.push({text:'Metas y proyección', style:'h1', pageBreak:'before', margin:[0,0,0,8]});
+    if(d.metas.length){
+      content.push(rptTable(['Meta','Objetivo','Saldo actual','Avance','Aporte/mes','Fecha','Fuente'], d.metas.map(m=>[
+        rptCell(m.nombre), rptCellR(fmt(m.objetivo)), rptCellR(fmt(m.saldo)), {text:(m.avance*100).toFixed(0)+'%', fontSize:9, alignment:'right'}, rptCellR(fmt(m.aporte)), {text:m.fecha, fontSize:8.5, alignment:'center'}, {text:m.fuente, fontSize:8}
+      ]), ['*','auto','auto',42,'auto',54,90]));
+    } else content.push({text:'No has registrado metas.', fontSize:10, color:'#6a6f6d'});
+
+    // ── Diagnóstico automático ──
+    content.push({text:'Diagnóstico automático', style:'h1', pageBreak:'before', margin:[0,0,0,8]});
+    content.push({text:'Fortalezas', style:'h2', margin:[0,4,0,5]});
+    if(d.diagnostico.fortalezas.length) d.diagnostico.fortalezas.forEach(t=>content.push({text:'• ' + t, fontSize:9.5, color:'#1a7f4b', margin:[0,0,0,3]}));
+    else content.push({text:'—', fontSize:9.5, color:'#6a6f6d'});
+    content.push({text:'Alertas y puntos a trabajar', style:'h2', margin:[0,10,0,5]});
+    if(d.diagnostico.alertas.length) d.diagnostico.alertas.forEach(a=>content.push({text:'• ' + a.txt, fontSize:9.5, color:rptSemHex(a.estado), margin:[0,0,0,3]}));
+    else content.push({text:'Sin alertas. Buen estado general.', fontSize:9.5, color:'#1a7f4b'});
+
+    // ── Notas ──
+    content.push({text:'Notas', style:'h1', pageBreak:'before', margin:[0,0,0,8]});
+    if(d.nota){ content.push({text:'Mensaje del cliente:', bold:true, fontSize:9.5, margin:[0,0,0,3]}); content.push({text:d.nota, fontSize:10, margin:[0,0,0,14]}); }
+    content.push({text:'Observaciones de mi asesor:', bold:true, fontSize:9.5, margin:[0,0,0,6]});
+    content.push({table:{widths:['*'], heights:[120], body:[[{text:''}]]}, layout:{hLineWidth:()=>0.5, vLineWidth:()=>0.5, hLineColor:()=>'#d0d4d3', vLineColor:()=>'#d0d4d3'}});
+
+    return {
+      pageSize:'A4', pageMargins:[40,54,40,46],
+      defaultStyle:{fontSize:10, color:'#16201c'},
+      styles:{ cover:{fontSize:30, bold:true, color:RPT_ACCENT}, h1:{fontSize:17, bold:true, color:RPT_ACCENT}, h2:{fontSize:11.5, bold:true, color:'#16201c'} },
+      header: (currentPage) => currentPage===1 ? null : {
+        margin:[40,18,40,0],
+        columns:[
+          logo ? {image:logo, width:54} : {text:'ABBA', bold:true, color:RPT_ACCENT, fontSize:11},
+          {text:'Resumen financiero · ' + d.cliente, alignment:'right', fontSize:8, color:'#9aa0a8', margin:[0,4,0,0]}
+        ]
+      },
+      footer: (currentPage, pageCount) => ({
+        margin:[40,8,40,0],
+        columns:[
+          {text:'Generado por ABBA · Documento informativo, no constituye asesoría', fontSize:7, color:'#9aa0a8'},
+          {text:'Página ' + currentPage + ' de ' + pageCount, alignment:'right', fontSize:7, color:'#9aa0a8'}
+        ]
+      }),
+      content
+    };
+  }
+
+  /* ── Carga del logo a dataURL para incrustarlo ── */
+  function loadLogoDataUrl(){
+    return new Promise(resolve=>{
+      try{
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = function(){
+          try{
+            const c = document.createElement('canvas');
+            c.width = img.naturalWidth; c.height = img.naturalHeight;
+            c.getContext('2d').drawImage(img,0,0);
+            resolve(c.toDataURL('image/png'));
+          }catch(_){ resolve(null); }
+        };
+        img.onerror = ()=>resolve(null);
+        img.src = 'logo-abba.png';
+      }catch(_){ resolve(null); }
+    });
+  }
+
+  async function exportInformePDF(){
+    if(typeof pdfMake === 'undefined' || !pdfMake.createPdf){
+      showToast('No se pudo cargar el generador de PDF. Revisa tu conexión.', 'error');
+      return;
+    }
+    const btn = document.getElementById('m9-export');
+    if(btn){ btn.disabled = true; btn.dataset.label = btn.textContent; btn.textContent = 'Generando PDF…'; }
+    try{
+      const logo = await loadLogoDataUrl();
+      const data = buildReportData();
+      const doc = buildReportDoc(data, logo);
+      const stamp = new Date().toISOString().slice(0,10);
+      const safe = (data.cliente||'cliente').replace(/[^\w\sáéíóúñ-]/gi,'').trim().replace(/\s+/g,'-');
+      pdfMake.createPdf(doc).download('Informe-financiero-' + safe + '-' + stamp + '.pdf');
+      showToast('Informe generado. Revisa tus descargas.', 'success');
+    }catch(err){
+      console.error('Error generando informe', err);
+      showToast('Ocurrió un error generando el informe.', 'error');
+    }finally{
+      if(btn){ btn.disabled = false; btn.textContent = btn.dataset.label || 'Exportar PDF'; }
+    }
+  }
+
+  function renderInformeM9(){
+    const nom = document.getElementById('m9-nombre');
+    if(nom && document.activeElement !== nom) nom.value = reportClientName();
+    const nota = document.getElementById('m9-nota');
+    if(nota && document.activeElement !== nota) nota.value = state.tablero.informeNota || '';
+    if(nom && !nom.dataset.wired){ nom.dataset.wired='1'; nom.addEventListener('input', function(){ state.tablero.informeNombre = this.value; scheduleSave('tablero'); }); }
+    if(nota && !nota.dataset.wired){ nota.dataset.wired='1'; nota.addEventListener('input', function(){ state.tablero.informeNota = this.value; scheduleSave('tablero'); }); }
+    const btn = document.getElementById('m9-export');
+    if(btn && !btn.dataset.wired){ btn.dataset.wired='1'; btn.addEventListener('click', exportInformePDF); }
+  }
