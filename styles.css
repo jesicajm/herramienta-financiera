@@ -32,6 +32,8 @@
     --pos-soft:     #e3eee8;
     --neg:          #8a1f1c;
     --neg-soft:     #f4e1de;
+    --pos-tint:     #f0f6f2;
+    --neg-tint:     #faf0ee;
     --warn:         #8a5a14;
     --warn-soft:    #f5ead2;
   
@@ -2254,3 +2256,624 @@
     display:flex;align-items:center;
     height:32px;
   }
+/* ═══════════════════════════════════════════════════════════
+   MÓDULO 3 · MAPA PATRIMONIAL — estilos integrados
+   Las variables propias del Mapa se mapean a los tokens de la
+   herramienta, para que herede su identidad visual (verde
+   esmeralda, Fraunces/Geist/JetBrains Mono, radios y sombras).
+   ═══════════════════════════════════════════════════════════ */
+#modulo-3, #asset-modal {
+    --paper:        var(--bg);
+    --paper-warm:   var(--bg-2);
+    --card:         var(--surface);
+    --ink-soft:     var(--ink-2);
+    --ink-mute:     var(--ink-3);
+    --line-strong:  var(--line);
+    --forest:       var(--accent);
+    --forest-dark:  var(--accent);
+    --forest-light: var(--accent-2);
+    --sepia:        var(--warn);
+    --warn-bg:      var(--warn-soft);
+    --error:        var(--neg);
+    --error-bg:     var(--neg-soft);
+    --shadow-sm:    var(--sh-1);
+    --shadow-md:    var(--sh-2);
+    --shadow-lg:    var(--sh-3);
+    --radius:       var(--r-md);
+    --radius-lg:    var(--r-lg);
+}
+
+/* Tipografía monoespaciada para los montos del mapa (como el resto de la herramienta) */
+#modulo-3 .summary-stat-value,
+#modulo-3 .asset-card-value,
+#modulo-3 .asset-card-value-sub,
+#asset-modal .calc-display-value,
+#asset-modal .money-input-wrap input,
+#asset-modal .trm-row input { font-family: var(--mono); font-feature-settings: 'tnum'; }
+
+/* Títulos del mapa con la serif de la herramienta */
+#modulo-3 .inv-title, #asset-modal .step-title { font-family: var(--serif); }
+
+/* Lista de enlace de deudas del M2 (paso 4) */
+#asset-modal .debt-link-list { display:flex; flex-direction:column; gap:8px; margin-top:10px; }
+#asset-modal .debt-link-row {
+    display:flex; align-items:center; gap:12px; padding:12px 14px;
+    border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface);
+    cursor:pointer; transition:border-color .15s, background .15s;
+}
+#asset-modal .debt-link-row:hover { border-color:var(--accent); background:var(--accent-tint); }
+#asset-modal .debt-link-check { width:18px; height:18px; accent-color:var(--accent); flex-shrink:0; }
+#asset-modal .debt-link-info { display:flex; justify-content:space-between; align-items:center; gap:10px; flex:1; }
+#asset-modal .debt-link-name { font-weight:600; color:var(--ink); }
+#asset-modal .debt-link-saldo { font-family:var(--mono); font-size:.9rem; color:var(--ink-3); }
+#asset-modal .debt-link-empty {
+    padding:14px; border:1px dashed var(--line); border-radius:var(--r-md);
+    color:var(--ink-3); font-size:.92rem; line-height:1.5; background:var(--surface-soft);
+}
+#asset-modal .debt-new-toggle-wrap { margin-top:14px; }
+#asset-modal .debt-new-form {
+    margin-top:12px; padding:16px; border:1px solid var(--line-2);
+    border-radius:var(--r-md); background:var(--surface-soft);
+}
+#modulo-3 .asset-card-orphan { color:var(--warn); font-weight:600; }
+#modulo-3 .count { color:var(--ink-3); font-weight:400; font-size:.85em; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+#modulo-3 .inv-header { padding: 8px 0 6px; }
+#modulo-3 .inv-eyebrow {
+    font-size: 0.78rem; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--sepia); font-weight: 600; margin-bottom: 8px;
+}
+#modulo-3 .inv-title {
+    font-family: 'Fraunces', Georgia, serif; font-weight: 500;
+    font-size: clamp(1.7rem, 4.5vw, 2.4rem); line-height: 1.1;
+    letter-spacing: -0.02em; color: var(--forest-dark);
+}
+#modulo-3 .inv-title em { font-style: italic; color: var(--sepia); font-weight: 400; }
+#modulo-3 .inv-subtitle { color: var(--ink-mute); font-size: 1rem; margin-top: 8px; max-width: 560px; line-height: 1.55; }
+#modulo-3 .summary-bar {
+    background: linear-gradient(135deg, var(--forest) 0%, var(--forest-dark) 100%);
+    color: #fdfbf7; border-radius: var(--radius-lg);
+    padding: 26px 28px; margin: 22px 0 20px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 18px;
+    box-shadow: var(--shadow-lg); position: relative; overflow: hidden;
+}
+#modulo-3 .summary-bar::before {
+    content: ''; position: absolute; top: -40%; right: -10%;
+    width: 280px; height: 280px;
+    background: radial-gradient(circle, rgba(74, 140, 199, 0.18) 0%, transparent 70%);
+    pointer-events: none;
+}
+#modulo-3 .summary-stat { position: relative; }
+#modulo-3 .summary-stat-label {
+    font-size: 0.78rem; letter-spacing: 0.12em; text-transform: uppercase;
+    color: rgba(253, 251, 247, 0.65); font-weight: 500; margin-bottom: 6px;
+}
+#modulo-3 .summary-stat-value {
+    font-family: 'Fraunces', serif; font-weight: 500;
+    font-size: clamp(1.5rem, 4vw, 2rem); letter-spacing: -0.02em; line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+}
+#modulo-3 .summary-stat-sub {
+    font-size: 0.82rem; color: rgba(253, 251, 247, 0.55);
+    margin-top: 4px; font-variant-numeric: tabular-nums;
+}
+#modulo-3 .summary-note {
+    grid-column: 1 / -1; font-size: 0.8rem; color: rgba(253, 251, 247, 0.7);
+    margin-top: 6px; padding-top: 14px; border-top: 1px solid rgba(253, 251, 247, 0.1);
+    line-height: 1.45; display: none;
+}
+#modulo-3 .summary-note.visible { display: block; }
+#modulo-3 .trm-card {
+    background: var(--warn-bg); border: 1.5px solid #e9c89a;
+    border-radius: var(--radius); padding: 18px 22px; margin-bottom: 22px; display: none;
+}
+#modulo-3 .trm-card.visible { display: block; }
+#modulo-3 .trm-card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+#modulo-3 .trm-card-icon {
+    width: 22px; height: 22px; border-radius: 50%; background: var(--warn); color: #fff;
+    font-weight: 700; font-size: 0.85rem; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+#modulo-3 .trm-card-title { font-weight: 700; color: var(--warn); font-size: 1rem; }
+#modulo-3 .trm-card-hint { font-size: 0.85rem; color: #7d4a18; margin-bottom: 14px; line-height: 1.5; }
+#modulo-3 .trm-card-hint strong { color: #5a3411; }
+#modulo-3 .trm-card-rows { display: grid; gap: 10px; }
+#modulo-3 .trm-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+#modulo-3 .trm-row label { font-weight: 600; font-size: 0.95rem; color: #7d4a18; min-width: 78px; }
+#modulo-3 .trm-row input {
+    padding: 9px 13px; border: 1.5px solid #d9a25e; border-radius: 8px;
+    background: #fff; font-size: 0.98rem; font-weight: 600; width: 160px;
+    color: var(--ink); font-variant-numeric: tabular-nums;
+}
+#modulo-3 .trm-row input:focus { outline: none; border-color: var(--warn); box-shadow: 0 0 0 3px rgba(184, 101, 31, 0.15); }
+#modulo-3 .trm-row .trm-suffix { font-weight: 600; color: #7d4a18; }
+#asset-modal .field-label .optional { font-weight: 400; color: var(--ink-mute); font-size: 0.82rem; margin-left: 4px; }
+#asset-modal .input, #asset-modal .select, #asset-modal .textarea {
+    width: 100%; padding: 13px 16px; background: #fdfbf7;
+    border: 1.5px solid var(--line-strong); border-radius: 10px;
+    font-size: 1rem; color: var(--ink);
+    transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+#asset-modal .input:focus, #asset-modal .select:focus, #asset-modal .textarea:focus {
+    outline: none; border-color: var(--forest); background: #fff;
+    box-shadow: 0 0 0 4px rgba(45, 74, 62, 0.08);
+}
+#asset-modal .select {
+    appearance: none; -webkit-appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%234a4137' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+    background-repeat: no-repeat; background-position: right 16px center; padding-right: 42px;
+}
+#asset-modal .field-row { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; }
+@media (max-width: 560px) {
+  #asset-modal .field-row { grid-template-columns: 1fr; }
+}
+#asset-modal .btn:active { transform: translateY(1px); }
+#asset-modal .btn-primary:disabled { background: var(--line-strong); color: var(--ink-mute); cursor: not-allowed; box-shadow: none; }
+#asset-modal .btn-block { width: 100%; }
+#modulo-3 .asset-list-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 16px; gap: 12px; flex-wrap: wrap; margin-top: 8px;
+}
+#modulo-3 .asset-list-title {
+    font-family: 'Fraunces', serif; font-weight: 500;
+    font-size: 1.3rem; color: var(--forest-dark);
+}
+#modulo-3 .asset-list-title .count {
+    color: var(--ink-mute); font-style: italic; font-weight: 400;
+    font-size: 0.92rem; margin-left: 6px;
+}
+#modulo-3 .assets-empty {
+    background: var(--card); border: 2px dashed var(--line-strong);
+    border-radius: var(--radius-lg); padding: 56px 24px; text-align: center;
+}
+#modulo-3 .assets-empty-icon {
+    width: 64px; height: 64px; margin: 0 auto 20px;
+    background: var(--paper-warm); border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--sepia);
+}
+#modulo-3 .assets-empty-title {
+    font-family: 'Fraunces', serif; font-weight: 500;
+    font-size: 1.35rem; color: var(--forest-dark); margin-bottom: 8px;
+}
+#modulo-3 .assets-empty-text { color: var(--ink-mute); font-size: 0.95rem; max-width: 380px; margin: 0 auto 22px; line-height: 1.55; }
+#modulo-3 .asset-cards { display: grid; gap: 12px; }
+#modulo-3 .asset-card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 18px 20px;
+    box-shadow: var(--shadow-sm);
+    display: grid; grid-template-columns: auto 1fr auto;
+    gap: 16px; align-items: center;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+#modulo-3 .asset-card:hover { border-color: var(--line-strong); box-shadow: var(--shadow-md); }
+#modulo-3 .asset-card-icon {
+    width: 44px; height: 44px; border-radius: 12px;
+    background: var(--paper-warm); color: var(--forest);
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+#modulo-3 .asset-card-icon svg,
+#modulo-3 .asset-card-icon .category-icon { width: 22px; height: 22px; }
+#modulo-3 .asset-card-body { min-width: 0; }
+#modulo-3 .asset-card-name {
+    font-weight: 600; font-size: 1.02rem; color: var(--ink); margin-bottom: 3px;
+    line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#modulo-3 .asset-card-meta {
+    font-size: 0.85rem; color: var(--ink-mute);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#modulo-3 .asset-card-tag {
+    display: inline-block; font-size: 0.72rem; letter-spacing: 0.06em;
+    text-transform: uppercase; font-weight: 600; color: var(--sepia); margin-right: 8px;
+}
+#modulo-3 .asset-card-right { text-align: right; flex-shrink: 0; }
+#modulo-3 .asset-card-value {
+    font-family: 'Fraunces', serif; font-weight: 500;
+    font-size: 1.15rem; color: var(--forest-dark);
+    font-variant-numeric: tabular-nums; line-height: 1.1;
+}
+#modulo-3 .asset-card-value.pending { color: var(--warn); font-size: 0.95rem; font-style: italic; }
+#modulo-3 .asset-card-value-sub { font-size: 0.78rem; color: var(--ink-mute); margin-top: 3px; font-variant-numeric: tabular-nums; }
+#modulo-3 .asset-card-actions { display: flex; gap: 4px; margin-top: 8px; justify-content: flex-end; }
+#modulo-3 .asset-card-actions button { padding: 6px; color: var(--ink-mute); border-radius: 6px; line-height: 0; }
+#modulo-3 .asset-card-actions button:hover { background: var(--paper-warm); color: var(--ink); }
+#modulo-3 .asset-card-actions .btn-delete:hover { color: var(--error); background: var(--error-bg); }
+@media (max-width: 560px) {
+  #modulo-3 .asset-card { grid-template-columns: auto 1fr; }
+  #modulo-3 .asset-card-right { grid-column: 1 / -1; text-align: left; padding-left: 60px; }
+  #modulo-3 .asset-card-actions { justify-content: flex-start; }
+}
+#modulo-3 .add-asset-cta { margin: 24px 0; display: flex; gap: 12px; flex-wrap: wrap; }
+#modulo-3 .add-asset-cta .btn { flex: 1; min-width: 200px; }
+#asset-modal {
+    position: fixed; inset: 0; background: rgba(26, 26, 26, 0.55);
+    backdrop-filter: blur(4px); z-index: 100; display: none;
+    align-items: flex-end; justify-content: center;
+    padding: 0; overflow-y: auto;
+}
+#asset-modal.open { display: flex; }
+#asset-modal .modal {
+    background: var(--surface); border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    width: 100%; max-width: 620px; max-height: 95vh;
+    display: flex; flex-direction: column;
+    box-shadow: var(--sh-pop); overflow: hidden;
+    animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@media (min-width: 640px) {
+  #asset-modal { align-items: center; padding: 24px; }
+}
+@media (min-width: 640px) {
+  #asset-modal .modal { border-radius: var(--radius-lg); max-height: 90vh; }
+}
+@keyframes slideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+#asset-modal .modal-topbar {
+    padding: 18px 22px; border-bottom: 1px solid var(--line);
+    background: var(--paper); display: flex; align-items: center; justify-content: space-between;
+    flex-shrink: 0;
+}
+#asset-modal .modal-progress { display: flex; align-items: center; gap: 10px; font-size: 0.85rem; color: var(--ink-mute); font-weight: 500; }
+#asset-modal .modal-progress-bar { width: 100px; height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+#asset-modal .modal-progress-fill { height: 100%; background: var(--forest); border-radius: 2px; transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+#asset-modal .modal-close {
+    width: 36px; height: 36px; border-radius: 8px; color: var(--ink-mute);
+    display: flex; align-items: center; justify-content: center; transition: background 0.15s;
+}
+#asset-modal .modal-close:hover { background: var(--paper-warm); color: var(--ink); }
+#asset-modal .modal-body { padding: 28px 24px 22px; overflow-y: auto; flex: 1; }
+@media (min-width: 640px) {
+  #asset-modal .modal-body { padding: 32px 36px 28px; }
+}
+#asset-modal .modal-step { display: none; }
+#asset-modal .modal-step.active { display: block; animation: stepIn 0.25s ease-out; }
+@keyframes stepIn {
+  from { opacity: 0; transform: translateX(8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+#asset-modal .step-title {
+    font-family: 'Fraunces', serif; font-weight: 500;
+    font-size: 1.55rem; color: var(--forest-dark); margin-bottom: 6px;
+    line-height: 1.2; letter-spacing: -0.01em;
+}
+#asset-modal .step-subtitle { color: var(--ink-mute); font-size: 0.95rem; margin-bottom: 24px; line-height: 1.5; }
+#asset-modal .category-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+#asset-modal .category-card {
+    background: var(--card); border: 1.5px solid var(--line);
+    border-radius: var(--radius); padding: 18px 16px; text-align: left;
+    transition: all 0.15s; cursor: pointer;
+    display: flex; flex-direction: column; gap: 8px;
+}
+#asset-modal .category-card:hover { border-color: var(--forest-light); background: #fdfbf7; }
+#asset-modal .category-card.selected {
+    border-color: var(--forest); background: #f0f5f1;
+    box-shadow: 0 0 0 3px rgba(45, 74, 62, 0.08);
+}
+#asset-modal .category-icon { color: var(--forest); width: 28px; height: 28px; }
+#asset-modal .category-name { font-weight: 600; font-size: 0.95rem; color: var(--ink); }
+#asset-modal .category-desc { font-size: 0.78rem; color: var(--ink-mute); line-height: 1.4; }
+#asset-modal .subtype-list { display: grid; gap: 8px; }
+#asset-modal .subtype-option {
+    background: var(--card); border: 1.5px solid var(--line);
+    border-radius: 10px; padding: 13px 16px; text-align: left;
+    cursor: pointer; transition: all 0.12s;
+    display: flex; align-items: center; gap: 12px;
+    font-size: 0.95rem; color: var(--ink); width: 100%;
+}
+#asset-modal .subtype-option:hover { border-color: var(--forest-light); background: #fdfbf7; }
+#asset-modal .subtype-option.selected { border-color: var(--forest); background: #f0f5f1; font-weight: 600; }
+#asset-modal .subtype-radio {
+    width: 18px; height: 18px; border-radius: 50%;
+    border: 2px solid var(--line-strong); flex-shrink: 0;
+    position: relative; transition: border-color 0.12s;
+}
+#asset-modal .subtype-option.selected .subtype-radio { border-color: var(--forest); }
+#asset-modal .subtype-option.selected .subtype-radio::after {
+    content: ''; position: absolute; inset: 3px; border-radius: 50%; background: var(--forest);
+}
+#asset-modal .money-input-wrap { position: relative; }
+#asset-modal .money-input-wrap .input {
+    padding-left: 50px; font-size: 1.15rem; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+#asset-modal .money-input-prefix {
+    position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
+    color: var(--ink-mute); font-weight: 600; font-size: 0.95rem; pointer-events: none;
+}
+#asset-modal .calc-display {
+    background: var(--paper-warm); border-radius: 10px;
+    padding: 12px 16px; margin-top: 8px;
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 6px;
+}
+#asset-modal .calc-display-label { font-size: 0.85rem; color: var(--ink-soft); font-weight: 500; }
+#asset-modal .calc-display-value {
+    font-family: 'Fraunces', serif; font-weight: 500; font-size: 1.1rem;
+    color: var(--forest-dark); font-variant-numeric: tabular-nums;
+}
+#asset-modal .yesno { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+#asset-modal .yesno-option {
+    background: var(--card); border: 1.5px solid var(--line);
+    border-radius: 10px; padding: 16px; text-align: center;
+    cursor: pointer; font-weight: 600; color: var(--ink-soft);
+    transition: all 0.12s;
+}
+#asset-modal .yesno-option:hover { border-color: var(--forest-light); }
+#asset-modal .yesno-option.selected { background: var(--forest); color: #fdfbf7; border-color: var(--forest); }
+#asset-modal .radio-list { display: grid; gap: 8px; }
+#asset-modal .radio-option {
+    background: var(--card); border: 1.5px solid var(--line);
+    border-radius: 10px; padding: 13px 16px; cursor: pointer;
+    transition: all 0.12s; display: flex; align-items: flex-start; gap: 12px;
+}
+#asset-modal .radio-option:hover { border-color: var(--forest-light); background: #fdfbf7; }
+#asset-modal .radio-option.selected { border-color: var(--forest); background: #f0f5f1; }
+#asset-modal .radio-option .subtype-radio { margin-top: 2px; }
+#asset-modal .radio-option .radio-content { flex: 1; min-width: 0; }
+#asset-modal .radio-option-label { font-weight: 600; font-size: 0.95rem; color: var(--ink); line-height: 1.3; }
+#asset-modal .radio-option-hint { font-size: 0.82rem; color: var(--ink-mute); margin-top: 3px; line-height: 1.4; }
+#asset-modal .subsection {
+    padding: 14px 16px; background: #fdfbf7; border: 1px solid var(--line);
+    border-radius: 10px; margin-top: 12px;
+}
+#asset-modal .subsection .field:last-child { margin-bottom: 0; }
+#asset-modal .modal-footer {
+    padding: 16px 22px; border-top: 1px solid var(--line);
+    background: var(--card); display: flex; gap: 10px;
+    align-items: center; flex-shrink: 0;
+}
+#asset-modal .modal-footer .btn { flex: 1; }
+#asset-modal .modal-footer .btn-back { flex: 0 0 auto; padding: 0 20px; gap: 7px; }
+#asset-modal .modal-footer .btn-back svg { width: 15px; height: 15px; }
+#asset-modal .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+#asset-modal .toast.error { background: var(--error); }
+#asset-modal .error-msg { color: var(--error); font-size: 0.85rem; margin-top: 6px; display: none; }
+#asset-modal .error-msg.show { display: block; }
+#asset-modal .app-loading {
+    position: fixed; inset: 0;
+    background: var(--paper);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 16px;
+    z-index: 300;
+}
+#asset-modal .app-loading img { height: 38px; opacity: 0.85; }
+#asset-modal .app-loading-text { color: var(--ink-mute); font-size: 0.92rem; }
+#asset-modal .spinner {
+    width: 22px; height: 22px;
+    border: 2.5px solid var(--line);
+    border-top-color: var(--forest);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+#asset-modal .hidden { display: none !important; }
+/* Nota informativa del Mapa (comportamiento del activo en el asistente) */
+#asset-modal .info-note {
+    display: flex; align-items: flex-start; gap: 9px;
+    margin-top: 14px; padding: 12px 14px;
+    background: var(--surface-soft, #f0ece3); border: 1px solid var(--line);
+    border-radius: var(--r-md); font-size: 0.9rem; line-height: 1.5;
+    color: var(--ink-3);
+}
+#asset-modal .info-note::before {
+    content: ''; flex-shrink: 0; width: 16px; height: 16px; margin-top: 1px;
+    background: var(--accent); -webkit-mask: no-repeat center / contain; mask: no-repeat center / contain;
+    -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cline x1='12' y1='16' x2='12' y2='12'/%3E%3Cline x1='12' y1='8' x2='12.01' y2='8'/%3E%3C/svg%3E");
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cline x1='12' y1='16' x2='12' y2='12'/%3E%3Cline x1='12' y1='8' x2='12.01' y2='8'/%3E%3C/svg%3E");
+}
+
+/* Frase de valorización en la tarjeta de activo */
+#modulo-3 .asset-card-growth {
+    margin-top: 5px; font-size: 0.82rem; color: var(--pos);
+    font-weight: 500; line-height: 1.3;
+}
+
+/* Checkbox de beneficio tributario en el asistente */
+#asset-modal .checkbox-row {
+    display: flex; align-items: flex-start; gap: 11px; cursor: pointer;
+    padding: 14px; border: 1px solid var(--line); border-radius: var(--r-md);
+    background: var(--surface); transition: border-color .15s, background .15s;
+}
+#asset-modal .checkbox-row:hover { border-color: var(--accent); background: var(--accent-tint); }
+#asset-modal .checkbox-row input[type="checkbox"] {
+    width: 18px; height: 18px; accent-color: var(--accent); flex-shrink: 0; margin-top: 1px; cursor: pointer;
+}
+#asset-modal .checkbox-row strong { display: block; color: var(--ink); font-weight: 600; font-size: 0.95rem; }
+#asset-modal .checkbox-hint { display: block; margin-top: 3px; color: var(--ink-3); font-size: 0.85rem; line-height: 1.45; }
+
+/* ─── Arreglo de diseño del paso "valor" del activo (compra, año, tasa) ─── */
+/* Prefijo de moneda que no se solape con el número (US$, EUR son más anchos que $) */
+#asset-modal .money-input-wrap .input { padding-left: 58px; }
+#asset-modal #asset-value, #asset-modal #asset-valor-compra { padding-left: 58px; }
+
+/* El bloque "Equivale en pesos" no debe verse gigante cuando el texto es largo */
+#asset-modal .calc-display { margin-bottom: 4px; }
+#asset-modal .calc-display-value { font-size: 1rem; line-height: 1.3; text-align: right; }
+#asset-modal #asset-value-cop { font-size: 0.98rem; }
+
+/* Bloque de compra: separación clara del resto y labels que no se amontonan */
+#asset-modal #asset-compra-block { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+#asset-modal #asset-compra-block .field-label,
+#asset-modal #asset-tasa-field .field-label { min-height: 34px; display: flex; align-items: flex-end; line-height: 1.25; }
+#asset-modal #asset-compra-block .field { margin-bottom: 8px; }
+#asset-modal #asset-compra-hint, #asset-modal #asset-tasa-hint { margin-top: 6px; }
+
+/* Campo de año alineado en altura con el de valor */
+#asset-modal #asset-anio-compra { height: 52px; }
+
+/* Tasa "% al año": que el sufijo no choque con el número */
+#asset-modal #asset-tasa-field .money-input-wrap .input { padding-left: 16px; padding-right: 78px; }
+
+/* Texto "pendiente" del equivalente en pesos: discreto, no en serif grande */
+#asset-modal .calc-display-value.pending {
+    font-family: var(--sans, 'Geist', sans-serif); font-style: italic;
+    font-size: 0.88rem; font-weight: 500; color: var(--ink-mute);
+}
+/* ═══════════════════════════════════════════════════════════
+   DASHBOARD PATRIMONIAL — bloques base (Módulo 6)
+   ═══════════════════════════════════════════════════════════ */
+#modulo-6 .db-section { margin-bottom: 28px; }
+#modulo-6 .db-section-head { margin-bottom: 16px; }
+#modulo-6 .db-section-title {
+    font-family: var(--serif, 'Fraunces', serif); font-weight: 500;
+    font-size: 1.5rem; color: var(--ink); margin: 0 0 4px;
+}
+#modulo-6 .db-section-sub { font-size: 0.9rem; color: var(--ink-3); margin: 0; }
+
+#modulo-6 .db-grid {
+    display: grid; grid-template-columns: 1.6fr 1fr 1fr; gap: 14px; margin-bottom: 14px;
+}
+@media (max-width: 760px) { #modulo-6 .db-grid { grid-template-columns: 1fr; } }
+
+#modulo-6 .db-card {
+    background: var(--surface, #fff); border: 1px solid var(--line, #e6dfd0);
+    border-radius: var(--r-lg, 18px); padding: 20px 22px;
+    box-shadow: var(--sh-1, 0 1px 2px rgba(0,0,0,.04));
+    margin-bottom: 14px;
+}
+/* Dentro de un grid, el gap ya separa: evitar doble margen */
+#modulo-6 .db-grid .db-card { margin-bottom: 0; }
+#modulo-6 .db-card-hero {
+    background: linear-gradient(135deg, var(--accent, #0e4d3a), #0a3a2c);
+    border-color: transparent; color: #fff;
+}
+#modulo-6 .db-card-hero .db-card-label,
+#modulo-6 .db-card-hero .db-card-detail { color: rgba(255,255,255,.78); }
+#modulo-6 .db-card-label {
+    font-size: 0.72rem; letter-spacing: 0.07em; text-transform: uppercase;
+    color: var(--ink-3); font-weight: 600; margin-bottom: 8px;
+}
+#modulo-6 .db-card-value {
+    font-family: var(--mono, 'JetBrains Mono', monospace); font-weight: 600;
+    font-size: clamp(1.3rem, 4vw, 1.8rem); line-height: 1.15; font-variant-numeric: tabular-nums;
+    white-space: nowrap; overflow-wrap: normal;
+}
+#modulo-6 .db-card-value-sm {
+    font-family: var(--mono, 'JetBrains Mono', monospace); font-weight: 600;
+    font-size: clamp(1rem, 3vw, 1.25rem); line-height: 1.2; color: var(--ink);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+#modulo-6 .db-card-detail { font-size: 0.8rem; margin-top: 8px; }
+#modulo-6 .db-card-sub { font-size: 0.8rem; color: var(--ink-3); margin-top: 6px; }
+#modulo-6 .db-card-growth {
+    font-size: 0.84rem; color: #9fe6c2; margin-top: 12px;
+    padding-top: 12px; border-top: 1px solid rgba(255,255,255,.15); line-height: 1.4;
+}
+
+#modulo-6 .db-liquidez { margin-bottom: 14px; }
+#modulo-6 .db-liquidez-row { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; }
+#modulo-6 .db-liquidez-value {
+    font-family: var(--mono, 'JetBrains Mono', monospace); font-weight: 600;
+    font-size: 1.6rem; color: var(--ink); white-space: nowrap;
+}
+#modulo-6 .db-liquidez-frase { font-size: 0.88rem; line-height: 1.4; color: var(--ink-2); flex: 1; min-width: 200px; }
+#modulo-6 .db-liquidez-frase.pos { color: var(--pos, #0e4d3a); }
+#modulo-6 .db-liquidez-frase.warn { color: var(--warn, #8a5a14); }
+#modulo-6 .db-liquidez-frase.neg { color: var(--neg, #8a1f1c); }
+#modulo-6 .db-bar { height: 8px; background: var(--line, #e6dfd0); border-radius: 999px; overflow: hidden; }
+#modulo-6 .db-bar-fill { height: 100%; border-radius: 999px; background: var(--accent, #0e4d3a); transition: width .4s ease; }
+#modulo-6 .db-bar-fill.pos { background: var(--pos, #0e4d3a); }
+#modulo-6 .db-bar-fill.warn { background: var(--warn, #8a5a14); }
+#modulo-6 .db-bar-fill.neg { background: var(--neg, #8a1f1c); }
+
+#modulo-6 .db-chart-frase {
+    font-size: 0.82rem; line-height: 1.45; color: var(--ink-2);
+    margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line, #e6dfd0); text-align: center;
+}
+
+/* Análisis de deuda (Fase 3) */
+#modulo-6 .db-deuda-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 4px;
+}
+@media (max-width: 600px) { #modulo-6 .db-deuda-grid { grid-template-columns: 1fr; } }
+#modulo-6 .db-deuda-item {
+    display: flex; flex-direction: column; gap: 4px;
+    padding: 12px 14px; background: var(--bg-2, #f0ece3); border-radius: var(--r-md, 12px);
+}
+#modulo-6 .db-deuda-label {
+    font-size: 0.72rem; letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--ink-3); font-weight: 600;
+}
+#modulo-6 .db-deuda-val {
+    font-family: var(--mono, 'JetBrains Mono', monospace); font-weight: 600;
+    font-size: 1.05rem; color: var(--ink); font-variant-numeric: tabular-nums;
+}
+#modulo-6 .db-deuda-val.pos { color: var(--pos, #0e4d3a); }
+#modulo-6 .db-deuda-val.neg { color: var(--neg, #8a1f1c); }
+
+/* ─── Fase 4: Independencia financiera y dependencia de ingresos ─── */
+#modulo-6 .db-if-card.if-pos { border-left: 4px solid var(--pos, #0e4d3a); }
+#modulo-6 .db-if-card.if-warn { border-left: 4px solid var(--warn, #8a5a14); }
+#modulo-6 .db-if-card.if-neg { border-left: 4px solid var(--neg, #8a1f1c); }
+#modulo-6 .db-if-row { display: flex; align-items: center; gap: 22px; margin-top: 8px; flex-wrap: wrap; }
+#modulo-6 .db-if-circle { position: relative; width: 120px; height: 120px; flex-shrink: 0; }
+#modulo-6 .db-if-ring { width: 120px; height: 120px; transform: rotate(-90deg); }
+#modulo-6 .db-if-ring-bg { fill: none; stroke: var(--line, #e6dfd0); stroke-width: 10; }
+#modulo-6 .db-if-ring-fill { fill: none; stroke: var(--accent, #0e4d3a); stroke-width: 10; stroke-linecap: round; transition: stroke-dashoffset .6s ease; }
+#modulo-6 .db-if-card.if-pos .db-if-ring-fill { stroke: var(--pos, #0e4d3a); }
+#modulo-6 .db-if-card.if-warn .db-if-ring-fill { stroke: var(--warn, #8a5a14); }
+#modulo-6 .db-if-card.if-neg .db-if-ring-fill { stroke: var(--neg, #8a1f1c); }
+#modulo-6 .db-if-pct {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono, 'JetBrains Mono', monospace); font-weight: 600; font-size: 1.4rem; color: var(--ink);
+}
+#modulo-6 .db-if-info { flex: 1; min-width: 220px; }
+#modulo-6 .db-if-frase { font-size: 1rem; font-weight: 600; color: var(--ink); line-height: 1.4; margin-bottom: 8px; }
+#modulo-6 .db-if-detalle { font-size: 0.85rem; color: var(--ink-3); line-height: 1.5; }
+
+#modulo-6 .db-dep-ingreso-list { display: flex; flex-direction: column; gap: 14px; margin: 18px 0 6px; }
+#modulo-6 .db-dep-row { display: flex; flex-direction: column; gap: 7px; }
+#modulo-6 .db-dep-bar-wrap { height: 8px; background: var(--line, #e6dfd0); border-radius: 999px; overflow: hidden; order: 2; }
+#modulo-6 .db-dep-bar { height: 100%; background: var(--accent, #0e4d3a); border-radius: 999px; }
+#modulo-6 .db-dep-info { display: flex; justify-content: space-between; align-items: center; gap: 10px; order: 1; }
+#modulo-6 .db-dep-name { font-size: 0.9rem; color: var(--ink-2); font-weight: 500; }
+#modulo-6 .db-dep-pct { font-family: var(--mono, 'JetBrains Mono', monospace); font-size: 0.85rem; color: var(--ink-3); font-weight: 600; }
+/* Condiciones del activo en la tarjeta (compartido, restringido) */
+#modulo-3 .asset-card-cond { color: var(--accent, #0e4d3a); font-weight: 600; }
+#modulo-3 .asset-card-cond.restringido { color: var(--warn, #8a5a14); }
+
+/* ─── Tablero: dos grandes secciones (mes a mes / patrimonio) ─── */
+#modulo-6 #db-financiero-head,
+#modulo-6 #db-patrimonial-head {
+    margin: 8px 0 18px;
+    padding-bottom: 14px;
+    border-bottom: 2px solid var(--accent, #0e4d3a);
+}
+#modulo-6 #db-patrimonial-head { margin-top: 40px; }
+#modulo-6 #db-financiero-head .db-section-title,
+#modulo-6 #db-patrimonial-head .db-section-title {
+    font-size: 1.7rem; color: var(--accent, #0e4d3a);
+}
+/* Subsecciones dentro de cada gran sección */
+#modulo-6 .db-subsection-title {
+    font-family: var(--serif, 'Fraunces', serif); font-weight: 500;
+    font-size: 1.2rem; color: var(--ink); margin: 0 0 4px;
+}
+
+/* Subvalor en USD del patrimonio neto */
+#modulo-6 .db-card-hero .db-card-usd {
+    font-family: var(--mono, 'JetBrains Mono', monospace);
+    font-size: 0.95rem; color: rgba(255,255,255,.75); margin-top: 2px;
+}
+
+/* Potencial teórico (4%) bajo la independencia financiera real */
+#modulo-6 .db-if-potencial {
+    display: flex; align-items: flex-start; gap: 10px;
+    margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--line, #e6dfd0);
+    font-size: 0.85rem; color: var(--ink-3); line-height: 1.5;
+}
+#modulo-6 .db-if-potencial-label {
+    flex-shrink: 0; font-size: 0.68rem; letter-spacing: 0.07em; text-transform: uppercase;
+    font-weight: 700; color: var(--accent, #0e4d3a);
+    background: var(--accent-tint, #eef4f1); padding: 3px 8px; border-radius: 6px;
+}
+
+/* Seguro: tarjetas de valor no desbordan con montos grandes */
+#modulo-6 .db-card { overflow: hidden; }
+#modulo-6 .db-card-value, #modulo-6 .db-card-value-sm { max-width: 100%; }

@@ -118,8 +118,8 @@
   let completedModules=new Set();
   
   const MODULE_TITLES = {
-    1:'Ingresos y Gastos',2:'Endeudamiento',3:'Activos',
-    4:'Ahorro y Solvencia',5:'Presupuesto Anual',6:'Tablero de Control',
+    1:'Ingresos y Gastos',2:'Endeudamiento',3:'Mapa Patrimonial',
+    4:'Ahorro y Solvencia',5:'Gastos no periódicos',6:'Tablero de Control',
     7:'Simulador de Deuda',
     8:'Metas y Proyección',
     9:'Informe para mi Asesor',
@@ -208,6 +208,1666 @@
       proy:{ rendimiento:9, anios:28, inicialOverride:null, aporteOverride:null, aniosUserSet:false }
     }
   };
+
+/* ═══════════════════════════════════════════════════════════
+   MÓDULO 3 · MAPA PATRIMONIAL (integrado)
+   ═══════════════════════════════════════════════════════════ */
+  // ════════════════════════════════════════════════════════════════════════════════
+  // MÓDULO 3 · MAPA PATRIMONIAL  (integrado en la herramienta)
+  // Estado propio `mp`; se conecta a la herramienta vía `host`.
+  // La deuda NO se guarda en el activo: el activo guarda IDs de deudas del Módulo 2.
+  // ════════════════════════════════════════════════════════════════════════════════
+  const MapaPatrimonial = (function(){
+
+  // Estado interno del mapa (no colisiona con el `state` de la herramienta)
+  const mp = {
+    trm: {},
+    assets: [],
+    draft: null,
+    editingId: null,
+    currentStep: 1,
+  };
+
+  // ── Contrato con la herramienta (host) ──────────────────────────────────────────
+  // Estas funciones las cablea la herramienta al inicializar el módulo.
+  const host = {
+    getDeudas: () => [],            // -> [{id,nombre,saldo,...}] del Módulo 2
+    getDeudaById: (id) => null,     // -> {id,nombre,saldo,...} | null
+    createDeuda: (info) => null,    // crea deuda en el M2, devuelve su id
+    persist: () => {},              // guarda activos+trm del mapa en Firestore
+    onChange: () => {},             // notifica a la herramienta que cambió el mapa
+    confirm: (opts) => { if (window.confirm(opts.msg||'¿Confirmar?')) { if(opts.onConfirm) opts.onConfirm(); } },
+    toast: (msg) => {},             // muestra un toast (lo provee la herramienta)
+  };
+
+  // ── Persistencia (delegada en la herramienta) ───────────────────────────────────
+  function mpSave() {
+    try { host.persist({ trm: mp.trm, activos: mp.assets }); } catch(e) { console.error(e); }
+    emitChange();
+  }
+
+  // ── Función puente: lo que los módulos 4/6/8 saben leer, sin perder nada ─────────
+  // Devuelve el detalle COMPLETO del mapa + un resumen normalizado para el resto de
+  // la herramienta (activos con valor en COP y bandera de liquidez líquido/no líquido).
+  const changeListeners = [];
+  function emitChange() {
+    const data = getExportData();
+    changeListeners.forEach(fn => { try { fn(data); } catch (e) { console.error(e); } });
+    try { host.onChange(data); } catch(e) {}
+    document.dispatchEvent(new CustomEvent('mapaActivos:change', { detail: data }));
+  }
+
+  // Liquidez del mapa -> clasificación líquido/no líquido que usa la herramienta.
+  // 'Alta' y 'Media' se consideran líquido; 'Baja' e 'Ilíquida' no líquido.
+  function liquidezToTipo(liquidez) {
+    return (liquidez === 'Alta' || liquidez === 'Media') ? 'LÍQUIDO' : 'NO LÍQUIDO';
+  }
+
+  function getExportData() {
+    // Resumen normalizado para M4/M6/M8: un activo por bien, valor BRUTO en COP.
+    // (La deuda se cuenta aparte en el M2; aquí no se descuenta para no duplicar.)
+    const activosNormalizados = mp.assets.map(a => {
+      const v = valueCOP(a);
+      const valCOP = isFinite(v) ? v : 0;
+      // Factor para pasar de la moneda del activo a COP
+      const factorCOP = (a.currency && a.currency !== 'COP') ? (mp.trm[a.currency] || 0) : 1;
+      const valz = calcValorizacion(a);   // en moneda del activo
+      const proy5 = calcProyeccion(a, 5);
+      const proy10 = calcProyeccion(a, 10);
+      const proy15 = calcProyeccion(a, 15);
+      return {
+        nombre: a.description || findSubtypeLabel(a.category, a.subtype) || a.category,
+        valor: valCOP,
+        tipo: liquidezToTipo(a.liquidity),
+        restringido: !!a.restringidoLegal,
+        _mapaId: a.id,
+        _categoria: a.category,
+        _subtipo: a.subtype,
+        _liquidez: a.liquidity,
+        _moneda: a.currency || 'COP',
+        _pais: a.location || 'Colombia',
+        _sector: a.sector || '',
+        _ingresoMensual: a.monthlyIncome || 0,
+        _destinoIngreso: a.incomeRendimientos || '',
+        _beneficioTributario: !!a.beneficioTributario,
+        _estructuraLegal: a.legalStructure || '',
+        _deudaCOP: linkedDebtCOP(a),
+        _netoCOP: (isFinite(v) ? v : 0) - linkedDebtCOP(a),
+        _esProductivo: esActivoProductivo(a),
+        _comportamiento: comportamientoActivo(a),
+        _admiteProyeccion: admiteProyeccion(a),
+        // Valorización pasada (% anualizado real); ganancia en COP
+        _valorizacionPct: valz ? valz.cagr : null,
+        _gananciaCOP: valz ? valz.ganancia * factorCOP : null,
+        // Proyección a futuro, ya en COP (futuro sin TRM se queda en moneda original * factor)
+        _proyeccion5COP: proy5 ? proy5.futuro * factorCOP : null,
+        _proyeccion10COP: proy10 ? proy10.futuro * factorCOP : null,
+        _proyeccion15COP: proy15 ? proy15.futuro * factorCOP : null,
+      };
+    });
+    return {
+      _format: 'mapa-patrimonial-autoservicio',
+      _version: 6,
+      trm: mp.trm,
+      activos: mp.assets,            // detalle COMPLETO e intacto
+      activosNormalizados,           // resumen para el resto de la herramienta
+      resumen: {
+        cantidadBienes: mp.assets.length,
+        patrimonioBrutoCOP: totalGrossAssets(),
+        patrimonioNetoCOP: totalNetWorth(),
+        deudaTotalCOP: totalDebt(),
+        ingresoPasivoMensualCOP: mp.assets.reduce((s,a)=>{
+          const im = a.monthlyIncome || 0;
+          if (im <= 0) return s;
+          // convertir a COP si el ingreso está en la moneda del activo
+          const r = (a.currency && a.currency !== 'COP') ? (mp.trm[a.currency] || 0) : 1;
+          return s + im * r;
+        }, 0),
+        // Patrimonio proyectado: cada activo aporta su proyección si la admite; si no, su valor de hoy.
+        patrimonioProyectado: (() => {
+          const horizonte = (anios) => activosNormalizados.reduce((s, a) => {
+            const key = '_proyeccion' + anios + 'COP';
+            const proy = a[key];
+            return s + (proy != null && isFinite(proy) ? proy : a.valor);
+          }, 0);
+          return { a5: horizonte(5), a10: horizonte(10), a15: horizonte(15) };
+        })(),
+        // Cuántos activos admiten proyección honesta (para la nota del dashboard)
+        activosProyectables: activosNormalizados.filter(a => a._admiteProyeccion).length,
+        // Ganancia total acumulada en activos con datos de compra (valorización pasada)
+        gananciaAcumuladaCOP: activosNormalizados.reduce((s, a) => s + (a._gananciaCOP != null ? a._gananciaCOP : 0), 0),
+        // Ingreso pasivo proyectado: crece con el activo que lo genera (si ese activo admite proyección).
+        ingresoPasivoProyectado: (() => {
+          const calc = (anios) => mp.assets.reduce((s, a) => {
+            const im = a.monthlyIncome || 0;
+            if (im <= 0) return s;
+            const r = (a.currency && a.currency !== 'COP') ? (mp.trm[a.currency] || 0) : 1;
+            const baseCOP = im * r;
+            // Si el activo que genera la renta crece (tasa/mercado), la renta crece igual; si no, se mantiene.
+            const comp = comportamientoActivo(a);
+            let factor = 1;
+            if (comp === 'tasa' && (a.tasaRendimiento || 0) > 0) {
+              factor = Math.pow(1 + a.tasaRendimiento, anios);
+            } else if (comp === 'mercado') {
+              const v = calcValorizacion(a);
+              if (v) factor = Math.pow(1 + v.cagr, anios);
+            }
+            return s + baseCOP * factor;
+          }, 0);
+          return { a5: calc(5), a10: calc(10), a15: calc(15) };
+        })(),
+        // Concentración en un solo negocio (categoría Empresarial), para el bloque de negocio único.
+        negocioUnico: (() => {
+          const empresas = activosNormalizados.filter(a => a._categoria === 'Empresarial');
+          if (!empresas.length) return null;
+          let mayor = empresas[0];
+          empresas.forEach(e => { if (e.valor > mayor.valor) mayor = e; });
+          const bruto = totalGrossAssets();
+          return {
+            cantidad: empresas.length,
+            mayorNombre: mayor.nombre,
+            mayorValor: mayor.valor,
+            mayorPct: bruto > 0 ? (mayor.valor / bruto * 100) : 0,
+            totalEmpresarialPct: bruto > 0 ? (empresas.reduce((s,e)=>s+e.valor,0) / bruto * 100) : 0,
+          };
+        })(),
+        pendientesConversion: mp.assets.filter(a => a.currency !== 'COP' && !mp.trm[a.currency]).length,
+        trmUSD: mp.trm['USD'] || 0,
+      }
+    };
+  }
+
+  // ─── MODELO DE DATOS ───
+const CATEGORIAS = [
+    {
+        value: 'Inmueble', label: 'Inmueble', desc: 'Casas, apartamentos, locales, lotes',
+        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="category-icon"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`,
+        subtipos: [
+            { value: 'Casa o apartamento donde vivo', label: 'La casa o apartamento donde vivo', liquidez: 'Ilíquida', comp: 'mercado' },
+            { value: 'Casa o apartamento arrendado', label: 'Casa o apartamento que arriendo a otros', liquidez: 'Ilíquida', comp: 'mercado' },
+            { value: 'Local bodega u oficina comercial', label: 'Local, bodega u oficina comercial', liquidez: 'Ilíquida', comp: 'mercado' },
+            { value: 'Lote o terreno', label: 'Un lote o terreno', liquidez: 'Ilíquida', comp: 'mercado' }
+        ]
+    },
+    {
+        value: 'Financiero', label: 'Financiero', desc: 'Cuentas, inversiones, CDTs, fondos',
+        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="category-icon"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>`,
+        subtipos: [
+            { value: 'Cuenta bancaria corriente o ahorros', label: 'Cuenta bancaria (corriente o ahorros)', liquidez: 'Alta', comp: 'estable' },
+            { value: 'Cuenta de alto rendimiento', label: 'Cuenta de alto rendimiento (Pibank, Lulo, Nubank…)', liquidez: 'Alta', comp: 'tasa' },
+            { value: 'Efectivo en caja', label: 'Efectivo en caja / billetera', liquidez: 'Alta', comp: 'estable' },
+            { value: 'Fondo de liquidez o Fiducia', label: 'Fondo de liquidez o fiducia', liquidez: 'Alta', comp: 'tasa' },
+            { value: 'CDT', label: 'CDT (certificado a plazo fijo)', liquidez: 'Baja', comp: 'tasa' },
+            { value: 'Cuenta AFC', label: 'Cuenta AFC (ahorro para vivienda)', liquidez: 'Baja', comp: 'tasa' },
+            { value: 'Acciones en bolsa', label: 'Acciones que cotizan en bolsa', liquidez: 'Media', comp: 'volatil' },
+            { value: 'ETF o fondo de inversión internacional', label: 'ETF o fondo de inversión internacional', liquidez: 'Media', comp: 'volatil' },
+            { value: 'Fondo de inversión colectiva FIC', label: 'Fondo de inversión colectiva (FIC)', liquidez: 'Media', comp: 'volatil' },
+            { value: 'Bonos o títulos de deuda', label: 'Bonos o títulos de deuda', liquidez: 'Media', comp: 'tasa' },
+            { value: 'REIT', label: 'REIT (fondo inmobiliario que cotiza)', liquidez: 'Media', comp: 'volatil' },
+            { value: 'Fondo de pensiones voluntarias FPV', label: 'Fondo de pensiones voluntarias', liquidez: 'Baja', comp: 'aporte' },
+            { value: 'Seguro de pensión con ahorro', label: 'Seguro de pensión con ahorro', liquidez: 'Ilíquida', comp: 'aporte' },
+            { value: 'Cartera gestionada por terceros', label: 'Cartera gestionada por un tercero (family office, wealth manager)', liquidez: 'Media', comp: 'volatil' },
+            { value: 'Dinero que me deben', label: 'Dinero que me deben (cuentas por cobrar, préstamos a terceros)', liquidez: 'Baja', comp: 'estable' }
+        ]
+    },
+    {
+        value: 'Empresarial', label: 'Empresarial', desc: 'Tu empresa o participación en negocios',
+        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="category-icon"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/><path d="M15 4v16"/><path d="M3 10h18"/></svg>`,
+        subtipos: [
+            { value: 'Mi empresa o negocio', label: 'Mi propia empresa o negocio', liquidez: 'Ilíquida', comp: 'aporte' },
+            { value: 'Sociedad con socios', label: 'Sociedad con socios (SAS, Ltda, etc.)', liquidez: 'Ilíquida', comp: 'aporte' },
+            { value: 'Acciones en empresa privada', label: 'Acciones en una empresa privada (no cotiza en bolsa)', liquidez: 'Ilíquida', comp: 'aporte' }
+        ]
+    },
+    {
+        value: 'Alternativo', label: 'Alternativo', desc: 'Oro, cripto, arte, regalías',
+        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="category-icon"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
+        subtipos: [
+            { value: 'Oro físico', label: 'Oro físico (monedas o lingotes)', liquidez: 'Ilíquida', comp: 'mercado' },
+            { value: 'Criptomonedas', label: 'Criptomonedas (Bitcoin, Ethereum, etc.)', liquidez: 'Baja', comp: 'volatil' },
+            { value: 'Obras de arte joyas o coleccionables', label: 'Obras de arte, joyas o coleccionables', liquidez: 'Ilíquida', comp: 'volatil' },
+            { value: 'Vehículo de trabajo', label: 'Vehículo de trabajo (Uber, taxi, carga)', liquidez: 'Ilíquida', comp: 'deprecia' },
+            { value: 'Regalías derechos o patentes', label: 'Regalías, derechos de autor o patentes', liquidez: 'Ilíquida', comp: 'aporte' }
+        ]
+    },
+    {
+        value: 'Uso Personal', label: 'Uso personal', desc: 'Carro, joyas, objetos personales',
+        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="category-icon"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
+        subtipos: [
+            { value: 'Carro moto o vehículo personal', label: 'Carro, moto o vehículo personal', liquidez: 'Ilíquida', comp: 'deprecia' },
+            { value: 'Casa o apartamento donde vivo', label: 'Casa o apartamento donde vivo', liquidez: 'Ilíquida', comp: 'mercado' },
+            { value: 'Joyas relojes u objetos de valor', label: 'Joyas, relojes u objetos de valor', liquidez: 'Ilíquida', comp: 'volatil' }
+        ]
+    }
+];
+
+const ICONO_CATEGORIA = {};
+CATEGORIAS.forEach(c => ICONO_CATEGORIA[c.value] = c.icon);
+
+const DESCRIPCION_PLACEHOLDER = {
+    'Inmueble': 'Ej: Apartamento en El Poblado, Casa en Llanogrande',
+    'Financiero': 'Ej: Ahorros Bancolombia, Mi portafolio en Interactive Brokers',
+    'Empresarial': 'Ej: Mi consultora de marketing, Mi restaurante en Provenza',
+    'Alternativo': 'Ej: Mi colección de Bitcoin, Lingotes de oro en caja fuerte',
+    'Uso Personal': 'Ej: Mazda CX-5 2022, Reloj de mi padre, Anillo de matrimonio'
+};
+
+const ENTIDAD_CONFIG = {
+    'Cuenta bancaria corriente o ahorros': { show: true, label: 'En qué banco está', placeholder: 'Bancolombia, Davivienda, BBVA…', hint: 'Nombre del banco donde está la cuenta.' },
+    'Cuenta de alto rendimiento': { show: true, label: 'En qué entidad está', placeholder: 'Pibank, Lulo Bank, Nubank, Tyba…', hint: '' },
+    'Fondo de liquidez o Fiducia': { show: true, label: 'En qué fiduciaria', placeholder: 'Fiducolombia, Alianza, Bancolombia…', hint: '' },
+    'CDT': { show: true, label: 'En qué banco', placeholder: 'Bancolombia, Davivienda, BBVA…', hint: '' },
+    'Cuenta AFC': { show: true, label: 'En qué banco', placeholder: 'Bancolombia, Davivienda…', hint: '' },
+    'Acciones en bolsa': { show: true, label: 'En qué comisionista o broker', placeholder: 'Tradeview, Trii, Interactive Brokers, Davivienda Corredores…', hint: '' },
+    'ETF o fondo de inversión internacional': { show: true, label: 'En qué broker o entidad', placeholder: 'Interactive Brokers, Schwab, Pibank, Skandia…', hint: '' },
+    'Fondo de inversión colectiva FIC': { show: true, label: 'En qué administradora', placeholder: 'Credicorp Capital, Alianza, Skandia, BTG Pactual…', hint: '' },
+    'Bonos o títulos de deuda': { show: true, label: 'A través de qué entidad', placeholder: 'Comisionista, banco, TES en Deceval…', hint: '' },
+    'REIT': { show: true, label: 'En qué broker', placeholder: 'Interactive Brokers, Schwab, Tradeview…', hint: '' },
+    'Fondo de pensiones voluntarias FPV': { show: true, label: 'En qué administradora', placeholder: 'Protección, Porvenir, Skandia, Old Mutual…', hint: '' },
+    'Seguro de pensión con ahorro': { show: true, label: 'En qué aseguradora', placeholder: 'Skandia, Allianz, Bolívar, Sura, MetLife…', hint: '' },
+    'Cartera gestionada por terceros': { show: true, label: 'Quién gestiona la cartera', placeholder: 'Skandia, BTG Pactual, family office, wealth manager…', hint: 'Nombre del family office, fiduciaria o gestor que administra.' },
+    'Efectivo en caja': { show: false },
+    'Criptomonedas': { show: true, label: 'En qué exchange o billetera', placeholder: 'Binance, Coinbase, Crypto.com, Ledger, MetaMask…', hint: 'Dónde están custodiadas tus monedas.' },
+    'Regalías derechos o patentes': { show: true, label: 'Quién te paga las regalías', placeholder: 'SAYCO, Spotify, editorial, licenciatario…', hint: '' },
+    'Oro físico': { show: false },
+    'Obras de arte joyas o coleccionables': { show: false },
+    'Vehículo de trabajo': { show: false },
+};
+
+const INGRESOS_CONFIG = {
+    'Casa o apartamento donde vivo': { type: 'none' },
+    'Casa o apartamento arrendado': { type: 'binario', q: '¿Cuánto recibes de arriendo al mes?', hint: 'Lo que <strong>te entra en la cuenta</strong> cada mes (descontando administración si aplica). Si está vacío hoy, marca "No".', siLabel: 'Sí, está arrendado', noLabel: 'No, está vacío', amountLabel: 'Arriendo mensual neto' },
+    'Local bodega u oficina comercial': { type: 'binario', q: '¿Cuánto recibes de arriendo al mes?', hint: 'Si lo tienes arrendado a un tercero, indica el canon mensual. Si lo usas tú mismo o está vacío, marca "No".', siLabel: 'Sí, está arrendado', noLabel: 'No genera arriendo', amountLabel: 'Arriendo mensual' },
+    'Lote o terreno': { type: 'binario', q: '¿Te genera algún ingreso?', hint: 'Por ejemplo: parqueadero, cultivo, alquiler temporal. Si solo lo tienes esperando que se valorice, marca "No".', siLabel: 'Sí', noLabel: 'No genera ingreso', amountLabel: 'Ingreso mensual promedio' },
+    'Cuenta bancaria corriente o ahorros': { type: 'none' },
+    'Efectivo en caja': { type: 'none' },
+    'Cuenta de alto rendimiento': { type: 'rendimientos', q: '¿Qué pasa con los rendimientos de esta cuenta?', hint: 'Estas cuentas pagan intereses cada mes. ¿Los retiras o se quedan acumulando?' },
+    'Fondo de liquidez o Fiducia': { type: 'rendimientos', q: '¿Qué pasa con los rendimientos?', hint: 'Las fiducias y fondos de liquidez generan rendimientos. ¿Los retiras o se reinvierten?' },
+    'CDT': { type: 'rendimientos', q: '¿Cómo te pagan los intereses del CDT?', hint: 'Algunos CDTs pagan intereses periódicos (mes a mes o trimestralmente); otros pagan todo al vencimiento.' },
+    'Cuenta AFC': { type: 'none' },
+    'Acciones en bolsa': { type: 'rendimientos', q: '¿Qué pasa con los dividendos?', hint: 'Las acciones pueden pagar dividendos. ¿Los recibes en efectivo o se reinvierten automáticamente?' },
+    'ETF o fondo de inversión internacional': { type: 'rendimientos', q: '¿Qué pasa con las distribuciones del fondo?', hint: 'Hay fondos de <strong>acumulación</strong> (reinvierten todo) y de <strong>distribución</strong> (pagan dividendos en efectivo).' },
+    'Fondo de inversión colectiva FIC': { type: 'rendimientos', q: '¿Qué pasa con los rendimientos del FIC?', hint: 'Algunos FICs pagan rendimientos periódicos; otros los acumulan en el valor de la unidad.' },
+    'Bonos o títulos de deuda': { type: 'rendimientos', q: '¿Cómo te pagan los intereses (cupones)?', hint: 'Los bonos pagan cupones periódicos (típicamente cada 6 meses o al año). ¿Los retiras o los reinviertes?' },
+    'REIT': { type: 'rendimientos', q: '¿Qué pasa con los dividendos del REIT?', hint: 'Los REITs distribuyen rentas inmobiliarias en forma de dividendos. ¿Los retiras o se reinvierten?' },
+    'Fondo de pensiones voluntarias FPV': { type: 'none' },
+    'Seguro de pensión con ahorro': { type: 'none' },
+    'Cartera gestionada por terceros': { type: 'rendimientos', q: '¿Qué pasa con los rendimientos de la cartera?', hint: 'En las carteras gestionadas tú decides la política. ¿Retiras los rendimientos o se reinvierten?' },
+    'Dinero que me deben': { type: 'binario', q: '¿Te pagan intereses por ese dinero?', hint: 'Si prestaste con interés (por ejemplo, un préstamo a un familiar o negocio que te paga algo cada mes), indícalo. Si solo esperas que te devuelvan el capital, marca "No".', siLabel: 'Sí, me pagan interés', noLabel: 'No, solo me deben el capital', amountLabel: 'Interés mensual que recibo' },
+    'Oro físico': { type: 'none' },
+    'Criptomonedas': { type: 'binario', q: '¿Generan algún rendimiento? (staking, yield, lending)', hint: 'Algunas criptos pagan recompensas por staking o yield. Si solo las tienes esperando que se valoricen, marca "No".', siLabel: 'Sí, generan staking/yield', noLabel: 'No, solo plusvalía', amountLabel: 'Rendimiento mensual promedio' },
+    'Obras de arte joyas o coleccionables': { type: 'none' },
+    'Vehículo de trabajo': { type: 'binario', q: '¿Cuánto te deja este vehículo al mes (neto)?', hint: 'Ingresos menos gastos de operación (gasolina, mantenimiento, plataforma…). Lo que <strong>te queda</strong> en el bolsillo.', siLabel: 'Sí, genera ingresos', noLabel: 'No está activo', amountLabel: 'Ingreso neto mensual' },
+    'Regalías derechos o patentes': { type: 'binario', q: '¿Cuánto recibes de regalías al mes en promedio?', hint: 'Promedio mensual aproximado — pueden llegar de forma irregular.', siLabel: 'Sí, recibo regalías', noLabel: 'No están generando', amountLabel: 'Regalías mensuales promedio' },
+    'Carro moto o vehículo personal': { type: 'none' },
+    'Joyas relojes u objetos de valor': { type: 'none' }
+};
+
+const TIPOS_DEUDA = {
+    'Inmueble': ['Crédito hipotecario', 'Leasing habitacional', 'Crédito constructor', 'Crédito de libre inversión', 'Otro'],
+    'Uso Personal': ['Crédito de vehículo', 'Leasing de vehículo', 'Crédito de libre inversión', 'Tarjeta de crédito', 'Crédito prendario', 'Otro'],
+    'Financiero': ['Apalancamiento / Margin', 'Crédito de libre inversión usado para invertir', 'Otro'],
+    'Empresarial': ['Crédito empresarial con aval personal', 'Aval o fianza personal a la empresa', 'Crédito de libre inversión usado en la empresa', 'Otro'],
+    'Alternativo': ['Crédito de libre inversión', 'Otro']
+};
+
+const DEBT_SUBTITLE = {
+    'Inmueble': '¿Tiene crédito hipotecario o cualquier deuda asociada a este inmueble? Si está totalmente pagado, marca "No".',
+    'Uso Personal': '¿Tiene crédito asociado? (crédito de vehículo, leasing, prendario, etc.)',
+    'Financiero': '¿Pediste prestado para invertir en este activo? (apalancamiento, margin loan, crédito que usaste para comprarlo)',
+    'Empresarial': '¿Hay deuda personal asociada a esta empresa? (créditos con aval tuyo, fianzas personales)',
+    'Alternativo': '¿Pediste un crédito para adquirir o financiar este activo?'
+};
+
+// ════════════════════════════════════════════════════════════════════════════════
+// HELPERS — separador de miles automático
+// ════════════════════════════════════════════════════════════════════════════════
+function formatThousands(digitsStr) {
+    if (!digitsStr) return '';
+    const num = parseInt(digitsStr, 10);
+    if (isNaN(num)) return '';
+    return num.toLocaleString('es-CO');
+}
+
+function attachNumberFormat(input) {
+    if (!input || input.dataset.numFormat === '1') return;
+    input.dataset.numFormat = '1';
+
+    input.addEventListener('input', (e) => {
+        const oldVal = e.target.value;
+        const cursorPos = e.target.selectionStart || 0;
+        const digitsBefore = oldVal.substring(0, cursorPos).replace(/[^\d]/g, '').length;
+        const digits = oldVal.replace(/[^\d]/g, '');
+        const formatted = digits ? formatThousands(digits) : '';
+        e.target.value = formatted;
+        let newPos = 0, count = 0;
+        if (digitsBefore === 0) {
+            newPos = 0;
+        } else {
+            for (let i = 0; i < formatted.length; i++) {
+                if (/\d/.test(formatted[i])) count++;
+                if (count >= digitsBefore) { newPos = i + 1; break; }
+            }
+            if (count < digitsBefore) newPos = formatted.length;
+        }
+        try { e.target.setSelectionRange(newPos, newPos); } catch (_) {}
+    });
+
+    input.addEventListener('paste', (e) => {
+        e.preventDefault();
+        const text = (e.clipboardData || window.clipboardData).getData('text');
+        const digits = text.replace(/[^\d]/g, '');
+        if (digits) {
+            const formatted = formatThousands(digits);
+            const start = input.selectionStart, end = input.selectionEnd;
+            input.value = input.value.substring(0, start) + formatted + input.value.substring(end);
+            input.dispatchEvent(new Event('input'));
+        }
+    });
+}
+
+function getNumberValue(input) {
+    if (!input) return 0;
+    const digits = (input.value || '').replace(/[^\d]/g, '');
+    return digits ? parseInt(digits, 10) : 0;
+}
+function setNumberValue(input, val) {
+    if (!input) return;
+    if (val === null || val === undefined || val === 0 || isNaN(val)) input.value = '';
+    else input.value = formatThousands(String(Math.round(val)));
+}
+
+const fmtCOP = (n) => {
+    if (!isFinite(n) || isNaN(n)) return '— COP';
+    return '$ ' + Math.round(n).toLocaleString('es-CO') + ' COP';
+};
+const fmtMoneyFx = (n, ccy) => {
+    if (!isFinite(n) || isNaN(n) || n === 0) return '';
+    const symbol = ccy === 'USD' ? 'US$ ' : ccy === 'EUR' ? '€ ' : (ccy + ' ');
+    return symbol + Math.round(n).toLocaleString('es-CO');
+};
+const currencySymbol = (ccy) => ccy === 'USD' ? 'US$' : ccy === 'EUR' ? '€' : ccy === 'GBP' ? '£' : '$';
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ESTADO
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CÁLCULOS  (integrado: la deuda vive en el Módulo 2, el activo solo guarda IDs)
+// ════════════════════════════════════════════════════════════════════════════════
+function convertirACOP(valor, moneda) {
+    if (!valor || isNaN(valor)) return NaN;
+    if (moneda === 'COP') return valor;
+    const rate = mp.trm[moneda];
+    if (!rate || rate <= 0) return NaN;
+    return valor * rate;
+}
+
+// Saldo total (en COP) de las deudas del M2 enlazadas a este activo.
+// Las deudas del M2 ya están en COP, por eso NO se reconvierten.
+function linkedDebtCOP(asset) {
+    const ids = asset.deudasVinculadas || [];
+    if (!ids.length) return 0;
+    return ids.reduce((acc, id) => {
+        const d = host.getDeudaById(id);
+        return acc + (d && isFinite(d.saldo) ? (d.saldo || 0) : 0);
+    }, 0);
+}
+
+// ¿Tiene algún enlace que ya no existe en el M2? (deuda borrada allá)
+function hasOrphanDebt(asset) {
+    const ids = asset.deudasVinculadas || [];
+    return ids.some(id => !host.getDeudaById(id));
+}
+
+function valueCOP(asset) {
+    const total = convertirACOP(asset.value, asset.currency);
+    if (isNaN(total)) return total;
+    // Si el activo es compartido, solo cuenta la parte que es del usuario
+    const pct = (asset.porcentajePropio != null && asset.porcentajePropio > 0 && asset.porcentajePropio <= 100)
+        ? asset.porcentajePropio : 100;
+    return total * pct / 100;
+}
+
+function netWorthCOP(asset) {
+    const valCOP = valueCOP(asset);
+    if (isNaN(valCOP)) return NaN;
+    return valCOP - linkedDebtCOP(asset);
+}
+
+function totalNetWorth() {
+    return mp.assets.reduce((acc, a) => {
+        const nw = netWorthCOP(a);
+        return acc + (isFinite(nw) ? nw : 0);
+    }, 0);
+}
+
+function totalGrossAssets() {
+    return mp.assets.reduce((acc, a) => {
+        const v = valueCOP(a);
+        return acc + (isFinite(v) ? v : 0);
+    }, 0);
+}
+
+// Deuda total = suma de saldos del M2 que están enlazados a algún activo del mapa.
+function totalDebt() {
+    return mp.assets.reduce((acc, a) => acc + linkedDebtCOP(a), 0);
+}
+
+function usedForeignCurrencies() {
+    const set = new Set();
+    mp.assets.forEach(a => { if (a.currency && a.currency !== 'COP') set.add(a.currency); });
+    return Array.from(set);
+}
+
+function escapeHtml(str) {
+    if (str == null) return '';
+    return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+function findSubtype(catVal, subVal) {
+    const cat = CATEGORIAS.find(c => c.value === catVal);
+    return cat ? (cat.subtipos.find(s => s.value === subVal) || null) : null;
+}
+function findSubtypeLabel(catVal, subVal) {
+    const s = findSubtype(catVal, subVal);
+    return s ? s.label : (subVal || '');
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// MOTOR DE VALORIZACIÓN Y PROYECCIÓN — comportamiento por tipo de activo
+// El usuario nunca ve estas etiquetas; el código las usa para decidir qué calcular.
+//   tasa     → paga una tasa conocida (CDT, cuenta alto rendimiento, bonos)
+//   mercado  → se valoriza con el mercado (inmuebles, oro)
+//   volatil  → sube y baja mucho (cripto, acciones, fondos) — no se proyecta
+//   estable  → no cambia solo (efectivo, cuentas)
+//   deprecia → pierde valor (carros, vehículos)
+//   aporte   → depende de aportes/utilidades (empresas, FPV, pensiones) — no se proyecta
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Tasas por defecto (editables). Solo se usan como punto de partida visible al usuario.
+const TASAS_DEFECTO = {
+    deprecia: 0.12,   // vehículos: ~12% anual a la baja
+};
+
+// Subtipos que muestran el campo de sector (financieros ligados a empresas/mercados).
+// Alineado con Arquitectura Patrimonial.
+const SUBTIPOS_CON_SECTOR = [
+    'Acciones en bolsa',
+    'ETF o fondo de inversión internacional',
+    'Fondo de inversión colectiva FIC',
+    'Bonos o títulos de deuda',
+    'REIT',
+    'Fondo de pensiones voluntarias FPV',
+    'Cartera gestionada por terceros',
+    'Acciones en empresa privada',
+];
+// Sector sugerido por defecto para algunos subtipos (el usuario puede cambiarlo).
+const SECTOR_POR_DEFECTO = {
+    'ETF o fondo de inversión internacional': 'Global / Diversificado',
+    'REIT': 'Real Estate / Inmobiliario',
+    'Fondo de pensiones voluntarias FPV': 'Global / Diversificado',
+};
+
+// ¿Es un activo "productivo"? (puede financiar tu retiro bajo la regla del 4%)
+// Excluye liquidez pura, residencia principal, uso personal y pensiones cautivas.
+const SUBTIPOS_NO_PRODUCTIVOS = [
+    'Cuenta bancaria corriente o ahorros',
+    'Efectivo en caja',
+    'Fondo de liquidez o Fiducia',
+    'Seguro de pensión con ahorro',
+];
+function esActivoProductivo(asset) {
+    const cat = asset.category || '';
+    const sub = asset.subtype || '';
+    if (cat === 'Uso Personal') return false;
+    if (SUBTIPOS_NO_PRODUCTIVOS.includes(sub)) return false;
+    if (sub === 'Casa o apartamento donde vivo') return false;
+    return (
+        cat === 'Financiero' ||
+        (cat === 'Inmueble' && sub !== 'Casa o apartamento donde vivo') ||
+        (cat === 'Alternativo' && !!asset.generatesIncome) ||
+        cat === 'Empresarial' ||
+        !!asset.generatesIncome
+    );
+}
+
+// Devuelve el comportamiento de un activo a partir de su subtipo.
+function comportamientoActivo(asset) {
+    const s = findSubtype(asset.category, asset.subtype);
+    return (s && s.comp) ? s.comp : 'estable';
+}
+
+// ¿Este activo admite proyección a futuro? (según la regla: sin dato real, no se proyecta)
+function admiteProyeccion(asset) {
+    const comp = comportamientoActivo(asset);
+    if (comp === 'tasa')     return (asset.tasaRendimiento || 0) > 0;            // necesita la tasa
+    if (comp === 'deprecia') return true;                                       // siempre proyecta a la baja
+    if (comp === 'mercado')  return !!(asset.valorAdquisicion && asset.anioAdquisicion); // necesita compra+año
+    return false;                                                               // volatil, estable, aporte → no se proyecta
+}
+
+// ¿Se puede calcular cuánto ha crecido (valorización pasada)?
+function admiteValorizacion(asset) {
+    const comp = comportamientoActivo(asset);
+    if (comp === 'estable' || comp === 'aporte') return false;
+    if (!asset.valorAdquisicion || !asset.anioAdquisicion) return false;
+    // Requiere al menos ~0,5 años desde la compra
+    const anios = aniosDesde(asset.anioAdquisicion, asset.mesAdquisicion);
+    return anios >= 0.5;
+}
+
+// Años transcurridos desde una fecha de adquisición (año + mes opcional) hasta hoy.
+function aniosDesde(anio, mes) {
+    if (!anio) return 0;
+    const ahora = new Date();
+    const m = (mes && mes >= 1 && mes <= 12) ? (mes - 1) : 0;
+    const inicio = new Date(anio, m, 1);
+    const ms = ahora - inicio;
+    return ms > 0 ? ms / (365.25 * 24 * 3600 * 1000) : 0;
+}
+
+// Valorización pasada: % anualizado (CAGR) y ganancia absoluta, en la moneda del activo.
+function calcValorizacion(asset) {
+    if (!admiteValorizacion(asset)) return null;
+    const actual = asset.value || 0;
+    const compra = asset.valorAdquisicion || 0;
+    if (compra <= 0 || actual <= 0) return null;
+    const anios = aniosDesde(asset.anioAdquisicion, asset.mesAdquisicion);
+    if (anios < 0.5) return null;
+    const ganancia = actual - compra;
+    const cagr = Math.pow(actual / compra, 1 / anios) - 1;
+    return { ganancia, cagr, anios };
+}
+
+// Proyección a futuro a N años, en la moneda del activo. Devuelve null si no admite proyección.
+function calcProyeccion(asset, anios) {
+    if (!admiteProyeccion(asset)) return null;
+    const comp = comportamientoActivo(asset);
+    const actual = asset.value || 0;
+    if (actual <= 0) return null;
+    let tasa;
+    if (comp === 'tasa')     tasa = asset.tasaRendimiento || 0;
+    else if (comp === 'deprecia') tasa = -(asset.tasaDepreciacion || TASAS_DEFECTO.deprecia);
+    else if (comp === 'mercado') {
+        // Usa la valorización histórica real del propio activo como ritmo (no un supuesto externo)
+        const v = calcValorizacion(asset);
+        if (!v) return null;
+        tasa = v.cagr;
+    } else return null;
+    const futuro = actual * Math.pow(1 + tasa, anios);
+    return { futuro, tasa, anios, comp };
+}
+
+// Frase humana para la tarjeta: cuánto ha crecido (o perdido) un activo. null si no aplica.
+function fraseValorizacion(asset) {
+    const v = calcValorizacion(asset);
+    if (!v) return null;
+    const pct = Math.round(v.cagr * 1000) / 10; // 1 decimal
+    if (Math.abs(pct) < 0.1) return null;
+    if (pct > 0) return `Ha crecido cerca de ${pct}% al año desde que lo obtuviste`;
+    return `Ha bajado cerca de ${Math.abs(pct)}% al año desde que lo obtuviste`;
+}
+
+
+
+function renderInventory() {
+    const total = totalNetWorth();
+    const debt = totalDebt();
+    const pendientes = mp.assets.filter(a => a.currency !== 'COP' && !mp.trm[a.currency]).length;
+
+    document.getElementById('stat-net-worth').textContent = fmtCOP(total);
+    document.getElementById('stat-count').textContent = mp.assets.length;
+    document.getElementById('stat-debt-sub').textContent = debt > 0
+        ? 'Deudas totales: ' + fmtCOP(debt)
+        : 'Sin deudas registradas';
+
+    const note = document.getElementById('summary-note');
+    if (pendientes > 0) {
+        note.classList.add('visible');
+        note.textContent = `Hay ${pendientes} activo${pendientes === 1 ? '' : 's'} en otra moneda que aún no se han convertido. Completa los tipos de cambio abajo para que se sumen al total.`;
+    } else {
+        note.classList.remove('visible');
+        note.textContent = '';
+    }
+
+    renderTRMCard();
+
+    const hasAssets = mp.assets.length > 0;
+    document.getElementById('empty-state').style.display = hasAssets ? 'none' : 'block';
+    document.getElementById('asset-cards').style.display = hasAssets ? 'grid' : 'none';
+    const addMoreBtn = document.getElementById('btn-add-more');
+    if (addMoreBtn) addMoreBtn.style.display = hasAssets ? 'flex' : 'none';
+    document.getElementById('asset-count-inline').textContent = hasAssets ? `(${mp.assets.length})` : '';
+
+    renderAssetCardsOnly();
+    emitChange();
+}
+
+function renderAssetCardsOnly() {
+    const container = document.getElementById('asset-cards');
+    container.innerHTML = mp.assets.map(a => {
+        const nw = netWorthCOP(a);
+        const subtipoLabel = findSubtypeLabel(a.category, a.subtype);
+        const fxStr = a.currency !== 'COP' ? fmtMoneyFx(a.value, a.currency) : '';
+        const _debtCOP = linkedDebtCOP(a);
+        const _orphan = hasOrphanDebt(a);
+        const debtStr = _debtCOP > 0 ? ' · Deuda: ' + fmtCOP(_debtCOP) : '';
+        const orphanStr = _orphan ? ' · <span class="asset-card-orphan">enlace de deuda desactualizado</span>' : '';
+        const compartidoStr = (a.esCompartido && a.porcentajePropio < 100)
+            ? ` · <span class="asset-card-cond">Compartido · tu ${a.porcentajePropio}%</span>` : '';
+        const restringidoStr = a.restringidoLegal
+            ? ` · <span class="asset-card-cond restringido">Restringido · no disponible</span>` : '';
+        const valFrase = fraseValorizacion(a);
+        const valFraseHtml = valFrase ? `<div class="asset-card-growth">${escapeHtml(valFrase)}</div>` : '';
+        const valueHtml = isFinite(nw)
+            ? `<div class="asset-card-value">${fmtCOP(nw)}</div>${fxStr ? `<div class="asset-card-value-sub">${fxStr}</div>` : ''}`
+            : `<div class="asset-card-value pending">Pendiente conversión</div>${fxStr ? `<div class="asset-card-value-sub">${fxStr}</div>` : ''}`;
+        return `
+        <div class="asset-card">
+            <div class="asset-card-icon">${ICONO_CATEGORIA[a.category] || ''}</div>
+            <div class="asset-card-body">
+                <div class="asset-card-name">${escapeHtml(a.description)}</div>
+                <div class="asset-card-meta">
+                    <span class="asset-card-tag">${a.category}</span>${escapeHtml(subtipoLabel || a.subtype || '')}${a.which ? ' · ' + escapeHtml(a.which) : ''}${debtStr}${orphanStr}${compartidoStr}${restringidoStr}
+                </div>
+                ${valFraseHtml}
+            </div>
+            <div class="asset-card-right">
+                ${valueHtml}
+                <div class="asset-card-actions">
+                    <button onclick="window.__editAsset('${a.id}')" aria-label="Editar"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+                    <button class="btn-delete" onclick="window.__deleteAsset('${a.id}')" aria-label="Eliminar"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+                </div>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function renderTRMCard() {
+    const monedas = usedForeignCurrencies();
+    const card = document.getElementById('trm-card');
+    const rows = document.getElementById('trm-rows');
+    card.classList.toggle('visible', monedas.length > 0);
+    if (monedas.length === 0) { rows.innerHTML = ''; return; }
+    const ccyNames = { USD: 'dólar', EUR: 'euro', GBP: 'libra', MXN: 'peso mexicano', BRL: 'real', CLP: 'peso chileno', PEN: 'sol', ARS: 'peso argentino' };
+    rows.innerHTML = monedas.map(ccy => `
+        <div class="trm-row">
+            <label>1 ${ccy} =</label>
+            <input type="text" data-trm="${ccy}" placeholder="Ej: ${ccy === 'USD' ? '4.200' : ccy === 'EUR' ? '4.600' : ''}" inputmode="numeric" autocomplete="off">
+            <span class="trm-suffix">COP <span style="opacity:.7;font-weight:400">(${ccyNames[ccy] || ccy})</span></span>
+        </div>
+    `).join('');
+
+    rows.querySelectorAll('input[data-trm]').forEach(inp => {
+        const ccy = inp.dataset.trm;
+        attachNumberFormat(inp);
+        setNumberValue(inp, mp.trm[ccy] || 0);
+        inp.addEventListener('input', () => {
+            mp.trm[ccy] = getNumberValue(inp);
+            mpSave();
+            const total = totalNetWorth();
+            const debt = totalDebt();
+            const pendientes = mp.assets.filter(a => a.currency !== 'COP' && !mp.trm[a.currency]).length;
+            document.getElementById('stat-net-worth').textContent = fmtCOP(total);
+            document.getElementById('stat-debt-sub').textContent = debt > 0 ? 'Deudas totales: ' + fmtCOP(debt) : 'Sin deudas registradas';
+            const note = document.getElementById('summary-note');
+            if (pendientes > 0) {
+                note.classList.add('visible');
+                note.textContent = `Hay ${pendientes} activo${pendientes === 1 ? '' : 's'} en otra moneda que aún no se han convertido.`;
+            } else {
+                note.classList.remove('visible');
+                note.textContent = '';
+            }
+            renderAssetCardsOnly();
+        });
+    });
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// WIZARD / MODAL
+// ════════════════════════════════════════════════════════════════════════════════
+function openAssetModal(editId) {
+    mp.editingId = editId || null;
+    if (editId) {
+        const existing = mp.assets.find(a => a.id === editId);
+        if (!existing) return;
+        mp.draft = {
+            id: existing.id,
+            category: existing.category || '',
+            subtype: existing.subtype || '',
+            description: existing.description || '',
+            which: existing.which || '',
+            currency: existing.currency || 'COP',
+            value: existing.value || 0,
+            tasaRendimiento: existing.tasaRendimiento || 0,
+            valorAdquisicion: existing.valorAdquisicion || 0,
+            anioAdquisicion: existing.anioAdquisicion || null,
+            tasaDepreciacion: existing.tasaDepreciacion || 0,
+            beneficioTributario: !!existing.beneficioTributario,
+            esCompartido: !!existing.esCompartido,
+            porcentajePropio: (existing.porcentajePropio != null ? existing.porcentajePropio : 100),
+            restringidoLegal: !!existing.restringidoLegal,
+            deudasVinculadas: Array.isArray(existing.deudasVinculadas) ? existing.deudasVinculadas.slice() : [],
+            hasDebt: ((existing.deudasVinculadas && existing.deudasVinculadas.length) > 0) ? 'si' : 'no',
+            location: existing.location || 'Colombia',
+            legalStructure: existing.legalStructure || 'Propiedad Directa',
+            legalStructureOtro: existing.legalStructureOtro || '',
+            sector: existing.sector || '',
+            rolEmpresarial: existing.rolEmpresarial || '',
+            rolEmpresarialOtro: existing.rolEmpresarialOtro || '',
+            empRetiro: existing.empRetiro || null,
+            empSalarioMensual: existing.empSalarioMensual || 0,
+            empUtilidadesAnual: existing.empUtilidadesAnual || 0,
+            empUtilidadesFreq: existing.empUtilidadesFreq || 'irregular',
+            incomeRendimientos: existing.incomeRendimientos || null,
+            hasIncome: existing.hasIncome || null,
+            monthlyIncome: existing.monthlyIncome || 0,
+        };
+    } else {
+        mp.draft = {
+            id: 'a_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+            category: '', subtype: '',
+            description: '', which: '',
+            currency: 'COP', value: 0,
+            hasDebt: null, deudasVinculadas: [],
+            location: 'Colombia', legalStructure: 'Propiedad Directa', legalStructureOtro: '',
+            sector: '',
+            rolEmpresarial: '', rolEmpresarialOtro: '',
+            empRetiro: null, empSalarioMensual: 0, empUtilidadesAnual: 0, empUtilidadesFreq: 'irregular',
+            incomeRendimientos: null, hasIncome: null, monthlyIncome: 0,
+            esCompartido: false, porcentajePropio: 100, restringidoLegal: false,
+        };
+    }
+    mp.currentStep = 1;
+    renderWizardState();
+    document.getElementById('asset-modal').classList.add('open');
+    document.body.style.overflow = 'hidden';
+}
+
+function closeAssetModal() {
+    document.getElementById('asset-modal').classList.remove('open');
+    document.body.style.overflow = '';
+    mp.draft = null;
+    mp.editingId = null;
+    clearErrors();
+}
+
+function clearErrors() {
+    document.querySelectorAll('.error-msg').forEach(e => e.classList.remove('show'));
+}
+
+function renderCategoryGrid() {
+    const grid = document.getElementById('category-grid');
+    grid.innerHTML = CATEGORIAS.map(c => `
+        <button type="button" class="category-card${mp.draft.category === c.value ? ' selected' : ''}" data-cat="${c.value}">
+            ${c.icon}
+            <div class="category-name">${c.label}</div>
+            <div class="category-desc">${c.desc}</div>
+        </button>
+    `).join('');
+    grid.querySelectorAll('.category-card').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const val = btn.dataset.cat;
+            if (mp.draft.category !== val) {
+                mp.draft.category = val;
+                mp.draft.subtype = '';
+                mp.draft.sector = '';
+                mp.draft.rolEmpresarial = '';
+                mp.draft.rolEmpresarialOtro = '';
+                mp.draft.empRetiro = null;
+                mp.draft.incomeRendimientos = null;
+                mp.draft.hasIncome = null;
+                mp.draft.monthlyIncome = 0;
+                mp.draft.empSalarioMensual = 0;
+                mp.draft.empUtilidadesAnual = 0;
+                mp.draft.deudasVinculadas = [];
+                mp.draft.hasDebt = null;
+            }
+            renderCategoryGrid();
+            clearErrors();
+        });
+    });
+}
+
+function renderSubtypeList() {
+    const cat = CATEGORIAS.find(c => c.value === mp.draft.category);
+    if (!cat) return;
+    document.getElementById('step2-title').textContent = `¿Cuál ${cat.label.toLowerCase()} exactamente?`;
+    const list = document.getElementById('subtype-list');
+    list.innerHTML = cat.subtipos.map(s => `
+        <button type="button" class="subtype-option${mp.draft.subtype === s.value ? ' selected' : ''}" data-sub="${escapeHtml(s.value)}">
+            <span class="subtype-radio"></span>
+            <span>${s.label}</span>
+        </button>
+    `).join('');
+    list.querySelectorAll('.subtype-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (mp.draft.subtype !== btn.dataset.sub) {
+                mp.draft.subtype = btn.dataset.sub;
+                mp.draft.incomeRendimientos = null;
+                mp.draft.hasIncome = null;
+                mp.draft.monthlyIncome = 0;
+            }
+            renderSubtypeList();
+            clearErrors();
+        });
+    });
+}
+
+function renderStep3() {
+    const cat = mp.draft.category;
+    const sub = mp.draft.subtype;
+    const descPh = DESCRIPCION_PLACEHOLDER[cat] || 'Algo que te ayude a identificarlo';
+    const descInput = document.getElementById('asset-description');
+    descInput.placeholder = descPh;
+    descInput.value = mp.draft.description || '';
+
+    const entCfg = ENTIDAD_CONFIG[sub];
+    const whichField = document.getElementById('asset-which-field');
+    const whichLabel = document.getElementById('which-label');
+    const whichInput = document.getElementById('asset-which');
+    const whichHint = document.getElementById('which-hint');
+
+    if (entCfg && entCfg.show) {
+        whichField.style.display = 'block';
+        whichLabel.innerHTML = `${entCfg.label} <span class="optional">(opcional)</span>`;
+        whichInput.placeholder = entCfg.placeholder || '';
+        whichHint.innerHTML = entCfg.hint || '';
+        whichHint.style.display = entCfg.hint ? 'block' : 'none';
+        whichInput.value = mp.draft.which || '';
+    } else {
+        whichField.style.display = 'none';
+        whichInput.value = '';
+    }
+
+    document.getElementById('asset-currency').value = mp.draft.currency || 'COP';
+    setNumberValue(document.getElementById('asset-value'), mp.draft.value);
+    updateCurrencyPrefix();
+    updateValueCOPDisplay();
+    renderCamposProyeccion();
+}
+
+// Muestra solo los campos de valorización/proyección que aplican al tipo de activo.
+function renderCamposProyeccion() {
+    const sub = findSubtype(mp.draft.category, mp.draft.subtype);
+    const comp = (sub && sub.comp) ? sub.comp : 'estable';
+
+    const tasaField   = document.getElementById('asset-tasa-field');
+    const compraBlock = document.getElementById('asset-compra-block');
+    const notaBox     = document.getElementById('asset-comp-nota');
+    const notaText    = document.getElementById('asset-comp-nota-text');
+    if (!tasaField || !compraBlock || !notaBox) return;
+
+    // Reset
+    tasaField.style.display = 'none';
+    compraBlock.style.display = 'none';
+    notaBox.style.display = 'none';
+
+    // Precargar valores existentes (modo edición)
+    const tasaInput = document.getElementById('asset-tasa');
+    if (tasaInput) tasaInput.value = (mp.draft.tasaRendimiento ? (mp.draft.tasaRendimiento * 100) : '');
+    setNumberValue(document.getElementById('asset-valor-compra'), mp.draft.valorAdquisicion || 0);
+    const anioInput = document.getElementById('asset-anio-compra');
+    if (anioInput) anioInput.value = mp.draft.anioAdquisicion || '';
+    const compraPrefix = document.getElementById('compra-prefix');
+    if (compraPrefix) compraPrefix.textContent = currencySymbol(mp.draft.currency || 'COP');
+
+    if (comp === 'tasa') {
+        tasaField.style.display = 'block';
+    } else if (comp === 'mercado') {
+        compraBlock.style.display = 'block';
+    } else if (comp === 'volatil') {
+        compraBlock.style.display = 'block';
+        notaBox.style.display = 'flex';
+        notaText.textContent = 'Este tipo de inversión sube y baja mucho, así que no predecimos cuánto valdrá. Te mostramos lo que vale hoy y, si nos dices cuánto valía cuando lo obtuviste, cuánto ha cambiado.';
+    } else if (comp === 'deprecia') {
+        notaBox.style.display = 'flex';
+        notaText.textContent = 'Las cosas como los carros van perdiendo valor con los años. Más adelante te mostramos una estimación de cuánto podría valer.';
+    } else if (comp === 'aporte') {
+        notaBox.style.display = 'flex';
+        notaText.textContent = 'Cuánto valga esto a futuro depende de cuánto le sigas aportando y de cómo le vaya, así que no lo proyectamos con una fórmula. Lo dejamos en el valor que nos das hoy.';
+    } else { // estable
+        notaBox.style.display = 'flex';
+        notaText.textContent = 'El dinero disponible no crece por sí solo, e incluso pierde poder de compra con la inflación. Lo mantenemos en su valor actual.';
+    }
+}
+
+function updateCurrencyPrefix() {
+    const ccy = document.getElementById('asset-currency').value;
+    const sym = currencySymbol(ccy);
+    document.getElementById('currency-prefix').textContent = sym;
+    const debtPrefix = document.getElementById('debt-currency-prefix');
+    if (debtPrefix) debtPrefix.textContent = sym;
+}
+
+function updateValueCOPDisplay() {
+    const ccy = document.getElementById('asset-currency').value;
+    const val = getNumberValue(document.getElementById('asset-value'));
+    const display = document.getElementById('asset-value-cop-display');
+    const valueLabel = document.getElementById('asset-value-cop');
+    const labelEl = document.getElementById('value-cop-label');
+    if (ccy === 'COP' || val === 0) { display.style.display = 'none'; return; }
+    display.style.display = 'flex';
+    const rate = mp.trm[ccy];
+    if (!rate || rate <= 0) {
+        labelEl.textContent = 'En pesos:';
+        valueLabel.textContent = 'lo calculamos al guardar';
+        valueLabel.classList.add('pending');
+    } else {
+        labelEl.textContent = 'Equivale en pesos a:';
+        valueLabel.textContent = fmtCOP(val * rate);
+        valueLabel.classList.remove('pending');
+    }
+}
+
+function renderStep4() {
+    const cat = mp.draft.category;
+    document.getElementById('debt-subtitle').textContent = DEBT_SUBTITLE[cat] || '¿Este activo respalda alguna deuda que ya registraste en Endeudamiento?';
+    if (!Array.isArray(mp.draft.deudasVinculadas)) mp.draft.deudasVinculadas = [];
+
+    // Selección Sí/No
+    document.querySelectorAll('.yesno-option[data-debt]').forEach(opt => {
+        opt.classList.toggle('selected', mp.draft.hasDebt === opt.dataset.debt);
+    });
+    const detail = document.getElementById('debt-detail');
+    detail.style.display = mp.draft.hasDebt === 'si' ? 'block' : 'none';
+    if (mp.draft.hasDebt !== 'si') return;
+
+    // Lista de deudas existentes del M2 (las que el usuario ya registró en Endeudamiento)
+    const deudas = host.getDeudas().filter(d => (d.saldo || 0) > 0 || (d.nombre || '').trim());
+    const linked = mp.draft.deudasVinculadas;
+    const listEl = document.getElementById('debt-link-list');
+
+    if (deudas.length === 0) {
+        listEl.innerHTML = `<div class="debt-link-empty">No tienes deudas registradas en el módulo de Endeudamiento. Crea la deuda de este activo aquí abajo y quedará registrada allá automáticamente.</div>`;
+    } else {
+        listEl.innerHTML = deudas.map(d => {
+            const checked = linked.includes(d.id) ? 'checked' : '';
+            const saldoStr = d.saldo > 0 ? fmtCOP(d.saldo) : 'sin saldo';
+            const nombre = escapeHtml(d.nombre || 'Deuda sin nombre');
+            return `<label class="debt-link-row">
+                <input type="checkbox" class="debt-link-check" data-deuda-id="${escapeHtml(d.id)}" ${checked}>
+                <span class="debt-link-info"><span class="debt-link-name">${nombre}</span><span class="debt-link-saldo">${saldoStr}</span></span>
+            </label>`;
+        }).join('');
+    }
+
+    // Tipos de deuda sugeridos para el mini-formulario (por categoría del bien)
+    const tipos = TIPOS_DEUDA[cat] || ['Otro'];
+    const selTipo = document.getElementById('new-debt-type');
+    if (selTipo) {
+        selTipo.innerHTML = '<option value="">Tipo de deuda…</option>' +
+            tipos.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+    }
+    // Reset mini-form
+    const nf = document.getElementById('new-debt-form');
+    if (nf) nf.style.display = 'none';
+    const ndName = document.getElementById('new-debt-name');
+    const ndSaldo = document.getElementById('new-debt-saldo');
+    if (ndName) ndName.value = '';
+    if (ndSaldo) ndSaldo.value = '';
+
+    updateNetWorthPreview();
+}
+
+// Crea una deuda nueva directamente en el Módulo 2 (opción B) y la enlaza al activo.
+function createAndLinkDebt() {
+    const name = (document.getElementById('new-debt-name').value || '').trim();
+    const saldo = getNumberValue(document.getElementById('new-debt-saldo'));
+    const tipoMapa = document.getElementById('new-debt-type').value;
+    const errEl = document.getElementById('err-new-debt');
+    if (!name || saldo <= 0) {
+        errEl.textContent = 'Escribe un nombre y el saldo pendiente de la deuda.';
+        errEl.classList.add('show');
+        return;
+    }
+    errEl.classList.remove('show');
+    // La deuda se da de alta en el M2. El saldo del M2 está en COP:
+    // si el bien está en otra moneda, convertimos el saldo a COP con la TRM.
+    let saldoCOP = saldo;
+    if (mp.draft.currency && mp.draft.currency !== 'COP') {
+        const conv = convertirACOP(saldo, mp.draft.currency);
+        saldoCOP = isFinite(conv) ? conv : saldo;
+    }
+    const newId = host.createDeuda({
+        nombre: name,
+        saldo: saldoCOP,
+        tipoMapa: tipoMapa,
+        categoriaActivo: mp.draft.category,
+        origenMapa: true
+    });
+    if (newId) {
+        mp.draft.deudasVinculadas.push(newId);
+        renderStep4();
+        showToast('Deuda creada y enlazada · también aparece en Endeudamiento');
+    }
+}
+
+function updateNetWorthPreview() {
+    const val = mp.draft.value || 0;
+    const ccy = mp.draft.currency;
+    const preview = document.getElementById('net-worth-preview');
+    // Suma de saldos (COP) de las deudas enlazadas en el draft
+    const ids = mp.draft.deudasVinculadas || [];
+    const debtCOP = ids.reduce((acc, id) => {
+        const d = host.getDeudaById(id);
+        return acc + (d && isFinite(d.saldo) ? (d.saldo || 0) : 0);
+    }, 0);
+    if (debtCOP <= 0 || val <= 0) { preview.style.display = 'none'; return; }
+    let valCOP = val;
+    if (ccy !== 'COP') {
+        const rate = mp.trm[ccy];
+        if (!rate || rate <= 0) {
+            preview.style.display = 'flex';
+            document.getElementById('net-worth-value').textContent = 'Pendiente conversión';
+            return;
+        }
+        valCOP = val * rate;
+    }
+    preview.style.display = 'flex';
+    document.getElementById('net-worth-value').textContent = fmtCOP(valCOP - debtCOP);
+}
+
+function renderStep5() {
+    const cat = mp.draft.category;
+    const sub = mp.draft.subtype;
+
+    document.getElementById('asset-location').value = mp.draft.location || 'Colombia';
+    document.getElementById('asset-legal-structure').value = mp.draft.legalStructure || 'Propiedad Directa';
+    const legalOtroField = document.getElementById('legal-structure-otro-field');
+    legalOtroField.style.display = mp.draft.legalStructure === 'Otro' ? 'block' : 'none';
+    document.getElementById('asset-legal-structure-otro').value = mp.draft.legalStructureOtro || '';
+
+    // Condiciones del activo: compartido y restricción legal
+    renderCompartidoBlock();
+    const restrChk = document.getElementById('asset-restringido-legal');
+    if (restrChk) restrChk.checked = !!mp.draft.restringidoLegal;
+
+    // Empresarial: rol + sector
+    const isEmpresarial = cat === 'Empresarial';
+    // El sector también aplica a activos financieros ligados a empresas/sectores
+    const muestraSector = isEmpresarial || SUBTIPOS_CON_SECTOR.includes(mp.draft.subtype);
+    document.getElementById('rol-empresarial-field').style.display = isEmpresarial ? 'block' : 'none';
+    document.getElementById('sector-field').style.display = muestraSector ? 'block' : 'none';
+
+    if (muestraSector) {
+        // Si no hay sector guardado, sugerir el por defecto del subtipo (editable)
+        if (!mp.draft.sector && SECTOR_POR_DEFECTO[mp.draft.subtype]) {
+            mp.draft.sector = SECTOR_POR_DEFECTO[mp.draft.subtype];
+        }
+        document.getElementById('asset-sector').value = mp.draft.sector || '';
+        const sectorLabel = document.getElementById('sector-label');
+        if (sectorLabel) {
+            sectorLabel.textContent = isEmpresarial
+                ? '¿Cuál es el sector de la empresa?'
+                : '¿En qué sector invierte principalmente? (opcional)';
+        }
+    }
+    // Beneficio tributario: solo para productos que suelen tenerlo
+    const subsConBeneficio = ['Fondo de pensiones voluntarias FPV', 'Cuenta AFC', 'Seguro de pensión con ahorro'];
+    const btField = document.getElementById('beneficio-tributario-field');
+    if (btField) {
+        const muestraBT = subsConBeneficio.includes(mp.draft.subtype);
+        btField.style.display = muestraBT ? 'block' : 'none';
+        if (muestraBT) {
+            document.getElementById('asset-beneficio-tributario').checked = !!mp.draft.beneficioTributario;
+        }
+    }
+    if (isEmpresarial) {
+        document.getElementById('asset-rol-empresarial').value = mp.draft.rolEmpresarial || '';
+        document.getElementById('rol-empresarial-otro-field').style.display = mp.draft.rolEmpresarial === 'Otro' ? 'block' : 'none';
+        document.getElementById('asset-rol-empresarial-otro').value = mp.draft.rolEmpresarialOtro || '';
+    } else {
+        document.getElementById('rol-empresarial-otro-field').style.display = 'none';
+    }
+
+    const empBlock = document.getElementById('emp-income-block');
+    const genericBlock = document.getElementById('generic-income-block');
+    if (isEmpresarial) {
+        empBlock.style.display = 'block';
+        genericBlock.style.display = 'none';
+        renderEmpRetiroBlock();
+    } else {
+        empBlock.style.display = 'none';
+        const cfg = INGRESOS_CONFIG[sub];
+        if (!cfg || cfg.type === 'none') {
+            genericBlock.style.display = 'none';
+        } else {
+            genericBlock.style.display = 'block';
+            renderGenericIncomeBlock(cfg);
+        }
+    }
+}
+
+function renderCompartidoBlock() {
+    const yesno = document.getElementById('asset-comparte');
+    const pctField = document.getElementById('asset-porcentaje-field');
+    if (!yesno || !pctField) return;
+    const esCompartido = !!mp.draft.esCompartido;
+    yesno.querySelectorAll('.yesno-option').forEach(opt => {
+        opt.classList.toggle('selected',
+            (opt.dataset.comparte === 'si') === esCompartido);
+    });
+    pctField.style.display = esCompartido ? 'block' : 'none';
+    if (esCompartido) {
+        const pct = (mp.draft.porcentajePropio != null && mp.draft.porcentajePropio < 100)
+            ? mp.draft.porcentajePropio : '';
+        document.getElementById('asset-porcentaje').value = pct;
+    }
+}
+
+function renderEmpRetiroBlock() {
+    const list = document.getElementById('emp-retiro-list');
+    list.querySelectorAll('.radio-option').forEach(opt => {
+        opt.classList.toggle('selected', mp.draft.empRetiro === opt.dataset.retiro);
+    });
+    const showSalario = mp.draft.empRetiro === 'salario' || mp.draft.empRetiro === 'mixto';
+    const showUtil = mp.draft.empRetiro === 'utilidades' || mp.draft.empRetiro === 'mixto';
+    document.getElementById('emp-salario-detail').style.display = showSalario ? 'block' : 'none';
+    document.getElementById('emp-utilidades-detail').style.display = showUtil ? 'block' : 'none';
+    if (showSalario) setNumberValue(document.getElementById('asset-emp-salario'), mp.draft.empSalarioMensual);
+    if (showUtil) {
+        setNumberValue(document.getElementById('asset-emp-utilidades'), mp.draft.empUtilidadesAnual);
+        document.getElementById('asset-emp-utilidades-freq').value = mp.draft.empUtilidadesFreq || 'irregular';
+    }
+}
+
+function renderGenericIncomeBlock(cfg) {
+    document.getElementById('income-q-label').textContent = cfg.q;
+    document.getElementById('income-q-hint').innerHTML = cfg.hint || '';
+    const yesno = document.getElementById('income-yesno');
+    const rendim = document.getElementById('income-rendimientos');
+    const amountDetail = document.getElementById('income-amount-detail');
+    const amountLabel = document.getElementById('income-amount-label');
+    if (cfg.type === 'binario') {
+        yesno.style.display = 'grid';
+        rendim.style.display = 'none';
+        document.getElementById('income-no-label').textContent = cfg.noLabel || 'No';
+        document.getElementById('income-si-label').textContent = cfg.siLabel || 'Sí';
+        yesno.querySelectorAll('.yesno-option').forEach(opt => {
+            opt.classList.toggle('selected', mp.draft.hasIncome === opt.dataset.income);
+        });
+        if (mp.draft.hasIncome === 'si') {
+            amountDetail.style.display = 'block';
+            amountLabel.textContent = cfg.amountLabel || 'Ingreso mensual aproximado';
+            setNumberValue(document.getElementById('asset-monthly-income'), mp.draft.monthlyIncome);
+        } else {
+            amountDetail.style.display = 'none';
+        }
+    } else if (cfg.type === 'rendimientos') {
+        yesno.style.display = 'none';
+        rendim.style.display = 'grid';
+        rendim.querySelectorAll('.radio-option').forEach(opt => {
+            opt.classList.toggle('selected', mp.draft.incomeRendimientos === opt.dataset.rend);
+        });
+        const showAmount = mp.draft.incomeRendimientos === 'retiro' || mp.draft.incomeRendimientos === 'parcial';
+        amountDetail.style.display = showAmount ? 'block' : 'none';
+        if (showAmount) {
+            amountLabel.textContent = '¿Cuánto recibes en efectivo al mes aproximadamente?';
+            setNumberValue(document.getElementById('asset-monthly-income'), mp.draft.monthlyIncome);
+        }
+    }
+}
+
+function renderWizardState() {
+    const totalSteps = 5;
+    document.getElementById('step-indicator').textContent = `Paso ${mp.currentStep} de ${totalSteps}`;
+    document.getElementById('progress-fill').style.width = (mp.currentStep / totalSteps * 100) + '%';
+    document.querySelectorAll('.modal-step').forEach(s => {
+        s.classList.toggle('active', parseInt(s.dataset.step) === mp.currentStep);
+    });
+    if (mp.currentStep === 1) renderCategoryGrid();
+    if (mp.currentStep === 2) renderSubtypeList();
+    if (mp.currentStep === 3) renderStep3();
+    if (mp.currentStep === 4) renderStep4();
+    if (mp.currentStep === 5) renderStep5();
+
+    ['asset-value', 'asset-monthly-income', 'asset-emp-salario', 'asset-emp-utilidades', 'new-debt-saldo', 'asset-valor-compra']
+        .forEach(id => { const el = document.getElementById(id); if (el) attachNumberFormat(el); });
+
+    document.getElementById('btn-back').style.visibility = mp.currentStep === 1 ? 'hidden' : 'visible';
+    const isLast = mp.currentStep === 5;
+    const nextBtn = document.getElementById('btn-next');
+    nextBtn.innerHTML = isLast
+        ? `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Guardar activo`
+        : `Siguiente <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>`;
+}
+
+// Muestra un mensaje de error, desplaza la vista hasta él y enfoca el campo indicado.
+function focusError(errId, fieldId) {
+    const errEl = document.getElementById(errId);
+    if (errEl) errEl.classList.add('show');
+    // Elemento al que desplazar: el campo si se indicó, si no el propio mensaje
+    const target = (fieldId && document.getElementById(fieldId)) || errEl;
+    if (target && target.scrollIntoView) {
+        try { target.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(e) { target.scrollIntoView(); }
+    }
+    // Enfocar el campo si es un input/select/textarea
+    if (fieldId) {
+        const f = document.getElementById(fieldId);
+        if (f && typeof f.focus === 'function') {
+            setTimeout(() => { try { f.focus({ preventScroll: true }); } catch(e) { f.focus(); } }, 300);
+        }
+    }
+    return false;
+}
+
+function validateCurrentStep() {
+    clearErrors();
+    if (mp.currentStep === 1) {
+        if (!mp.draft.category) { return focusError('err-category', 'category-grid'); }
+    }
+    if (mp.currentStep === 2) {
+        if (!mp.draft.subtype) { return focusError('err-subtype', 'subtype-list'); }
+    }
+    if (mp.currentStep === 3) {
+        const desc = document.getElementById('asset-description').value.trim();
+        const val = getNumberValue(document.getElementById('asset-value'));
+        if (!desc) { return focusError('err-value', 'asset-description'); }
+        if (val <= 0) { return focusError('err-value', 'asset-value'); }
+        mp.draft.description = desc;
+        mp.draft.which = document.getElementById('asset-which').value.trim();
+        mp.draft.currency = document.getElementById('asset-currency').value;
+        mp.draft.value = val;
+
+        // Campos de valorización/proyección (según comportamiento del subtipo)
+        const sub = findSubtype(mp.draft.category, mp.draft.subtype);
+        const comp = (sub && sub.comp) ? sub.comp : 'estable';
+
+        // Tasa conocida (CDT, cuenta alto rendimiento, bonos)
+        if (comp === 'tasa') {
+            const tasaRaw = (document.getElementById('asset-tasa').value || '').replace(',', '.').trim();
+            const tasaPct = parseFloat(tasaRaw);
+            mp.draft.tasaRendimiento = (isFinite(tasaPct) && tasaPct > 0) ? (tasaPct / 100) : 0;
+        } else {
+            mp.draft.tasaRendimiento = 0;
+        }
+
+        // Compra + año (mercado y volátil)
+        if (comp === 'mercado' || comp === 'volatil') {
+            mp.draft.valorAdquisicion = getNumberValue(document.getElementById('asset-valor-compra')) || 0;
+            const anioRaw = parseInt((document.getElementById('asset-anio-compra').value || '').trim(), 10);
+            const anioActual = new Date().getFullYear();
+            mp.draft.anioAdquisicion = (isFinite(anioRaw) && anioRaw >= 1950 && anioRaw <= anioActual) ? anioRaw : null;
+        } else {
+            mp.draft.valorAdquisicion = 0;
+            mp.draft.anioAdquisicion = null;
+        }
+    }
+    if (mp.currentStep === 4) {
+        if (mp.draft.hasDebt === null) { return focusError('err-debt', 'debt-detail'); }
+        if (mp.draft.hasDebt === 'si') {
+            if (!Array.isArray(mp.draft.deudasVinculadas) || mp.draft.deudasVinculadas.length === 0) {
+                document.getElementById('err-debt').textContent = 'Selecciona al menos una deuda, o crea una nueva. Si no tiene deuda, marca "No tiene deuda".';
+                return focusError('err-debt', 'debt-link-list');
+            }
+        } else {
+            mp.draft.deudasVinculadas = [];
+        }
+    }
+    if (mp.currentStep === 5) {
+        mp.draft.location = document.getElementById('asset-location').value;
+        mp.draft.legalStructure = document.getElementById('asset-legal-structure').value;
+        mp.draft.legalStructureOtro = mp.draft.legalStructure === 'Otro'
+            ? document.getElementById('asset-legal-structure-otro').value.trim()
+            : '';
+
+        // Condiciones del activo: porcentaje propio y restricción legal
+        if (mp.draft.esCompartido) {
+            const pctRaw = (document.getElementById('asset-porcentaje').value || '').replace(',', '.').trim();
+            const pct = parseFloat(pctRaw);
+            mp.draft.porcentajePropio = (isFinite(pct) && pct > 0 && pct <= 100) ? pct : 100;
+        } else {
+            mp.draft.porcentajePropio = 100;
+        }
+        mp.draft.restringidoLegal = !!document.getElementById('asset-restringido-legal').checked;
+
+        if (mp.draft.category === 'Empresarial') {
+            mp.draft.rolEmpresarial = document.getElementById('asset-rol-empresarial').value;
+            if (!mp.draft.rolEmpresarial) {
+                document.getElementById('err-final').textContent = 'Selecciona tu rol en la empresa.';
+                return focusError('err-final', 'asset-rol-empresarial');
+            }
+            mp.draft.rolEmpresarialOtro = mp.draft.rolEmpresarial === 'Otro'
+                ? document.getElementById('asset-rol-empresarial-otro').value.trim() : '';
+
+            mp.draft.sector = document.getElementById('asset-sector').value;
+            if (!mp.draft.sector) {
+                document.getElementById('err-final').textContent = 'Selecciona el sector de la empresa.';
+                return focusError('err-final', 'asset-sector');
+            }
+            if (!mp.draft.empRetiro) {
+                document.getElementById('err-final').textContent = 'Indica cómo retiras dinero de la empresa.';
+                return focusError('err-final', 'asset-emp-retiro-group');
+            }
+            mp.draft.empSalarioMensual = (mp.draft.empRetiro === 'salario' || mp.draft.empRetiro === 'mixto')
+                ? getNumberValue(document.getElementById('asset-emp-salario')) : 0;
+            if (mp.draft.empRetiro === 'utilidades' || mp.draft.empRetiro === 'mixto') {
+                mp.draft.empUtilidadesAnual = getNumberValue(document.getElementById('asset-emp-utilidades'));
+                mp.draft.empUtilidadesFreq = document.getElementById('asset-emp-utilidades-freq').value;
+            } else {
+                mp.draft.empUtilidadesAnual = 0;
+            }
+        } else {
+            const cfg = INGRESOS_CONFIG[mp.draft.subtype];
+            if (cfg && cfg.type === 'binario') {
+                if (mp.draft.hasIncome === null) {
+                    document.getElementById('err-final').textContent = 'Indica si genera ingreso o no.';
+                    return focusError('err-final', 'income-yesno');
+                }
+                mp.draft.monthlyIncome = mp.draft.hasIncome === 'si'
+                    ? getNumberValue(document.getElementById('asset-monthly-income')) : 0;
+            } else if (cfg && cfg.type === 'rendimientos') {
+                if (!mp.draft.incomeRendimientos) {
+                    document.getElementById('err-final').textContent = 'Indica qué pasa con los rendimientos.';
+                    return focusError('err-final', 'income-rendimientos');
+                }
+                mp.draft.monthlyIncome = (mp.draft.incomeRendimientos === 'retiro' || mp.draft.incomeRendimientos === 'parcial')
+                    ? getNumberValue(document.getElementById('asset-monthly-income')) : 0;
+            } else {
+                mp.draft.monthlyIncome = 0;
+            }
+
+            // Sector para activos financieros ligados a empresas (opcional, no bloquea)
+            if (SUBTIPOS_CON_SECTOR.includes(mp.draft.subtype)) {
+                const selSector = document.getElementById('asset-sector');
+                mp.draft.sector = selSector ? selSector.value : '';
+            }
+        }
+
+        // Beneficio tributario (solo para subtipos que lo muestran)
+        const subsConBeneficio = ['Fondo de pensiones voluntarias FPV', 'Cuenta AFC', 'Seguro de pensión con ahorro'];
+        if (subsConBeneficio.includes(mp.draft.subtype)) {
+            const bt = document.getElementById('asset-beneficio-tributario');
+            mp.draft.beneficioTributario = bt ? !!bt.checked : false;
+        } else {
+            mp.draft.beneficioTributario = false;
+        }
+    }
+    return true;
+}
+
+function goNext() {
+    if (!validateCurrentStep()) return;
+    if (mp.currentStep === 5) { saveDraft(); return; }
+    mp.currentStep++;
+    renderWizardState();
+    document.querySelector('.modal-body').scrollTop = 0;
+}
+function goBack() {
+    if (mp.currentStep === 1) return;
+    mp.currentStep--;
+    renderWizardState();
+    clearErrors();
+    document.querySelector('.modal-body').scrollTop = 0;
+}
+
+function saveDraft() {
+    const d = mp.draft;
+    const subInfo = findSubtype(d.category, d.subtype);
+    let monthlyIncomeFinal = 0;
+    if (d.category === 'Empresarial') {
+        monthlyIncomeFinal = (d.empSalarioMensual || 0) + ((d.empUtilidadesAnual || 0) / 12);
+    } else {
+        monthlyIncomeFinal = d.monthlyIncome || 0;
+    }
+    const asset = {
+        id: d.id,
+        category: d.category,
+        subtype: d.subtype,
+        description: d.description,
+        which: d.which || '',
+        currency: d.currency,
+        value: d.value,
+        deudasVinculadas: Array.isArray(d.deudasVinculadas) ? d.deudasVinculadas.slice() : [],
+        location: d.location,
+        legalStructure: d.legalStructure,
+        legalStructureOtro: d.legalStructureOtro || '',
+        liquidity: (subInfo && subInfo.liquidez) || 'Media',
+        generatesIncome: monthlyIncomeFinal > 0,
+        monthlyIncome: monthlyIncomeFinal,
+        sector: d.sector || '',
+        rolEmpresarial: d.rolEmpresarial || '',
+        rolEmpresarialOtro: d.rolEmpresarialOtro || '',
+        empRetiro: d.empRetiro || '',
+        empSalarioMensual: d.empSalarioMensual || 0,
+        empUtilidadesAnual: d.empUtilidadesAnual || 0,
+        empUtilidadesFreq: d.empUtilidadesFreq || '',
+        incomeRendimientos: d.incomeRendimientos || '',
+        hasIncome: d.hasIncome || '',
+        tasaRendimiento: d.tasaRendimiento || 0,
+        valorAdquisicion: d.valorAdquisicion || 0,
+        anioAdquisicion: d.anioAdquisicion || null,
+        tasaDepreciacion: d.tasaDepreciacion || 0,
+        beneficioTributario: !!d.beneficioTributario,
+        esCompartido: !!d.esCompartido,
+        porcentajePropio: (d.porcentajePropio != null ? d.porcentajePropio : 100),
+        restringidoLegal: !!d.restringidoLegal,
+        _sourceFormat: 'mapa-autoservicio-v4',
+        _updatedAt: new Date().toISOString(),
+    };
+    if (mp.editingId) {
+        const idx = mp.assets.findIndex(a => a.id === mp.editingId);
+        if (idx >= 0) mp.assets[idx] = asset;
+    } else {
+        mp.assets.push(asset);
+    }
+    mpSave();
+    closeAssetModal();
+    renderInventory();
+    showToast(mp.editingId ? 'Activo actualizado' : 'Activo agregado correctamente');
+}
+
+function editAsset(id) { openAssetModal(id); }
+function deleteAsset(id) {
+    const asset = mp.assets.find(a => a.id === id);
+    if (!asset) return;
+    host.confirm({
+        title: 'Eliminar activo',
+        msg: `¿Eliminar "${asset.description}" de tu mapa patrimonial?`,
+        confirmText: 'Eliminar', cancelText: 'Cancelar', danger: true,
+        onConfirm: () => {
+            mp.assets = mp.assets.filter(a => a.id !== id);
+            mpSave();
+            renderInventory();
+            showToast('Activo eliminado', 'success');
+        }
+    });
+}
+window.__editAsset = editAsset;
+window.__deleteAsset = deleteAsset;
+
+// Delegado al sistema de toast de la herramienta (host.toast).
+function showToast(msg, type) {
+    const t = (type === true) ? 'error' : (type || 'success');
+    try { host.toast(msg, t); } catch(e) {}
+}
+
+
+  // ════════════════════════════════════════════════════════════════════════════════
+  // MIGRACIÓN: activos viejos con `liability` propio -> deuda nueva en el M2
+  // Se ejecuta una vez al cargar; convierte cada liability>0 en una deuda del M2
+  // y la enlaza al activo. Idempotente: marca el activo con _debtMigrated.
+  // ════════════════════════════════════════════════════════════════════════════════
+  function migrateLegacyLiabilities() {
+    let migrated = 0;
+    mp.assets.forEach(a => {
+      if (a._debtMigrated) return;
+      const legacy = a.liability || 0;
+      if (legacy > 0) {
+        // El saldo del M2 va en COP
+        let saldoCOP = legacy;
+        if (a.currency && a.currency !== 'COP') {
+          const conv = convertirACOP(legacy, a.currency);
+          saldoCOP = isFinite(conv) ? conv : legacy;
+        }
+        const nombre = 'Deuda de ' + (a.description || a.category || 'activo');
+        const newId = host.createDeuda({
+          nombre,
+          saldo: saldoCOP,
+          tipoMapa: a.debtType || '',
+          categoriaActivo: a.category,
+          origenMapa: true,
+        });
+        if (newId) {
+          a.deudasVinculadas = Array.isArray(a.deudasVinculadas) ? a.deudasVinculadas : [];
+          a.deudasVinculadas.push(newId);
+          migrated++;
+        }
+      }
+      // Limpiar campos viejos y marcar migrado
+      a._debtMigrated = true;
+      delete a.liability;
+      delete a.debtType;
+      delete a.debtTypeOtro;
+      if (!Array.isArray(a.deudasVinculadas)) a.deudasVinculadas = [];
+    });
+    if (migrated > 0) { mpSave(); }
+    return migrated;
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════════
+  // LISTENERS DEL WIZARD  (sin auth — la herramienta ya autentica)
+  // ════════════════════════════════════════════════════════════════════════════════
+  let listenersBound = false;
+  function bindListeners() {
+    if (listenersBound) return;
+    listenersBound = true;
+
+    const byId = (id) => document.getElementById(id);
+    const on = (id, ev, fn) => { const el = byId(id); if (el) el.addEventListener(ev, fn); };
+
+    on('btn-add-first', 'click', () => openAssetModal());
+    on('btn-add-more', 'click', () => openAssetModal());
+    on('mp-add-asset', 'click', () => openAssetModal());
+    on('btn-next', 'click', goNext);
+    on('btn-back', 'click', goBack);
+    on('modal-close', 'click', () => {
+      host.confirm({ title:'¿Cerrar sin guardar?', msg:'Perderás lo que llevas de este activo.', confirmText:'Cerrar', cancelText:'Seguir editando', danger:true, onConfirm: closeAssetModal });
+    });
+    on('asset-modal', 'click', (e) => {
+      if (e.target.id === 'asset-modal') {
+        host.confirm({ title:'¿Cerrar sin guardar?', msg:'Perderás lo que llevas de este activo.', confirmText:'Cerrar', cancelText:'Seguir editando', danger:true, onConfirm: closeAssetModal });
+      }
+    });
+
+    on('asset-currency', 'change', () => {
+      if (mp.draft) mp.draft.currency = byId('asset-currency').value;
+      updateCurrencyPrefix();
+      updateValueCOPDisplay();
+    });
+    on('asset-value', 'input', updateValueCOPDisplay);
+
+    // Botón crear-deuda nueva (mini-formulario, opción B)
+    on('new-debt-toggle', 'click', () => {
+      const nf = byId('new-debt-form');
+      if (nf) nf.style.display = nf.style.display === 'none' ? 'block' : 'none';
+    });
+    on('new-debt-save', 'click', createAndLinkDebt);
+
+    document.addEventListener('click', (e) => {
+      const debtOpt = e.target.closest('.yesno-option[data-debt]');
+      if (debtOpt && mp.draft) {
+        mp.draft.hasDebt = debtOpt.dataset.debt;
+        renderStep4();
+        clearErrors();
+      }
+      const incomeOpt = e.target.closest('.yesno-option[data-income]');
+      if (incomeOpt && mp.draft) {
+        mp.draft.hasIncome = incomeOpt.dataset.income;
+        renderStep5();
+        clearErrors();
+      }
+      const comparteOpt = e.target.closest('.yesno-option[data-comparte]');
+      if (comparteOpt && mp.draft) {
+        mp.draft.esCompartido = comparteOpt.dataset.comparte === 'si';
+        if (!mp.draft.esCompartido) mp.draft.porcentajePropio = 100;
+        renderCompartidoBlock();
+      }
+      const retiroOpt = e.target.closest('.radio-option[data-retiro]');
+      if (retiroOpt && mp.draft) {
+        mp.draft.empRetiro = retiroOpt.dataset.retiro;
+        renderEmpRetiroBlock();
+        clearErrors();
+      }
+      const rendOpt = e.target.closest('.radio-option[data-rend]');
+      if (rendOpt && mp.draft) {
+        mp.draft.incomeRendimientos = rendOpt.dataset.rend;
+        const cfg = INGRESOS_CONFIG[mp.draft.subtype];
+        if (cfg) renderGenericIncomeBlock(cfg);
+        clearErrors();
+      }
+      // Checkbox de enlace de deuda del M2
+      const linkChk = e.target.closest('.debt-link-check');
+      if (linkChk && mp.draft) {
+        const id = linkChk.dataset.deudaId;
+        if (!Array.isArray(mp.draft.deudasVinculadas)) mp.draft.deudasVinculadas = [];
+        if (linkChk.checked) {
+          if (!mp.draft.deudasVinculadas.includes(id)) mp.draft.deudasVinculadas.push(id);
+        } else {
+          mp.draft.deudasVinculadas = mp.draft.deudasVinculadas.filter(x => x !== id);
+        }
+        updateNetWorthPreview();
+        clearErrors();
+      }
+    });
+
+    on('asset-legal-structure', 'change', (e) => {
+      if (!mp.draft) return;
+      mp.draft.legalStructure = e.target.value;
+      byId('legal-structure-otro-field').style.display = e.target.value === 'Otro' ? 'block' : 'none';
+    });
+    on('asset-rol-empresarial', 'change', (e) => {
+      if (!mp.draft) return;
+      mp.draft.rolEmpresarial = e.target.value;
+      byId('rol-empresarial-otro-field').style.display = e.target.value === 'Otro' ? 'block' : 'none';
+    });
+    on('asset-sector', 'change', (e) => { if (mp.draft) mp.draft.sector = e.target.value; });
+
+    document.addEventListener('keydown', (e) => {
+      const modal = byId('asset-modal');
+      if (!modal || !modal.classList.contains('open')) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        host.confirm({ title:'¿Cerrar sin guardar?', msg:'Perderás lo que llevas de este activo.', confirmText:'Cerrar', cancelText:'Seguir editando', danger:true, onConfirm: closeAssetModal });
+      }
+    });
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════════
+  // API PÚBLICA DEL MÓDULO
+  // ════════════════════════════════════════════════════════════════════════════════
+  function init(opts) {
+    // Cablear el contrato con la herramienta
+    if (opts && opts.host) Object.assign(host, opts.host);
+    // Cargar datos del mapa (vienen de la herramienta)
+    if (opts && opts.data) {
+      mp.trm = opts.data.trm || {};
+      mp.assets = Array.isArray(opts.data.activos) ? opts.data.activos : [];
+    }
+    bindListeners();
+    migrateLegacyLiabilities();
+    renderInventory();
+  }
+
+  function setData(data) {
+    mp.trm = (data && data.trm) || {};
+    mp.assets = (data && Array.isArray(data.activos)) ? data.activos : [];
+    renderInventory();
+  }
+
+  function refresh() { renderInventory(); }  // re-render (p.ej. tras cambios en el M2)
+
+  return {
+    init,
+    setData,
+    refresh,
+    getData: getExportData,
+    onChange: (cb) => { if (typeof cb === 'function') changeListeners.push(cb); },
+  };
+
+  })(); // fin IIFE MapaPatrimonial
+  window.MapaPatrimonial = MapaPatrimonial;
+
   
   /* ═══════════════════════════════════════════════════════════
      HELPERS — formato y parseo
@@ -220,6 +1880,11 @@
   const fmt = v => {
     if (v == null || isNaN(v)) return currency + ' 0';
     return currency + ' ' + Math.round(Number(v)).toLocaleString('es-CO');
+  };
+  // Formato compacto (prefijo solo "$") para montos grandes en tarjetas estrechas del tablero
+  const fmtCorto = v => {
+    if (v == null || isNaN(v)) return '$ 0';
+    return '$ ' + Math.round(Number(v)).toLocaleString('es-CO');
   };
   const fmtNum = v => {
     if (v == null || isNaN(v)) return '0';
@@ -331,7 +1996,7 @@
     if(id===3){renderActivosTable();calcM3();}
     if(id===4){renderAhorroTable();calcM4();}
     if(id===5){renderP5Deudas();calcP5Totals();}
-    if(id===6){renderTablero();renderCharts();}
+    if(id===6){renderTablero();renderCharts();renderDashboardPatrimonio();renderDashboardRiesgo();renderDashboardIngresos();}
     if(id===7){renderDebtSim();}
     if(id===8){renderMetas();}
     if(id===9){renderInformeM9();}
@@ -397,6 +2062,7 @@
     let pagosConsumo=0,pagosApal=0;
     state.deudas=[];
     document.querySelectorAll('#deudas-body .multi-row').forEach(r=>{
+      let rowId=r.dataset.id; if(!rowId){ rowId=genDebtId(); r.dataset.id=rowId; }
       const nombre=r.querySelector('input[data-f=nombre]')?.value||'';
       const saldo=n(r.querySelector('input[data-f=saldo]')?.value);
       const cuota=n(r.querySelector('input[data-f=cuota]')?.value);
@@ -416,7 +2082,7 @@
           if(cm>0 || cn.trim()) cargos.push({nombre:cn, monto:cm});
         });
       }
-      state.deudas.push({nombre,saldo,cuota_mensual:cuota,tasa_anual:tasa,tipo,grupo,cargos});
+      state.deudas.push({id:rowId,nombre,saldo,cuota_mensual:cuota,tasa_anual:tasa,tipo,grupo,cargos});
     });
     syncCargosTarjeta();   // refleja los cargos de tarjeta en la categoría sincronizada de gastos
     const tasaProm     = totalDeuda>0 ? sumaPond/totalDeuda : 0;
@@ -501,16 +2167,16 @@
       if(a.tipo==='LÍQUIDO') totalLiquido += a.valor||0;
       else totalNoLiquido += a.valor||0;
     });
-    document.querySelectorAll('#activos-body .multi-row').forEach(r=>{
-      if(r.classList.contains('multi-row-locked')) return;
-      const nombre=r.querySelector('input[data-f=nombre]')?.value||'';
-      const valor=n(r.querySelector('input[data-f=valor]')?.value);
-      const tipo=r.querySelector('select[data-f=tipo]')?.value||'NO LÍQUIDO';
-      const restringido=r.querySelector('input[data-f=restringido]')?.checked||false;
+    // Activos del Mapa Patrimonial (función puente): valor BRUTO en COP + liquidez.
+    let mapaData = null;
+    try { mapaData = (window.MapaPatrimonial && window.MapaPatrimonial.getData) ? window.MapaPatrimonial.getData() : null; } catch(e){ mapaData=null; }
+    const mapaActivos = (mapaData && Array.isArray(mapaData.activosNormalizados)) ? mapaData.activosNormalizados : [];
+    mapaActivos.forEach(a=>{
+      const valor=a.valor||0;
       totalActivos+=valor;
-      if(tipo==='LÍQUIDO') totalLiquido+=valor; else totalNoLiquido+=valor;
-      if(restringido) totalRestringido+=valor;
-      state.activos.push({nombre,valor,tipo,restringido});
+      if(a.tipo==='LÍQUIDO') totalLiquido+=valor; else totalNoLiquido+=valor;
+      if(a.restringido) totalRestringido+=valor;
+      state.activos.push({nombre:a.nombre,valor,tipo:a.tipo,restringido:!!a.restringido,_mapaId:a._mapaId});
     });
     const pctL=totalActivos>0?totalLiquido/totalActivos:0;
     const pctNL=totalActivos>0?totalNoLiquido/totalActivos:0;
@@ -518,7 +2184,8 @@
     const patrimonioNeto = totalActivos - totalDeuda;
     const patrimonioDisponible = (totalActivos - totalRestringido) - totalDeuda;
     const dispClass = patrimonioDisponible >= 0 ? 'is-pos' : 'is-neg';
-    document.getElementById('m3-kpis').innerHTML = `
+    const kpisEl = document.getElementById('m3-kpis');
+    if(kpisEl) kpisEl.innerHTML = `
       <div class="kpi is-info span-2">
         <div class="kpi-label">Total activos</div>
         <div class="kpi-value">${fmt(totalActivos)}</div>
@@ -1325,6 +2992,7 @@
   function makeMultiRow(fields, opts={}){
     const row=document.createElement('div');
     row.className='multi-row';
+    if(opts.rowId) row.dataset.id=opts.rowId;
     let html=`<div class="mr-head"><input type="text" class="it-name" data-f="nombre" value="${fields.nombre||''}" placeholder="${opts.namePlaceholder||'Descripción'}">
       <button class="it-del" title="Eliminar">${SVG_X}</button></div>
       <div class="mr-grid">`;
@@ -1350,8 +3018,9 @@
   }
   function addDeudaRowFromState(i){
     const d=state.deudas[i]||{nombre:'',saldo:0,cuota_mensual:0,tasa_anual:0,tipo:'CONSUMO_TARJETA'};
+    if(!d.id){ d.id=genDebtId(); }
     const body=document.getElementById('deudas-body');
-    const row=makeMultiRow(d,{cells:[deudaCells(d)],namePlaceholder:'Nombre de la deuda (ej: Tarjeta Visa, Préstamo mamá)'});
+    const row=makeMultiRow(d,{cells:[deudaCells(d)],namePlaceholder:'Nombre de la deuda (ej: Tarjeta Visa, Préstamo mamá)',rowId:d.id});
     body.appendChild(row);
     const sIn=row.querySelector('input[data-f=saldo]');  sIn.value=d.saldo>0?fmtInput(d.saldo):'';attachMoneyInput(sIn);
     const cIn=row.querySelector('input[data-f=cuota]'); cIn.value=d.cuota_mensual>0?fmtInput(d.cuota_mensual):'';attachMoneyInput(cIn);
@@ -1447,15 +3116,16 @@
   function addDeudaRow(){
     const cnt=document.querySelectorAll('#deudas-body .multi-row').length;
     if(cnt>=15){showToast('Máximo 15 deudas','error');return;}
-    const d={nombre:'',saldo:0,cuota_mensual:0,tasa_anual:0,tipo:'CONSUMO_TARJETA'};
+    const d={id:genDebtId(),nombre:'',saldo:0,cuota_mensual:0,tasa_anual:0,tipo:'CONSUMO_TARJETA'};
     state.deudas.push(d);
     addDeudaRowFromState(state.deudas.length-1);
   }
   
   function renderActivosTable(){
-    const body=document.getElementById('activos-body');
-    body.innerHTML='';
-  
+    // Gestiona SOLO las filas sincronizadas (fondo de estabilización de MVar y
+    // fondo de provisiones de M5) dentro de state.activos. El inventario real de
+    // bienes lo administra el módulo Mapa Patrimonial (window.MapaPatrimonial).
+
     // 1. Fondo de estabilización (módulo de variables)
     if(state.varIncome && state.varIncome.active){
       const idx = state.activos.findIndex(a => a.linkedToFondo);
@@ -1478,13 +3148,12 @@
     } else {
       state.activos.forEach(a => { if(a.linkedToFondo) delete a.linkedToFondo; });
     }
-  
+
     // 2. Fondo de provisiones (módulo M5) — solo si hay gastos anuales registrados
     const totalAnualP5 = state.p5.gastosAnual || 0;
     if(totalAnualP5 > 0 || (state.p5.fondoProvisiones||0) > 0){
       const idx = state.activos.findIndex(a => a.linkedToProvisiones);
       if(idx === -1){
-        // Insertar después del fondo de estabilización si existe, si no al inicio
         const insertAt = state.activos.findIndex(a => a.linkedToFondo) === 0 ? 1 : 0;
         state.activos.splice(insertAt, 0, {
           nombre: 'Fondo de provisiones',
@@ -1496,7 +3165,6 @@
         state.activos[idx].valor = state.p5.fondoProvisiones||0;
         state.activos[idx].nombre = 'Fondo de provisiones';
         state.activos[idx].tipo = 'LÍQUIDO';
-        // Asegurar que esté después del fondo de estabilización
         const targetIdx = state.activos.findIndex(a => a.linkedToFondo) === 0 ? 1 : 0;
         if(idx !== targetIdx){
           const item = state.activos.splice(idx,1)[0];
@@ -1506,8 +3174,11 @@
     } else {
       state.activos.forEach(a => { if(a.linkedToProvisiones) delete a.linkedToProvisiones; });
     }
-  
-    state.activos.forEach((_,i)=>addActivoRowFromState(i));
+
+    // Refrescar el inventario del Mapa Patrimonial (su propia UI)
+    if(window.MapaPatrimonial && window.MapaPatrimonial.refresh){
+      try { window.MapaPatrimonial.refresh(); } catch(e){ console.error(e); }
+    }
   }
   function activoCells(a){
     return [
@@ -1545,7 +3216,7 @@
       row.className='multi-row multi-row-locked';
       row.innerHTML = '<div class="mr-head">'
         + '<div class="multi-locked-name">' + a.nombre + ' <span class="it-locked-badge">sincronizado</span></div>'
-        + '<a href="#" class="it-locked-link" data-go-prov>Ajustar saldo en presupuesto anual</a>'
+        + '<a href="#" class="it-locked-link" data-go-prov>Ajustar saldo en gastos no periódicos</a>'
         + '</div>'
         + '<div class="mr-grid">'
         + '<div class="mr-field locked"><label>Valor sincronizado</label><div class="locked-value">' + fmt(a.valor||0) + '</div></div>'
@@ -2213,6 +3884,8 @@
      TABLERO + CHARTS
      ═══════════════════════════════════════════════════════════ */
   let chartMensual=null,chartActivos=null,chartDeuda=null;
+  let chartConcTipo=null,chartConcMoneda=null;
+  let chartGeo=null,chartSector=null;
   
   function renderTablero(){
     const {totalIng,totalGas}=calcM1();
@@ -2351,7 +4024,7 @@
       const saldoAnual = state.p5.saldo || 0;
       indicators.push({
         label:'Saldo proyectado fin de año',
-        desc:'Resultado neto del presupuesto anual completo · ingresos − gastos − ahorros − deudas',
+        desc:'Resultado neto de tus gastos no periódicos · ingresos − gastos − ahorros − deudas',
         val:fmt(saldoAnual),
         bar:saldoAnual >= 0 ? 1 : 0,
         color:saldoAnual>=0?'var(--pos)':'var(--neg)',
@@ -2566,6 +4239,447 @@
       },
       options:{...opts,cutout:'70%'}
     });
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // DASHBOARD PATRIMONIAL — Fase 2: bloques base (Mapa de Activos)
+  // ═══════════════════════════════════════════════════════════
+  function getMapaData(){
+    try { return (window.MapaPatrimonial && window.MapaPatrimonial.getData) ? window.MapaPatrimonial.getData() : null; }
+    catch(e){ return null; }
+  }
+
+  // Escape HTML local (la función del módulo no es visible en este scope)
+  function escDash(str){
+    if (str == null) return '';
+    return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  }
+
+  function renderDashboardPatrimonio(){
+    const data = getMapaData();
+    const section = document.getElementById('db-patrimonio-section');
+    if(!section) return;
+    const empty = document.getElementById('db-patrimonio-empty');
+    const activos = (data && data.activosNormalizados) ? data.activosNormalizados : [];
+    const r = (data && data.resumen) ? data.resumen : null;
+
+    // Estado vacío
+    if(!activos.length || !r){
+      if(empty) empty.style.display = 'block';
+      document.getElementById('db-patrimonio-neto').textContent = fmtCorto(0);
+      document.getElementById('db-activos-brutos').textContent = fmtCorto(0);
+      document.getElementById('db-deudas-total').textContent = fmtCorto(0);
+      document.getElementById('db-patrimonio-detalle').textContent = '';
+      document.getElementById('db-patrimonio-crecimiento').textContent = '';
+      document.getElementById('db-activos-count').textContent = '';
+      const liqCard = document.getElementById('db-liquidez-card');
+      if(liqCard) liqCard.style.display = 'none';
+      if(chartConcTipo){ chartConcTipo.destroy(); chartConcTipo=null; }
+      if(chartConcMoneda){ chartConcMoneda.destroy(); chartConcMoneda=null; }
+      return;
+    }
+    if(empty) empty.style.display = 'none';
+    document.getElementById('db-liquidez-card').style.display = '';
+
+    // ── Bloque 1: Patrimonio neto ──
+    document.getElementById('db-patrimonio-neto').textContent = fmtCorto(r.patrimonioNetoCOP);
+    const usdEl = document.getElementById('db-patrimonio-usd');
+    if (usdEl) {
+      if (r.trmUSD && r.trmUSD > 0) {
+        const enUSD = r.patrimonioNetoCOP / r.trmUSD;
+        usdEl.textContent = '≈ USD ' + enUSD.toLocaleString('en-US', {maximumFractionDigits: 0});
+        usdEl.style.display = 'block';
+      } else {
+        usdEl.style.display = 'none';
+      }
+    }
+    document.getElementById('db-activos-brutos').textContent = fmtCorto(r.patrimonioBrutoCOP);
+    document.getElementById('db-deudas-total').textContent = fmtCorto(r.deudaTotalCOP);
+    document.getElementById('db-activos-count').textContent =
+      r.cantidadBienes + (r.cantidadBienes === 1 ? ' activo registrado' : ' activos registrados');
+    const det = document.getElementById('db-patrimonio-detalle');
+    det.textContent = 'Activos ' + fmt(r.patrimonioBrutoCOP) + ' − deudas ' + fmt(r.deudaTotalCOP);
+    // Valorización (solo si hay ganancia real registrada)
+    const grow = document.getElementById('db-patrimonio-crecimiento');
+    if(r.gananciaAcumuladaCOP && r.gananciaAcumuladaCOP > 0){
+      grow.textContent = '↗ Tus activos con historial han ganado ' + fmt(r.gananciaAcumuladaCOP) + ' desde que los adquiriste';
+      grow.style.display = 'block';
+    } else {
+      grow.style.display = 'none';
+    }
+
+    // ── Bloque 4: Liquidez (meses de respaldo) ──
+    let gastoMensual = 0;
+    try { gastoMensual = (calcM1().totalGas) || 0; } catch(e){ gastoMensual = 0; }
+    const liquidoCOP = activos.filter(a => a.tipo === 'LÍQUIDO' && !a.restringido).reduce((s,a)=>s+a.valor,0);
+    const liqMesesEl = document.getElementById('db-liquidez-meses');
+    const liqFraseEl = document.getElementById('db-liquidez-frase');
+    const liqBar = document.getElementById('db-liquidez-bar');
+    if(gastoMensual > 0){
+      const meses = liquidoCOP / gastoMensual;
+      liqMesesEl.textContent = (meses >= 24 ? '24+' : meses.toFixed(1)) + (meses === 1 ? ' mes' : ' meses');
+      let frase, cls;
+      if(meses < 3){ frase = 'Por debajo del colchón recomendado de 3 a 6 meses. Conviene reforzar tu liquidez.'; cls='neg'; }
+      else if(meses < 6){ frase = 'Vas bien. Estás dentro del rango recomendado de 3 a 6 meses.'; cls='warn'; }
+      else { frase = 'Excelente colchón de liquidez: cubres más de 6 meses de gastos.'; cls='pos'; }
+      liqFraseEl.textContent = frase;
+      liqFraseEl.className = 'db-liquidez-frase ' + cls;
+      const pct = Math.min(100, (meses / 6) * 100);
+      liqBar.style.width = pct + '%';
+      liqBar.className = 'db-bar-fill ' + cls;
+    } else {
+      liqMesesEl.textContent = '—';
+      liqFraseEl.textContent = 'Registra tus gastos en el Módulo 1 para calcular cuántos meses cubres con tu liquidez.';
+      liqFraseEl.className = 'db-liquidez-frase';
+      liqBar.style.width = '0%';
+    }
+
+    // ── Bloques 2 y 3: concentración por tipo y moneda ──
+    renderConcentracionCharts(activos, r.patrimonioBrutoCOP);
+  }
+
+  function renderConcentracionCharts(activos, totalBruto){
+    const C={ accent:'#0e4d3a', accent2:'#1a6b54', accent3:'#5a8a73', warn:'#8a5a14', neg:'#8a1f1c', neutral:'#a8a59e', gold:'#b08d2e', blue:'#2b5f7a', border:'#fff' };
+    const palette=[C.accent,C.warn,C.accent2,C.neg,C.blue,C.accent3,C.gold,C.neutral];
+    const opts={responsive:true,maintainAspectRatio:true,plugins:{
+      legend:{position:'bottom',labels:{font:{family:'Geist',size:11,weight:'500'},boxWidth:10,boxHeight:10,padding:14,color:'#2b2b2e',usePointStyle:true,pointStyle:'circle'}},
+      tooltip:{backgroundColor:'#0c0c0d',titleColor:'#fff',bodyColor:'#fff',padding:12,cornerRadius:10,displayColors:false,
+        titleFont:{family:'Geist',weight:'600',size:12},bodyFont:{family:'JetBrains Mono',size:12},
+        callbacks:{label:ctx=>' '+fmt(ctx.parsed)+' ('+(totalBruto>0?Math.round(ctx.parsed/totalBruto*100):0)+'%)'}}
+    }};
+
+    // Agrupar por categoría
+    const porTipo = {};
+    activos.forEach(a => { porTipo[a._categoria] = (porTipo[a._categoria]||0) + a.valor; });
+    const tipoLabels = Object.keys(porTipo);
+    const tipoData = tipoLabels.map(k => porTipo[k]);
+
+    if(chartConcTipo) chartConcTipo.destroy();
+    chartConcTipo = new Chart(document.getElementById('chart-concentracion-tipo').getContext('2d'),{
+      type:'doughnut',
+      data:{labels:tipoLabels,datasets:[{data:tipoData,backgroundColor:palette,borderWidth:3,borderColor:C.border,hoverOffset:8}]},
+      options:{...opts,cutout:'62%'}
+    });
+    // Frase: el tipo más concentrado
+    const fraseTipoEl = document.getElementById('frase-concentracion-tipo');
+    if(tipoLabels.length && totalBruto>0){
+      let maxK=tipoLabels[0],maxV=tipoData[0];
+      tipoData.forEach((v,i)=>{ if(v>maxV){maxV=v;maxK=tipoLabels[i];} });
+      const pct=Math.round(maxV/totalBruto*100);
+      fraseTipoEl.textContent = pct>=60
+        ? `El ${pct}% de tu patrimonio está en ${maxK}. Es una concentración alta; diversificar reduce riesgo.`
+        : `Tu mayor concentración es ${maxK} con el ${pct}% del patrimonio.`;
+    } else { fraseTipoEl.textContent=''; }
+
+    // Agrupar por moneda
+    const porMoneda = {};
+    activos.forEach(a => { const m=a._moneda||'COP'; porMoneda[m]=(porMoneda[m]||0)+a.valor; });
+    const monLabels = Object.keys(porMoneda);
+    const monData = monLabels.map(k => porMoneda[k]);
+
+    if(chartConcMoneda) chartConcMoneda.destroy();
+    chartConcMoneda = new Chart(document.getElementById('chart-concentracion-moneda').getContext('2d'),{
+      type:'doughnut',
+      data:{labels:monLabels,datasets:[{data:monData,backgroundColor:palette,borderWidth:3,borderColor:C.border,hoverOffset:8}]},
+      options:{...opts,cutout:'62%'}
+    });
+    const fraseMonEl = document.getElementById('frase-concentracion-moneda');
+    if(monLabels.length===1 && monLabels[0]==='COP'){
+      fraseMonEl.textContent = 'Todo tu patrimonio está en pesos colombianos.';
+    } else if(monLabels.length && totalBruto>0){
+      const cop = porMoneda['COP']||0;
+      const pctExt = Math.round((totalBruto-cop)/totalBruto*100);
+      fraseMonEl.textContent = `Tienes el ${pctExt}% de tu patrimonio en moneda extranjera.`;
+    } else { fraseMonEl.textContent=''; }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // DASHBOARD PATRIMONIAL — Fase 3: concentración y riesgo
+  // ═══════════════════════════════════════════════════════════
+  function renderDashboardRiesgo(){
+    const data = getMapaData();
+    const section = document.getElementById('db-riesgo-section');
+    if(!section) return;
+    const activos = (data && data.activosNormalizados) ? data.activosNormalizados : [];
+    const totalBruto = (data && data.resumen) ? data.resumen.patrimonioBrutoCOP : 0;
+
+    if(!activos.length || totalBruto <= 0){
+      section.style.display = 'none';
+      return;
+    }
+    section.style.display = '';
+
+    const palette=['#0e4d3a','#8a5a14','#1a6b54','#8a1f1c','#2b5f7a','#5a8a73','#b08d2e','#a8a59e'];
+
+    // ── Dependencia del activo más grande ──
+    let maxA = activos[0];
+    activos.forEach(a => { if(a.valor > maxA.valor) maxA = a; });
+    const pctMax = Math.round(maxA.valor / totalBruto * 100);
+    document.getElementById('db-dependencia-pct').textContent = pctMax + '%';
+    const depFrase = document.getElementById('db-dependencia-frase');
+    const depBar = document.getElementById('db-dependencia-bar');
+    let depCls;
+    if(pctMax >= 50){ depCls='neg'; depFrase.textContent = `Más de la mitad de tu patrimonio depende de un solo activo (${maxA.nombre}). Si algo le pasa, te afecta mucho. Diversificar es clave.`; }
+    else if(pctMax >= 30){ depCls='warn'; depFrase.textContent = `Tu activo más grande (${maxA.nombre}) pesa el ${pctMax}% del patrimonio. Es un nivel a vigilar.`; }
+    else { depCls='pos'; depFrase.textContent = `Tu patrimonio está bien repartido: ningún activo domina (el mayor es ${maxA.nombre}, ${pctMax}%).`; }
+    depFrase.className = 'db-liquidez-frase ' + depCls;
+    depBar.style.width = pctMax + '%';
+    depBar.className = 'db-bar-fill ' + depCls;
+
+    // ── Dependencia de un solo negocio (solo si hay activos empresariales) ──
+    const negCard = document.getElementById('db-negocio-card');
+    const neg = (data && data.resumen) ? data.resumen.negocioUnico : null;
+    if (negCard) {
+      if (neg) {
+        negCard.style.display = '';
+        const pctNeg = Math.round(neg.mayorPct);
+        document.getElementById('db-negocio-pct').textContent = pctNeg + '%';
+        const negFrase = document.getElementById('db-negocio-frase');
+        const negBar = document.getElementById('db-negocio-bar');
+        let negCls;
+        if (pctNeg > 40) {
+          negCls = 'neg';
+          negFrase.textContent = `${neg.mayorNombre} representa el ${pctNeg}% de tu patrimonio, por encima del 40% recomendado. Un negocio puede fallar; concentrar tanto ahí es arriesgado.`;
+        } else if (pctNeg >= 25) {
+          negCls = 'warn';
+          negFrase.textContent = `${neg.mayorNombre} pesa el ${pctNeg}% de tu patrimonio. Está dentro de lo razonable, pero vale la pena vigilarlo.`;
+        } else {
+          negCls = 'pos';
+          negFrase.textContent = `Tu mayor negocio (${neg.mayorNombre}) pesa el ${pctNeg}% del patrimonio. Buen nivel de diversificación.`;
+        }
+        negFrase.className = 'db-liquidez-frase ' + negCls;
+        negBar.style.width = Math.min(pctNeg, 100) + '%';
+        negBar.className = 'db-bar-fill ' + negCls;
+      } else {
+        negCard.style.display = 'none';
+      }
+    }
+
+    const opts={responsive:true,maintainAspectRatio:true,plugins:{
+      legend:{position:'bottom',labels:{font:{family:'Geist',size:11,weight:'500'},boxWidth:10,boxHeight:10,padding:14,color:'#2b2b2e',usePointStyle:true,pointStyle:'circle'}},
+      tooltip:{backgroundColor:'#0c0c0d',titleColor:'#fff',bodyColor:'#fff',padding:12,cornerRadius:10,displayColors:false,
+        titleFont:{family:'Geist',weight:'600',size:12},bodyFont:{family:'JetBrains Mono',size:12},
+        callbacks:{label:ctx=>' '+fmt(ctx.parsed)+' ('+(totalBruto>0?Math.round(ctx.parsed/totalBruto*100):0)+'%)'}}
+    }};
+
+    // ── Concentración geográfica ──
+    const porPais = {};
+    activos.forEach(a => { const p=a._pais||'Colombia'; porPais[p]=(porPais[p]||0)+a.valor; });
+    const paisLabels = Object.keys(porPais);
+    const paisData = paisLabels.map(k=>porPais[k]);
+    if(chartGeo) chartGeo.destroy();
+    chartGeo = new Chart(document.getElementById('chart-geografia').getContext('2d'),{
+      type:'doughnut',
+      data:{labels:paisLabels,datasets:[{data:paisData,backgroundColor:palette,borderWidth:3,borderColor:'#fff',hoverOffset:8}]},
+      options:{...opts,cutout:'62%'}
+    });
+    const fraseGeo = document.getElementById('frase-geografia');
+    if(paisLabels.length === 1){
+      fraseGeo.textContent = `Todo tu patrimonio está en ${paisLabels[0]}.`;
+    } else {
+      const colombia = porPais['Colombia']||0;
+      const pctExt = Math.round((totalBruto-colombia)/totalBruto*100);
+      fraseGeo.textContent = `Tienes el ${pctExt}% de tu patrimonio fuera de Colombia, repartido en ${paisLabels.length-1} ${paisLabels.length-1===1?'país':'países'} más.`;
+    }
+
+    // ── Concentración sectorial (solo activos con sector declarado) ──
+    const porSector = {};
+    let conSector = 0;
+    activos.forEach(a => { if(a._sector){ porSector[a._sector]=(porSector[a._sector]||0)+a.valor; conSector+=a.valor; } });
+    const secLabels = Object.keys(porSector);
+    const fraseSec = document.getElementById('frase-sector');
+    if(chartSector) chartSector.destroy();
+    if(secLabels.length){
+      const secData = secLabels.map(k=>porSector[k]);
+      chartSector = new Chart(document.getElementById('chart-sector').getContext('2d'),{
+        type:'doughnut',
+        data:{labels:secLabels,datasets:[{data:secData,backgroundColor:palette,borderWidth:3,borderColor:'#fff',hoverOffset:8}]},
+        options:{...opts,cutout:'62%',plugins:{...opts.plugins,tooltip:{...opts.plugins.tooltip,callbacks:{label:ctx=>' '+fmt(ctx.parsed)+' ('+(conSector>0?Math.round(ctx.parsed/conSector*100):0)+'%)'}}}}
+      });
+      let maxS=secLabels[0],maxSV=secData[0];
+      secData.forEach((v,i)=>{ if(v>maxSV){maxSV=v;maxS=secLabels[i];} });
+      const pctS=Math.round(maxSV/conSector*100);
+      fraseSec.textContent = `De tus inversiones con sector identificado, el ${pctS}% está en ${maxS}.`;
+    } else {
+      fraseSec.textContent = 'Aún no has registrado el sector de tus inversiones. Agrégalo en acciones, fondos o empresas para ver tu concentración sectorial.';
+    }
+
+    // ── Análisis de deuda ──
+    renderAnalisisDeuda(activos);
+  }
+
+  function renderAnalisisDeuda(activos){
+    const grid = document.getElementById('db-deuda-grid');
+    const frase = document.getElementById('frase-deuda');
+    if(!grid) return;
+    let m2 = {totalDeuda:0,totConsumo:0,totApal:0,totOtro:0};
+    try { m2 = calcM2(); } catch(e){}
+    // Respaldo: si calcM2 no devuelve deuda (DOM del M2 no montado), usar state.deudas
+    let totalDeuda = m2.totalDeuda || 0;
+    if(totalDeuda <= 0 && Array.isArray(state.deudas) && state.deudas.length){
+      totalDeuda = state.deudas.reduce((s,d)=>s+(d.saldo||0),0);
+      m2.totApal = state.deudas.filter(d=>d.grupo==='apalancamiento').reduce((s,d)=>s+(d.saldo||0),0);
+      m2.totConsumo = state.deudas.filter(d=>d.grupo==='consumo').reduce((s,d)=>s+(d.saldo||0),0);
+    }
+    // Cuánta de la deuda está asociada a un activo del mapa
+    const deudaEnActivos = activos.reduce((s,a)=>s+(a._deudaCOP||0),0);
+
+    if(totalDeuda <= 0){
+      grid.innerHTML = '<div class="db-deuda-item"><span class="db-deuda-label">Sin deudas registradas</span><span class="db-deuda-val">Tu patrimonio está libre de deuda.</span></div>';
+      frase.textContent = '';
+      return;
+    }
+    grid.innerHTML = `
+      <div class="db-deuda-item"><span class="db-deuda-label">Deuda total</span><span class="db-deuda-val">${fmt(totalDeuda)}</span></div>
+      <div class="db-deuda-item"><span class="db-deuda-label">Productiva (apalancamiento)</span><span class="db-deuda-val pos">${fmt(m2.totApal||0)}</span></div>
+      <div class="db-deuda-item"><span class="db-deuda-label">De consumo</span><span class="db-deuda-val neg">${fmt(m2.totConsumo||0)}</span></div>`;
+    const pctProd = totalDeuda>0 ? Math.round((m2.totApal||0)/totalDeuda*100) : 0;
+    if(pctProd >= 70){
+      frase.textContent = `El ${pctProd}% de tu deuda es productiva: financia activos que generan valor. Es deuda sana.`;
+    } else if(m2.totConsumo > m2.totApal){
+      frase.textContent = `La mayor parte de tu deuda es de consumo. Conviene priorizar pagarla, porque no genera retorno.`;
+    } else {
+      frase.textContent = `El ${pctProd}% de tu deuda financia activos productivos; el resto es consumo u otros.`;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // DASHBOARD PATRIMONIAL — Fase 4: ingresos pasivos e independencia
+  // ═══════════════════════════════════════════════════════════
+  function renderDashboardIngresos(){
+    const data = getMapaData();
+    const section = document.getElementById('db-ingresos-section');
+    if(!section) return;
+    const activos = (data && data.activosNormalizados) ? data.activosNormalizados : [];
+    const r = (data && data.resumen) ? data.resumen : null;
+    if(!activos.length || !r){ section.style.display = 'none'; return; }
+    section.style.display = '';
+
+    // ── Ingreso pasivo y proyección ──
+    const ingresoPasivo = r.ingresoPasivoMensualCOP || 0;
+    document.getElementById('db-ingreso-pasivo').textContent = fmtCorto(ingresoPasivo);
+
+    // % de gastos mensuales que cubre el ingreso pasivo
+    let gastoMensual = 0;
+    try { gastoMensual = (calcM1().totalGas) || 0; } catch(e){ gastoMensual = 0; }
+    const cubreEl = document.getElementById('db-ingreso-cubre');
+    if (cubreEl) {
+      if (gastoMensual > 0) {
+        const pctCubre = Math.round(ingresoPasivo / gastoMensual * 100);
+        cubreEl.textContent = `Cubre el ${pctCubre}% de tus gastos mensuales`;
+      } else {
+        cubreEl.textContent = 'De tus activos que generan renta hoy';
+      }
+    }
+
+    // Renta (ingreso pasivo) proyectada a futuro
+    const rentaProy = r.ingresoPasivoProyectado || {a5:0,a10:0,a15:0};
+    const renta10 = document.getElementById('db-renta-10');
+    const renta15 = document.getElementById('db-renta-15');
+    if (renta10) renta10.textContent = fmt(rentaProy.a10);
+    if (renta15) renta15.textContent = fmt(rentaProy.a15);
+
+    // Patrimonio proyectado
+    const proy = r.patrimonioProyectado || {a5:0,a10:0,a15:0};
+    document.getElementById('db-proy-10').textContent = fmtCorto(proy.a10);
+    document.getElementById('db-proy-15').textContent = fmtCorto(proy.a15);
+    const proyNota = document.getElementById('db-proy-nota');
+    const totalAct = activos.length;
+    const proyectables = r.activosProyectables || 0;
+    if(proyectables < totalAct){
+      proyNota.textContent = `Incluye ${proyectables} de ${totalAct} activos (los demás se cuentan a valor de hoy)`;
+    } else {
+      proyNota.textContent = 'Estimación, no es promesa';
+    }
+
+    // ── Independencia financiera ──
+    // Medida REAL: qué parte de tus gastos cubre tu ingreso pasivo de verdad (hoy).
+    // El potencial teórico (regla del 4% sobre el patrimonio productivo) se muestra aparte.
+    const portafolioProd = activos.filter(a => a._esProductivo && !a.restringido).reduce((s,a)=>s+(a._netoCOP||0),0);
+    const ifCard = document.getElementById('db-if-card');
+    const ringFill = document.getElementById('db-if-ring-fill');
+    const pctEl = document.getElementById('db-if-pct');
+    const fraseEl = document.getElementById('db-if-frase');
+    const detEl = document.getElementById('db-if-detalle');
+    const potBox = document.getElementById('db-if-potencial');
+    const potText = document.getElementById('db-if-potencial-text');
+    const circumf = 2 * Math.PI * 52;
+
+    if(gastoMensual > 0){
+      // INDEPENDENCIA REAL = ingreso pasivo que recibes hoy / tus gastos
+      const pctReal = (ingresoPasivo / gastoMensual) * 100;
+      const pctAnillo = Math.min(pctReal, 100);
+      pctEl.textContent = Math.round(pctReal) + '%';
+      ringFill.style.strokeDasharray = circumf;
+      ringFill.style.strokeDashoffset = circumf * (1 - pctAnillo/100);
+      ifCard.classList.remove('if-pos','if-warn','if-neg');
+      if(pctReal >= 100){
+        ifCard.classList.add('if-pos');
+        fraseEl.textContent = '¡Lo lograste! El ingreso que generan tus activos ya cubre tus gastos sin que trabajes.';
+      } else if(pctReal >= 50){
+        ifCard.classList.add('if-warn');
+        fraseEl.textContent = 'Vas por buen camino. Tus activos ya cubren buena parte de tus gastos mensuales.';
+      } else {
+        ifCard.classList.add('if-neg');
+        fraseEl.textContent = 'Estás construyendo tu base. Cada activo que genere renta te acerca a vivir de tus ingresos pasivos.';
+      }
+      detEl.textContent = `Hoy tus activos te generan ${fmt(ingresoPasivo)} al mes, frente a unos ${fmt(gastoMensual)} de gastos. Cuando ese ingreso cubra el 100%, serás financieramente independiente.`;
+
+      // POTENCIAL teórico: si pusieras tu patrimonio productivo a rentar al 4% anual
+      const retiroPotencial = portafolioProd * 0.04 / 12;
+      if(portafolioProd > 0 && retiroPotencial > ingresoPasivo * 1.05){
+        const pctPot = Math.round((retiroPotencial / gastoMensual) * 100);
+        potText.textContent = `Tienes ${fmt(portafolioProd)} en activos que hoy no rentan a su máximo. Si los pusieras a generar renta (al 4% anual), podrías recibir unos ${fmt(retiroPotencial)} al mes (≈${pctPot}% de tus gastos). Tu asesor puede ayudarte a activar ese potencial.`;
+        potBox.style.display = 'flex';
+      } else {
+        potBox.style.display = 'none';
+      }
+    } else {
+      pctEl.textContent = '—';
+      ringFill.style.strokeDashoffset = circumf;
+      fraseEl.textContent = 'Registra tus gastos mensuales en el Módulo 1 para calcular cuánto cubren tus ingresos pasivos.';
+      detEl.textContent = '';
+      potBox.style.display = 'none';
+    }
+
+    // ── Dependencia de ingresos por activo ──
+    renderDependenciaIngresos(activos, ingresoPasivo);
+  }
+
+  function renderDependenciaIngresos(activos, ingresoTotal){
+    const list = document.getElementById('db-dep-ingreso-list');
+    const frase = document.getElementById('frase-dep-ingreso');
+    const card = document.getElementById('db-dep-ingreso-card');
+    if(!list) return;
+    const generadores = activos.filter(a => (a._ingresoMensual||0) > 0)
+      .map(a => ({ nombre:a.nombre, ingreso:a._ingresoMensual, moneda:a._moneda }))
+      .sort((x,y)=>y.ingreso-x.ingreso);
+
+    if(!generadores.length || ingresoTotal <= 0){
+      card.style.display = 'none';
+      return;
+    }
+    card.style.display = '';
+    // Ingreso en COP de cada generador para el %
+    const totalCOP = ingresoTotal;
+    list.innerHTML = generadores.map(g => {
+      const ingCOP = g.moneda && g.moneda !== 'COP' ? null : g.ingreso; // si extranjero, mostramos sin % exacto
+      const pct = (ingCOP != null && totalCOP > 0) ? Math.round(ingCOP/totalCOP*100) : null;
+      return `<div class="db-dep-row">
+        <div class="db-dep-bar-wrap"><div class="db-dep-bar" style="width:${pct!=null?Math.min(pct,100):50}%"></div></div>
+        <div class="db-dep-info"><span class="db-dep-name">${escDash(g.nombre)}</span><span class="db-dep-pct">${pct!=null?pct+'%':fmt(g.ingreso)}</span></div>
+      </div>`;
+    }).join('');
+
+    const top = generadores[0];
+    const topPct = (top.moneda==='COP' && totalCOP>0) ? Math.round(top.ingreso/totalCOP*100) : null;
+    if(generadores.length === 1){
+      frase.textContent = `Todo tu ingreso pasivo viene de un solo activo (${top.nombre}). Si ese ingreso falla, lo pierdes todo. Conviene diversificar tus fuentes.`;
+    } else if(topPct != null && topPct >= 60){
+      frase.textContent = `El ${topPct}% de tu ingreso pasivo depende de ${top.nombre}. Es una concentración alta.`;
+    } else {
+      frase.textContent = `Tu ingreso pasivo viene de ${generadores.length} activos distintos. Buena diversificación de fuentes.`;
+    }
   }
   
   /* ═══════════════════════════════════════════════════════════
@@ -2958,6 +5072,15 @@
     // Mismo orden, pero SIN consolidar — para medir el efecto puro de la compra de cartera
     const planSinCons = simularDeuda(base.map(d=>({...d})), ds.capacidadExtra, ordering, abonos, {rollover:true, useExtra:true});
 
+    // Nombre(s) de la(s) deuda(s) que con solo mínimos NUNCA terminan (no amortizan)
+    const minimosNuncaTermina = (minimos.deudas || []).filter(d => d.payoffMes == null && d.saldo > 0.5);
+    const nombreNuncaTermina = minimosNuncaTermina.map(d => d.nombre || 'Deuda').join(', ');
+    // Cantidad de deudas que SÍ se amortizan con solo mínimos (a estas NO les traemos nombre)
+    const nAmortizan = (minimos.deudas || []).filter(d => d.payoffMes != null).length;
+    const refOtras = nAmortizan > 0
+      ? (nAmortizan === 1 ? 'tu otra deuda' : 'tus ' + nAmortizan + ' demás deudas')
+      : '';
+
     let ahorroVal, ahorroSub, ahorroPos = false;
     if(plan.estancado){
       ahorroVal = '—'; ahorroSub = 'Aumenta tu abono para ver el ahorro';
@@ -2972,7 +5095,9 @@
       const intMin = (minimos.interesSerie && minimos.interesSerie[idx]) || 0;
       const a = Math.max(0, intMin - plan.totalInteres);
       ahorroVal = fmt(a); ahorroPos = a > 0;
-      ahorroSub = 'Con solo mínimos esa deuda nunca termina; tú sales en ' + mesesATexto(plan.mes);
+      ahorroSub = nombreNuncaTermina
+        ? ('Con solo mínimos, ' + nombreNuncaTermina + ' nunca termina' + (refOtras ? ' (y sigues pagando ' + refOtras + ')' : '') + '; tú sales en ' + mesesATexto(plan.mes))
+        : ('Con solo mínimos esa deuda nunca termina; tú sales en ' + mesesATexto(plan.mes));
     }
     // Si no hay abono extra pero igual hay ahorro, viene del método (ordenar y redirigir cuotas)
     if(ahorroPos && (ds.capacidadExtra || 0) <= 0){
@@ -2998,12 +5123,32 @@
       + '</div>'
       + '</div>';
 
+    // Fila "Solo pagos mínimos": nombramos SOLO la deuda que nunca termina; a las demás
+    // (si las hay) las referimos genéricamente. Los intereses son el TOTAL de todas las
+    // deudas acumulado hasta el horizonte de TU plan (comparación justa).
+    let minTiempoTxt, minInteresTxt;
+    if(minimos.estancado){
+      const idxH = Math.min(plan.mes, (minimos.interesSerie || []).length - 1);
+      const intMinHorizonte = (minimos.interesSerie && minimos.interesSerie[idxH]) || 0;
+      if(nombreNuncaTermina){
+        minTiempoTxt = 'No termina · ' + nombreNuncaTermina
+          + (refOtras ? ' <span class="ds-cmp-note">(+ ' + refOtras + ')</span>' : '');
+      } else {
+        minTiempoTxt = 'No termina';
+      }
+      minInteresTxt = (plan.estancado || intMinHorizonte <= 0)
+        ? '—'
+        : (fmt(intMinHorizonte) + ' <span class="ds-cmp-note">' + (refOtras ? 'total de tus deudas, en el mismo plazo de tu plan' : 'en el mismo plazo de tu plan') + '</span>');
+    } else {
+      minTiempoTxt = mesesATexto(minimos.mes);
+      minInteresTxt = fmt(minimos.totalInteres);
+    }
     /* ── Comparación ── */
     html += '<div class="card">'
       + '<div class="card-head"><div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3v18M3 7h18M5 7l3 7H2zM19 7l3 7h-6z"/></svg></div><h3>Tu plan vs. pagar solo mínimos</h3></div>'
       + '<div class="ds-cmp">'
       + '<div class="ds-cmp-row head"><span>Escenario</span><span>Tiempo</span><span>Intereses</span></div>'
-      + '<div class="ds-cmp-row"><span>Solo pagos mínimos</span><span>' + (minimos.estancado ? 'No termina' : mesesATexto(minimos.mes)) + '</span><span>' + (minimos.estancado ? '—' : fmt(minimos.totalInteres)) + '</span></div>'
+      + '<div class="ds-cmp-row"><span>Solo pagos mínimos</span><span>' + minTiempoTxt + '</span><span>' + minInteresTxt + '</span></div>'
       + '<div class="ds-cmp-row best"><span>Tu plan · ' + planLabel() + '</span><span>' + (plan.estancado ? 'No termina' : mesesATexto(plan.mes)) + '</span><span>' + (plan.estancado ? '—' : fmt(plan.totalInteres)) + '</span></div>'
       + '</div></div>';
 
@@ -3106,7 +5251,7 @@
       + '</div>'
       + '</div>'
       + '<label class="ds-budget-toggle"><input type="checkbox" id="ds-include-budget"' + ((state.tablero.planDeuda && state.tablero.planDeuda.activo) ? ' checked' : '') + '>'
-      + '<span><strong>Incluir este plan en mis presupuestos.</strong> Tu abono extra mensual (' + fmt(ds.capacidadExtra||0) + ') entra al presupuesto mensual del tablero, y tu abono extraordinario' + (ds.abonoMonto>0 ? ' (' + fmt(ds.abonoMonto) + ')' : '') + ' al presupuesto anual. Es reversible: desmárcalo y se quita.</span></label>'
+      + '<span><strong>Incluir este plan en mis presupuestos.</strong> Tu abono extra mensual (' + fmt(ds.capacidadExtra||0) + ') entra al presupuesto mensual del tablero, y tu abono extraordinario' + (ds.abonoMonto>0 ? ' (' + fmt(ds.abonoMonto) + ')' : '') + ' al módulo de gastos no periódicos. Es reversible: desmárcalo y se quita.</span></label>'
       + '</div>';
 
     cont.innerHTML = html;
@@ -3512,8 +5657,8 @@
   function metaFuenteOptions(sel){
     const opts = [
       {v:'manual', l:'Lo ingreso manualmente'},
-      {v:'liquido_total', l:'Todos mis activos líquidos disponibles (M3)'},
-      {v:'fondo_provisiones', l:'Fondo de provisiones (M5)'}
+      {v:'liquido_total', l:'Todos mis activos líquidos disponibles (módulo Activos)'},
+      {v:'fondo_provisiones', l:'Fondo de provisiones (módulo Gastos no periódicos)'}
     ];
     if(state.varIncome && state.varIncome.active) opts.push({v:'fondo_estabilizacion', l:'Fondo de estabilización'});
     // Activos individuales: líquidos disponibles + restringidos (cesantías, etc. sirven para metas específicas como vivienda)
@@ -3868,7 +6013,11 @@
         };
       }
       case 'endeudamiento': return {deudas:state.deudas};
-      case 'activos': return {activos:state.activos};
+      case 'activos': {
+        const md = (window.MapaPatrimonial && window.MapaPatrimonial.getData) ? window.MapaPatrimonial.getData() : null;
+        if(md) return {trm:md.trm, activos:md.activos};
+        return state.mapaPatrimonial || {trm:{}, activos:[]};
+      }
       case 'ahorro': return {objetivos_ahorro:state.ahorro};
       case 'presupuesto_anual': return state.p5;
       case 'tablero': return state.tablero;
@@ -3990,7 +6139,27 @@
       completedModules.add(1);
     }
     if(m2){if(m2.deudas) state.deudas=m2.deudas;completedModules.add(2);}
-    if(m3){if(m3.activos) state.activos=m3.activos;completedModules.add(3);}
+    if(m3){
+      // Formato nuevo (Mapa Patrimonial): {trm, activos:[...ricos]}
+      // Formato viejo (tabla simple): {activos:[{nombre,valor,tipo}]} -> se trata como mapa vacío
+      // pero conservamos los activos viejos para que la función puente los exponga.
+      if(Array.isArray(m3.activos) && m3.activos.some(a=>a && (a.category||a.subtype||a._sourceFormat))){
+        state.mapaPatrimonial = {trm:m3.trm||{}, activos:m3.activos};
+      } else if(Array.isArray(m3.activos)){
+        // Migrar tabla simple vieja al formato del mapa (como bienes genéricos)
+        state.mapaPatrimonial = {trm:{}, activos: m3.activos.map((a,i)=>({
+          id:'leg_'+i+'_'+Math.random().toString(36).slice(2,7),
+          category:'Financiero', subtype:'', description:a.nombre||'Activo',
+          currency:'COP', value:a.valor||0, deudasVinculadas:[],
+          liquidity: a.tipo==='LÍQUIDO'?'Alta':'Ilíquida',
+          location:'Colombia', legalStructure:'Propiedad Directa',
+          _sourceFormat:'legacy-tabla-simple', _debtMigrated:true,
+        }))};
+      } else {
+        state.mapaPatrimonial = {trm:{}, activos:[]};
+      }
+      completedModules.add(3);
+    } else { state.mapaPatrimonial = {trm:{}, activos:[]}; }
     if(m4){if(m4.objetivos_ahorro) state.ahorro=m4.objetivos_ahorro;completedModules.add(4);}
     if(m5){state.p5={...state.p5,...m5};completedModules.add(5);}
     if(m6){Object.assign(state.tablero,m6);completedModules.add(6);}
@@ -4018,7 +6187,7 @@
     renderIngresosTable();calcM1();
     renderGastosTable();
     renderDeudasTable();calcM2();
-    renderActivosTable();calcM3();
+    initMapaPatrimonial();renderActivosTable();calcM3();
     renderAhorroTable();calcM4();
     initP5();updateProgress();updateNavStatus();
     showToast('Datos cargados','success');
@@ -4138,9 +6307,77 @@
     completedModules.add(2);updateProgress();updateNavStatus();
     showModal('Módulo guardado','Tus deudas se guardaron correctamente.');showToast('Guardado','success');
   }
+  // ════════════════════════════════════════════════════════════════════════════════
+  // PUENTE CON EL MÓDULO MAPA PATRIMONIAL
+  // ════════════════════════════════════════════════════════════════════════════════
+  // Mapea un tipo de deuda del Mapa (texto libre por categoría) al tipo del M2.
+  function mapaDebtTypeToM2(tipoMapa, categoriaActivo){
+    const t = (tipoMapa||'').toLowerCase();
+    if(/hipotec|habitacional|constructor/.test(t)) return 'APAL_HIPOTECA';
+    if(/margin|apalancamiento|invertir|inversi[oó]n|empresarial|aval|fianza|negocio/.test(t)) return 'APAL_INVERSION';
+    if(/tarjeta/.test(t)) return 'CONSUMO_TARJETA';
+    if(/veh[ií]culo|leasing|prendario/.test(t)) return 'OTRO_VEHICULO';
+    if(/libre inversi[oó]n/.test(t)) return 'CONSUMO_PRESTAMO';
+    // Por categoría del activo si el tipo no fue claro
+    if(categoriaActivo === 'Inmueble') return 'APAL_HIPOTECA';
+    if(categoriaActivo === 'Empresarial' || categoriaActivo === 'Financiero') return 'APAL_INVERSION';
+    if(categoriaActivo === 'Uso Personal') return 'OTRO_VEHICULO';
+    return 'OTRO_PERSONAL';
+  }
+
+  function initMapaPatrimonial(){
+    if(!window.MapaPatrimonial) return;
+    const data = state.mapaPatrimonial || {trm:{}, activos:[]};
+    window.MapaPatrimonial.init({
+      data: data,
+      host: {
+        // Lee las deudas vivas del M2
+        getDeudas: () => (state.deudas || []).map(d => ({id:d.id, nombre:d.nombre, saldo:d.saldo, grupo:d.grupo, tipo:d.tipo})),
+        getDeudaById: (id) => (state.deudas || []).find(d => d.id === id) || null,
+        // Crea una deuda nueva en el M2 (opción B) y devuelve su id
+        createDeuda: (info) => {
+          const id = genDebtId();
+          const tipo = mapaDebtTypeToM2(info.tipoMapa, info.categoriaActivo);
+          const nueva = {
+            id,
+            nombre: info.nombre || 'Deuda',
+            saldo: info.saldo || 0,
+            cuota_mensual: 0,
+            tasa_anual: 0,
+            tipo,
+            grupo: debtGroup(tipo),
+            cargos: [],
+            origenMapa: true,
+          };
+          if(!Array.isArray(state.deudas)) state.deudas = [];
+          state.deudas.push(nueva);
+          // Re-render del M2 para que la fila aparezca allá, y persistir
+          if(document.getElementById('deudas-body')){ renderDeudasTable(); }
+          calcM2();
+          saveModule('endeudamiento',{deudas:state.deudas});
+          return id;
+        },
+        // Persiste los datos del Mapa (formato {trm, activos})
+        persist: (payload) => {
+          state.mapaPatrimonial = {trm:payload.trm||{}, activos:payload.activos||[]};
+          scheduleSave('activos');
+        },
+        // El Mapa cambió -> recalcular módulos que dependen de activos
+        onChange: () => { try{ calcM3(); }catch(e){} },
+        // Modal de confirmación de la herramienta (en vez del confirm del navegador)
+        confirm: (opts) => showConfirm(opts),
+        // Toast de la herramienta (en vez del toast propio del Mapa)
+        toast: (msg, type) => showToast(msg, type),
+      }
+    });
+  }
+
   async function saveM3(){
     calcM3();
-    await saveModule('activos',{activos:state.activos});
+    const data = (window.MapaPatrimonial && window.MapaPatrimonial.getData)
+      ? window.MapaPatrimonial.getData() : null;
+    const payload = data ? {trm:data.trm, activos:data.activos} : (state.mapaPatrimonial||{trm:{},activos:[]});
+    await saveModule('activos', payload);
     completedModules.add(3);updateProgress();updateNavStatus();
     showModal('Módulo guardado','Tus activos se guardaron correctamente.');showToast('Guardado','success');
   }
@@ -4155,7 +6392,7 @@
     await saveModule('presupuesto_anual',state.p5);
     completedModules.add(5);updateProgress();updateNavStatus();
     await regenerateEventosCliente();
-    showModal('Módulo guardado','Tu presupuesto anual se guardó correctamente.');showToast('Guardado','success');
+    showModal('Módulo guardado','Tu módulo de gastos no periódicos se guardó correctamente.');showToast('Guardado','success');
   }
   async function saveM6(){
     await saveModule('tablero',state.tablero);
@@ -4751,7 +6988,6 @@
   });
   document.getElementById('add-deuda').addEventListener('click',addDeudaRow);
   document.getElementById('add-gasto-cat').addEventListener('click',addGastoCategoria);
-  document.getElementById('add-activo').addEventListener('click',addActivoRow);
   document.getElementById('add-ahorro').addEventListener('click',addAhorroRow);
   document.getElementById('socio1').addEventListener('input',calcP5Totals);
   document.getElementById('socio2').addEventListener('input',calcP5Totals);
@@ -4772,7 +7008,7 @@
   renderIngresosTable();calcM1();
   renderGastosTable();
   renderDeudasTable();calcM2();
-  renderActivosTable();calcM3();
+  initMapaPatrimonial();renderActivosTable();calcM3();
   renderAhorroTable();calcM4();
   renderP5GastosAccordions();calcP5Totals();
   

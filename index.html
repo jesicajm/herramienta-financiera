@@ -63,6 +63,7 @@
 .ds-cmp-row:not(.head):nth-child(even){background:rgba(0,0,0,.03)}
 .ds-cmp-row.best{background:rgba(14,77,58,.08);font-weight:500}
 .ds-cmp-row.best span:first-child{color:var(--accent,#0e4d3a)}
+.ds-cmp-note{display:block;font-family:inherit !important;font-size:10.5px;font-weight:400;color:rgba(0,0,0,.4);margin-top:2px;line-height:1.3}
 /* Order of attack */
 .ds-order{display:flex;flex-direction:column;gap:8px}
 .ds-order-item{display:flex;align-items:center;gap:12px;padding:11px 12px;background:rgba(0,0,0,.03);border-radius:11px}
@@ -569,7 +570,7 @@
     </a>
     <a class="sb-item" data-module="3" href="#">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21V12h6v9"/></svg>
-      Activos
+      Mapa Patrimonial
       <span class="sb-dot" id="dot-3"></span>
     </a>
     <a class="sb-item" data-module="4" href="#">
@@ -579,7 +580,7 @@
     </a>
     <a class="sb-item" data-module="5" href="#">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-      Presupuesto Anual
+      Gastos no periódicos
       <span class="sb-dot" id="dot-5"></span>
     </a>
     <div class="sidebar-section" style="margin-top:8px">Plan de acción</div>
@@ -905,21 +906,68 @@
     <div id="modulo-3" class="module">
       <div class="module-head">
         <div class="module-eyebrow"><span class="dot"></span>Módulo 03</div>
-        <h1 class="module-title">¿Cómo están tus <em>activos</em>?</h1>
-        <p class="module-desc">Inventario de todo lo que tienes a valor de mercado actual. La proporción entre activos líquidos y no líquidos define tu flexibilidad financiera.</p>
+        <h1 class="module-title">Tu <em>mapa patrimonial</em></h1>
+        <p class="module-desc">Registra tus propiedades, cuentas, inversiones y negocios a valor de mercado. La deuda asociada a cada activo se enlaza con tu módulo de Endeudamiento, sin volver a digitarla.</p>
       </div>
+
+      <!-- Tarjeta TRM (solo si hay moneda extranjera) -->
+      <div class="card trm-card" id="trm-card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>
+          <h3>Tipos de cambio</h3>
+        </div>
+        <p class="trm-card-hint">Registraste activos en moneda extranjera. Indica cuántos pesos colombianos vale aproximadamente <strong>1 unidad de cada moneda</strong> hoy. Si lo dejas en blanco, ese activo quedará pendiente de conversión.</p>
+        <div id="trm-rows"></div>
+      </div>
+
+      <!-- Inventario de activos -->
       <div class="card">
         <div class="card-head">
           <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21V12h6v9"/></svg></div>
-          <h3>Inventario de activos</h3>
+          <h3>Tus activos <span class="count" id="asset-count-inline"></span></h3>
         </div>
-        <div id="activos-body"></div>
-        <button class="btn-add" id="add-activo">
+
+        <div class="summary-note" id="summary-note"></div>
+
+        <!-- Estado vacío -->
+        <div class="assets-empty" id="empty-state">
+          <div class="assets-empty-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+          </div>
+          <h3 class="assets-empty-title">Aún no has agregado ningún activo</h3>
+          <p class="assets-empty-text">Empieza con lo más fácil: tu cuenta de banco principal, la casa donde vives, o tu carro. Puedes ir agregando uno por uno.</p>
+          <button class="btn btn-primary" id="btn-add-first">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Agregar activo
+          </button>
+        </div>
+
+        <!-- Tarjetas de activos -->
+        <div class="asset-cards" id="asset-cards"></div>
+
+        <button class="btn-add" id="btn-add-more">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           Agregar activo
         </button>
       </div>
+
+      <!-- Resumen de patrimonio (KPIs) — al final, como en el resto de módulos -->
       <div class="kpi-grid" id="m3-kpis"></div>
+
+      <!-- Resumen propio del Mapa (patrimonio neto, conteo, deuda) -->
+      <div class="summary-bar">
+        <div class="summary-stat">
+          <div class="summary-stat-label">Patrimonio neto total</div>
+          <div class="summary-stat-value" id="stat-net-worth">$ 0</div>
+          <div class="summary-stat-sub">Valor de tus activos menos su deuda asociada</div>
+        </div>
+        <div class="summary-stat">
+          <div class="summary-stat-label">Activos registrados</div>
+          <div class="summary-stat-value" id="stat-count">0</div>
+          <div class="summary-stat-sub" id="stat-debt-sub">Sin deudas registradas</div>
+        </div>
+      </div>
+
       <div class="actions">
         <button class="btn btn-secondary" onclick="navigateTo(4)">Siguiente
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="9 18 15 12 9 6"/></svg>
@@ -957,7 +1005,7 @@
     <div id="modulo-5" class="module">
       <div class="module-head">
         <div class="module-eyebrow"><span class="dot"></span>Módulo 05</div>
-        <h1 class="module-title">Tu <em>presupuesto</em> anual</h1>
+        <h1 class="module-title">Tus <em>gastos no periódicos</em></h1>
         <p class="module-desc">Distingue lo que ocurre todos los meses de lo estacional. Convierte cada gasto anual en un equivalente mensual y construye tu fondo de provisiones para evitar la inercia financiera y el endeudamiento forzoso.</p>
       </div>
 
@@ -1094,10 +1142,16 @@
     <div id="modulo-6" class="module">
       <div class="module-head">
         <div class="module-eyebrow"><span class="dot"></span>Tablero de control</div>
-        <h1 class="module-title">Tu <em>salud</em> financiera</h1>
-        <p class="module-desc">Resumen integral, indicadores clave y plan de acción.</p>
+        <h1 class="module-title">Tu <em>tablero</em> financiero y patrimonial</h1>
+        <p class="module-desc">Dos miradas en una: tu mes a mes (cómo se mueve tu dinero) y tu patrimonio (lo que has construido y hacia dónde va).</p>
       </div>
 
+      <!-- ════════ SECCIÓN PATRIMONIAL (alimentada por el Mapa de Activos) ════════ -->
+      <!-- ════════ SECCIÓN 1: MES A MES (flujo financiero) ════════ -->
+      <div class="db-section-head" id="db-financiero-head">
+        <h2 class="db-section-title">Tu mes a mes</h2>
+        <p class="db-section-sub">Cómo entra, sale y se mueve tu dinero cada mes: ingresos, gastos, deuda y tu salud financiera de corto plazo.</p>
+      </div>
       <div class="charts-wrap">
         <div class="chart-card">
           <div class="ch-label">Distribución del ingreso mensual</div>
@@ -1212,6 +1266,183 @@
         </div>
       </div>
 
+
+      <!-- ════════ SECCIÓN 2: TU PATRIMONIO (acumulación) ════════ -->
+      <div class="db-section-head" id="db-patrimonial-head">
+        <h2 class="db-section-title">Tu patrimonio</h2>
+        <p class="db-section-sub">Lo que has construido y hacia dónde va: tus activos, su concentración, los ingresos que generan y tu camino a la libertad financiera.</p>
+      </div>
+      <div class="db-section" id="db-patrimonio-section">
+        <div class="db-section-head">
+          <h3 class="db-subsection-title">Resumen patrimonial</h3>
+          <p class="db-section-sub" id="db-patrimonio-empty" style="display:none;">Aún no has registrado activos. Ve al módulo <strong>Mapa Patrimonial</strong> para empezar.</p>
+        </div>
+
+        <!-- Bloque 1: Patrimonio neto + valorización -->
+        <div class="db-grid">
+          <div class="db-card db-card-hero">
+            <div class="db-card-label">Patrimonio neto</div>
+            <div class="db-card-value" id="db-patrimonio-neto">$ 0</div>
+            <div class="db-card-usd" id="db-patrimonio-usd"></div>
+            <div class="db-card-detail" id="db-patrimonio-detalle"></div>
+            <div class="db-card-growth" id="db-patrimonio-crecimiento"></div>
+          </div>
+          <div class="db-card">
+            <div class="db-card-label">Activos totales</div>
+            <div class="db-card-value-sm" id="db-activos-brutos">$ 0</div>
+            <div class="db-card-sub" id="db-activos-count"></div>
+          </div>
+          <div class="db-card">
+            <div class="db-card-label">Deudas totales</div>
+            <div class="db-card-value-sm" id="db-deudas-total">$ 0</div>
+            <div class="db-card-sub">Asociadas a tus activos</div>
+          </div>
+        </div>
+
+        <!-- Bloque 4: Liquidez -->
+        <div class="db-card db-liquidez" id="db-liquidez-card">
+          <div class="db-card-label">Liquidez · meses de respaldo</div>
+          <div class="db-liquidez-row">
+            <div class="db-liquidez-value" id="db-liquidez-meses">—</div>
+            <div class="db-liquidez-frase" id="db-liquidez-frase"></div>
+          </div>
+          <div class="db-bar"><div class="db-bar-fill" id="db-liquidez-bar"></div></div>
+        </div>
+
+        <!-- Bloques 2 y 3: Concentración por tipo y por moneda -->
+        <div class="charts-wrap">
+          <div class="chart-card">
+            <div class="ch-label">Concentración por tipo de activo</div>
+            <canvas id="chart-concentracion-tipo"></canvas>
+            <div class="db-chart-frase" id="frase-concentracion-tipo"></div>
+          </div>
+          <div class="chart-card">
+            <div class="ch-label">Exposición por moneda</div>
+            <canvas id="chart-concentracion-moneda"></canvas>
+            <div class="db-chart-frase" id="frase-concentracion-moneda"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ════════ SECCIÓN CONCENTRACIÓN Y RIESGO (Fase 3) ════════ -->
+      <div class="db-section" id="db-riesgo-section">
+        <div class="db-section-head">
+          <h3 class="db-subsection-title">Concentración y riesgo</h3>
+          <p class="db-section-sub">Qué tan repartido está tu patrimonio. Demasiado en un solo lugar es un riesgo.</p>
+        </div>
+
+        <!-- Dependencia de un solo activo -->
+        <div class="db-card" id="db-dependencia-card">
+          <div class="db-card-label">Dependencia de tu activo más grande</div>
+          <div class="db-liquidez-row">
+            <div class="db-liquidez-value" id="db-dependencia-pct">—</div>
+            <div class="db-liquidez-frase" id="db-dependencia-frase"></div>
+          </div>
+          <div class="db-bar"><div class="db-bar-fill" id="db-dependencia-bar"></div></div>
+        </div>
+
+        <!-- Dependencia de un solo negocio (solo si hay activos empresariales) -->
+        <div class="db-card" id="db-negocio-card" style="display:none;">
+          <div class="db-card-label">Dependencia de un solo negocio</div>
+          <div class="db-liquidez-row">
+            <div class="db-liquidez-value" id="db-negocio-pct">—</div>
+            <div class="db-liquidez-frase" id="db-negocio-frase"></div>
+          </div>
+          <div class="db-bar"><div class="db-bar-fill" id="db-negocio-bar"></div></div>
+          <div class="db-card-sub" style="margin-top:8px;">Meta recomendada: que ningún negocio pese más del 40% de tu patrimonio.</div>
+        </div>
+
+        <!-- Geografía y sector -->
+        <div class="charts-wrap">
+          <div class="chart-card">
+            <div class="ch-label">Concentración geográfica</div>
+            <canvas id="chart-geografia"></canvas>
+            <div class="db-chart-frase" id="frase-geografia"></div>
+          </div>
+          <div class="chart-card">
+            <div class="ch-label">Concentración sectorial</div>
+            <canvas id="chart-sector"></canvas>
+            <div class="db-chart-frase" id="frase-sector"></div>
+          </div>
+        </div>
+
+        <!-- Análisis de deuda -->
+        <div class="db-card" id="db-deuda-card">
+          <div class="db-card-label">Análisis de tu deuda</div>
+          <div class="db-deuda-grid" id="db-deuda-grid"></div>
+          <div class="db-chart-frase" id="frase-deuda" style="text-align:left;"></div>
+        </div>
+      </div>
+
+      <!-- ════════ SECCIÓN INGRESOS PASIVOS E INDEPENDENCIA (Fase 4) ════════ -->
+      <div class="db-section" id="db-ingresos-section">
+        <div class="db-section-head">
+          <h3 class="db-subsection-title">Ingresos pasivos y libertad financiera</h3>
+          <p class="db-section-sub">Cuánto dinero generan tus activos sin que trabajes, y qué tan cerca estás de vivir de ellos.</p>
+        </div>
+
+        <!-- Ingreso pasivo actual + proyección -->
+        <div class="db-grid">
+          <div class="db-card db-card-hero">
+            <div class="db-card-label">Ingreso pasivo mensual</div>
+            <div class="db-card-value" id="db-ingreso-pasivo">$ 0</div>
+            <div class="db-card-detail" id="db-ingreso-cubre"></div>
+          </div>
+          <div class="db-card">
+            <div class="db-card-label">Renta proyectada a 10 años</div>
+            <div class="db-card-value-sm" id="db-renta-10">$ 0</div>
+            <div class="db-card-sub">Ingreso pasivo mensual estimado</div>
+          </div>
+          <div class="db-card">
+            <div class="db-card-label">Renta proyectada a 15 años</div>
+            <div class="db-card-value-sm" id="db-renta-15">$ 0</div>
+            <div class="db-card-sub">Estimación, no es promesa</div>
+          </div>
+        </div>
+
+        <!-- Patrimonio proyectado -->
+        <div class="db-grid">
+          <div class="db-card">
+            <div class="db-card-label">Patrimonio proyectado a 10 años</div>
+            <div class="db-card-value-sm" id="db-proy-10">$ 0</div>
+            <div class="db-card-sub" id="db-proy-nota"></div>
+          </div>
+          <div class="db-card">
+            <div class="db-card-label">Patrimonio proyectado a 15 años</div>
+            <div class="db-card-value-sm" id="db-proy-15">$ 0</div>
+            <div class="db-card-sub">Estimación, no es promesa</div>
+          </div>
+        </div>
+
+        <!-- Independencia financiera -->
+        <div class="db-card db-if-card" id="db-if-card">
+          <div class="db-card-label">Independencia financiera</div>
+          <div class="db-if-row">
+            <div class="db-if-circle">
+              <svg viewBox="0 0 120 120" class="db-if-ring">
+                <circle cx="60" cy="60" r="52" class="db-if-ring-bg"/>
+                <circle cx="60" cy="60" r="52" class="db-if-ring-fill" id="db-if-ring-fill"/>
+              </svg>
+              <div class="db-if-pct" id="db-if-pct">0%</div>
+            </div>
+            <div class="db-if-info">
+              <div class="db-if-frase" id="db-if-frase"></div>
+              <div class="db-if-detalle" id="db-if-detalle"></div>
+            </div>
+          </div>
+          <div class="db-if-potencial" id="db-if-potencial" style="display:none;">
+            <span class="db-if-potencial-label">Potencial</span>
+            <span id="db-if-potencial-text"></span>
+          </div>
+        </div>
+
+        <!-- Dependencia de ingresos por activo -->
+        <div class="db-card" id="db-dep-ingreso-card">
+          <div class="db-card-label">¿De qué activos depende tu ingreso pasivo?</div>
+          <div class="db-dep-ingreso-list" id="db-dep-ingreso-list"></div>
+          <div class="db-chart-frase" id="frase-dep-ingreso" style="text-align:left;"></div>
+        </div>
+      </div>
     </div>
 
     <!-- ─── MÓDULO 7 · SIMULADOR DE DEUDA ─── -->
@@ -1404,7 +1635,7 @@
           <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg></div>
           <h3>Proyección de patrimonio</h3>
         </div>
-        <p class="ds-hint">El poder del interés compuesto en el tiempo. Ajusta los supuestos: dejamos en blanco para usar tus datos automáticos (patrimonio actual del M3−M2 y aporte del M4).</p>
+        <p class="ds-hint">El poder del interés compuesto en el tiempo. Ajusta los supuestos: dejamos en blanco para usar tus datos automáticos (tu patrimonio actual —tus Activos menos tu Endeudamiento— y tu aporte mensual del módulo Ahorro y Solvencia).</p>
         <div class="ds-cap-grid">
           <div class="mr-field"><label>Patrimonio neto inicial</label><input class="money-input" id="meta-proy-inicial" placeholder="auto"></div>
           <div class="mr-field"><label>Aporte mensual</label><input class="money-input" id="meta-proy-aporte" placeholder="auto"></div>
@@ -1488,7 +1719,7 @@
     </a>
     <a class="bb-item" data-module="3" href="#">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21V12h6v9"/></svg>
-      <span class="bb-label">Activos</span>
+      <span class="bb-label">Patrimonio</span>
       <span class="bb-dot" id="bbdot-3"></span>
     </a>
     <a class="bb-item" data-module="4" href="#">
@@ -1549,6 +1780,440 @@
 </div>
 <script src="https://cdn.jsdelivr.net/npm/pdfmake@0.2.10/build/pdfmake.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pdfmake@0.2.10/build/vfs_fonts.js"></script>
+
+<!-- ════════ MODAL MAPA PATRIMONIAL ════════ -->
+<div class="modal-backdrop" id="asset-modal" role="dialog" aria-modal="true" aria-labelledby="mp-modal-title">
+    <div class="modal">
+        <div class="modal-topbar">
+            <div class="modal-progress">
+                <span id="step-indicator">Paso 1 de 5</span>
+                <div class="modal-progress-bar">
+                    <div class="modal-progress-fill" id="progress-fill" style="width:20%"></div>
+                </div>
+            </div>
+            <button class="modal-close" id="modal-close" aria-label="Cerrar">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+        </div>
+
+        <div class="modal-body">
+
+            <div class="modal-step active" data-step="1">
+                <h2 class="step-title" id="mp-modal-title">¿Qué clase de activo vas a registrar?</h2>
+                <p class="step-subtitle">Escoge la opción que mejor lo describa.</p>
+                <div class="category-grid" id="category-grid"></div>
+                <div class="error-msg" id="err-category">Selecciona una categoría para continuar.</div>
+            </div>
+
+            <div class="modal-step" data-step="2">
+                <h2 class="step-title" id="step2-title">¿Cuál exactamente?</h2>
+                <p class="step-subtitle">Elige la opción que más se parezca.</p>
+                <div class="subtype-list" id="subtype-list"></div>
+                <div class="error-msg" id="err-subtype">Selecciona una opción para continuar.</div>
+            </div>
+
+            <div class="modal-step" data-step="3">
+                <h2 class="step-title">¿Cómo lo identificas y cuánto vale?</h2>
+                <p class="step-subtitle">Dale un nombre que reconozcas y di cuánto vale hoy aproximadamente.</p>
+
+                <div class="field">
+                    <label class="field-label" for="asset-description">Nombre o descripción</label>
+                    <input type="text" id="asset-description" class="input" autocomplete="off">
+                    <div class="field-hint">Algo que te ayude a identificarlo de un vistazo.</div>
+                </div>
+
+                <div class="field" id="asset-which-field" style="display:none;">
+                    <label class="field-label" for="asset-which" id="which-label">
+                        Entidad o producto específico
+                        <span class="optional">(opcional)</span>
+                    </label>
+                    <input type="text" id="asset-which" class="input" autocomplete="off">
+                    <div class="field-hint" id="which-hint"></div>
+                </div>
+
+                <div class="field-row">
+                    <div class="field">
+                        <label class="field-label" for="asset-currency">Moneda</label>
+                        <select id="asset-currency" class="select">
+                            <option value="COP">Pesos colombianos (COP)</option>
+                            <option value="USD">Dólares (USD)</option>
+                            <option value="EUR">Euros (EUR)</option>
+                            <option value="GBP">Libras (GBP)</option>
+                            <option value="MXN">Pesos mexicanos (MXN)</option>
+                            <option value="BRL">Reales (BRL)</option>
+                            <option value="CLP">Pesos chilenos (CLP)</option>
+                            <option value="PEN">Soles (PEN)</option>
+                            <option value="ARS">Pesos argentinos (ARS)</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="asset-value">Valor aproximado hoy</label>
+                        <div class="money-input-wrap">
+                            <span class="money-input-prefix" id="currency-prefix">$</span>
+                            <input type="text" id="asset-value" class="input" placeholder="0" inputmode="numeric" autocomplete="off">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="calc-display" id="asset-value-cop-display" style="display:none;">
+                    <span class="calc-display-label" id="value-cop-label">Equivale a (en pesos):</span>
+                    <span class="calc-display-value" id="asset-value-cop">— COP</span>
+                </div>
+
+                <!-- ¿Cuánto te paga? — solo para activos con tasa conocida (CDT, cuenta alto rendimiento, bonos) -->
+                <div class="field" id="asset-tasa-field" style="display:none;">
+                    <label class="field-label" for="asset-tasa">¿Sabes cuánto te paga al año? <span class="optional">(opcional)</span></label>
+                    <div class="money-input-wrap">
+                        <input type="text" id="asset-tasa" class="input" placeholder="Ej: 9" inputmode="decimal" autocomplete="off" style="text-align:left;">
+                        <span class="money-input-prefix" style="left:auto;right:14px;">% al año</span>
+                    </div>
+                    <div class="field-hint" id="asset-tasa-hint">Suele venir en el papel o la app del banco, algo como “E.A. 9%”. Si no lo sabes, déjalo en blanco y lo mostramos solo por su valor de hoy.</div>
+                </div>
+
+                <!-- ¿Cuánto valía y cuándo lo obtuviste? — para activos que se valorizan o suben/bajan -->
+                <div id="asset-compra-block" style="display:none;">
+                    <div class="field-row">
+                        <div class="field">
+                            <label class="field-label" for="asset-valor-compra">¿Cuánto valía cuando lo obtuviste? <span class="optional">(opcional)</span></label>
+                            <div class="money-input-wrap">
+                                <span class="money-input-prefix" id="compra-prefix">$</span>
+                                <input type="text" id="asset-valor-compra" class="input" placeholder="0" inputmode="numeric" autocomplete="off">
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label class="field-label" for="asset-anio-compra">¿En qué año lo obtuviste? <span class="optional">(opcional)</span></label>
+                            <input type="text" id="asset-anio-compra" class="input" placeholder="Ej: 2018" inputmode="numeric" autocomplete="off" maxlength="4">
+                        </div>
+                    </div>
+                    <div class="field-hint" id="asset-compra-hint">Ya sea que lo compraste, lo heredaste o lo recibiste: si recuerdas cuánto valía entonces, te mostramos cuánto ha crecido. Si no, no hay problema: lo dejamos en su valor de hoy.</div>
+                </div>
+
+                <!-- Nota informativa — para activos que no se proyectan (efectivo, empresa, etc.) -->
+                <div class="info-note" id="asset-comp-nota" style="display:none;">
+                    <span id="asset-comp-nota-text"></span>
+                </div>
+
+                <div class="error-msg" id="err-value">Completa el nombre y un valor mayor a cero.</div>
+            </div>
+
+            <div class="modal-step" data-step="4">
+                <h2 class="step-title">¿Este activo respalda alguna deuda?</h2>
+                <p class="step-subtitle" id="debt-subtitle"></p>
+
+                <div class="yesno">
+                    <div class="yesno-option" data-debt="no">No tiene deuda</div>
+                    <div class="yesno-option" data-debt="si">Sí, tiene deuda</div>
+                </div>
+
+                <div id="debt-detail" style="display:none; margin-top:24px;">
+                    <div class="field">
+                        <label class="field-label">Selecciona las deudas asociadas a este activo</label>
+                        <div class="field-hint">Aparecen las deudas que registraste en tu módulo de Endeudamiento. Marca las que correspondan a este activo — el saldo se toma de allá, no se digita aquí.</div>
+                        <div class="debt-link-list" id="debt-link-list"></div>
+                    </div>
+
+                    <div class="debt-new-toggle-wrap">
+                        <button type="button" class="btn-link" id="new-debt-toggle">+ La deuda no está en la lista — crearla ahora</button>
+                    </div>
+
+                    <div class="debt-new-form" id="new-debt-form" style="display:none;">
+                        <div class="field">
+                            <label class="field-label" for="new-debt-name">Nombre de la deuda</label>
+                            <input type="text" id="new-debt-name" class="input" placeholder="Ej: Hipoteca apartamento, Crédito carro" autocomplete="off">
+                        </div>
+                        <div class="field">
+                            <label class="field-label" for="new-debt-type">Tipo de deuda</label>
+                            <select id="new-debt-type" class="select"></select>
+                        </div>
+                        <div class="field">
+                            <label class="field-label" for="new-debt-saldo">Saldo pendiente <span class="optional">(lo que falta por pagar)</span></label>
+                            <div class="money-input-wrap">
+                                <span class="money-input-prefix" id="debt-currency-prefix">$</span>
+                                <input type="text" id="new-debt-saldo" class="input" placeholder="0" inputmode="numeric" autocomplete="off">
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-secondary" id="new-debt-save">Crear y enlazar deuda</button>
+                        <div class="field-hint">Quedará registrada también en tu módulo de Endeudamiento.</div>
+                        <div class="error-msg" id="err-new-debt">Escribe un nombre y el saldo de la deuda.</div>
+                    </div>
+
+                    <div class="calc-display" id="net-worth-preview" style="display:none;">
+                        <span class="calc-display-label">Lo que es <em>realmente</em> tuyo:</span>
+                        <span class="calc-display-value" id="net-worth-value">— COP</span>
+                    </div>
+                </div>
+                <div class="error-msg" id="err-debt">Indica si tiene deuda o no.</div>
+            </div>
+
+            <div class="modal-step" data-step="5">
+                <h2 class="step-title">Detalles finales</h2>
+                <p class="step-subtitle">Últimos datos y guardamos.</p>
+
+                <div class="field">
+                    <label class="field-label" for="asset-location">¿En qué país está?</label>
+                    <select id="asset-location" class="select">
+                        <option value="Colombia">Colombia</option>
+                        <option value="Estados Unidos">Estados Unidos</option>
+                        <option value="Panamá">Panamá</option>
+                        <option value="España">España</option>
+                        <option value="México">México</option>
+                        <option value="Reino Unido">Reino Unido</option>
+                        <option value="Suiza">Suiza</option>
+                        <option value="Luxemburgo">Luxemburgo</option>
+                        <option value="Islas Caimán">Islas Caimán</option>
+                        <option value="Islas Vírgenes Británicas">Islas Vírgenes Británicas</option>
+                        <option value="Canadá">Canadá</option>
+                        <option value="Brasil">Brasil</option>
+                        <option value="Argentina">Argentina</option>
+                        <option value="Chile">Chile</option>
+                        <option value="Peru">Perú</option>
+                        <option value="Uruguay">Uruguay</option>
+                        <option value="Portugal">Portugal</option>
+                        <option value="Francia">Francia</option>
+                        <option value="Alemania">Alemania</option>
+                        <option value="Dubai (UAE)">Dubai (Emiratos Árabes)</option>
+                        <option value="Singapur">Singapur</option>
+                        <option value="Otro">Otro país</option>
+                    </select>
+                </div>
+
+                <div class="field">
+                    <label class="field-label" for="asset-legal-structure">¿A nombre de quién está?</label>
+                    <select id="asset-legal-structure" class="select">
+                        <option value="Propiedad Directa">A mi nombre personal</option>
+                        <option value="Sociedad Comercial">A nombre de una empresa mía (SAS, Ltda, S.A.)</option>
+                        <option value="LLC">A nombre de una LLC (sociedad en el exterior)</option>
+                        <option value="Holding">A nombre de un holding familiar</option>
+                        <option value="Fideicomiso">A nombre de un fideicomiso / trust</option>
+                        <option value="Otro">Otro / no estoy seguro</option>
+                    </select>
+                </div>
+
+                <div class="field" id="legal-structure-otro-field" style="display:none;">
+                    <label class="field-label" for="asset-legal-structure-otro">¿A nombre de quién?</label>
+                    <input type="text" id="asset-legal-structure-otro" class="input" placeholder="Ej: A nombre de mi mamá, en sucesión, en proceso de transferencia…" autocomplete="off">
+                    <div class="field-hint">Describe brevemente. El asesor te ayudará a estructurarlo después.</div>
+                </div>
+
+                <!-- ─── CONDICIONES DEL ACTIVO: propiedad compartida y restricción legal ─── -->
+                <div class="field">
+                    <label class="field-label">¿Este activo es solo tuyo o lo compartes con alguien?</label>
+                    <div class="yesno" id="asset-comparte">
+                        <div class="yesno-option" data-comparte="no">Es solo mío</div>
+                        <div class="yesno-option" data-comparte="si">Lo comparto con alguien</div>
+                    </div>
+                </div>
+                <div class="field" id="asset-porcentaje-field" style="display:none;">
+                    <label class="field-label" for="asset-porcentaje">¿Qué parte es tuya? <span class="optional">(tu porcentaje)</span></label>
+                    <div class="money-input-wrap">
+                        <input type="text" id="asset-porcentaje" class="input" placeholder="Ej: 50" inputmode="decimal" autocomplete="off" style="padding-left:16px;padding-right:48px;">
+                        <span class="money-input-prefix" style="left:auto;right:14px;">%</span>
+                    </div>
+                    <div class="field-hint">Solo contaremos tu parte en tu patrimonio. El valor total que registraste arriba se conserva para referencia.</div>
+                </div>
+
+                <div class="field">
+                    <label class="checkbox-row">
+                        <input type="checkbox" id="asset-restringido-legal">
+                        <span>
+                            <strong>Tiene una restricción legal</strong>
+                            <span class="checkbox-hint">Embargo, pleito, sucesión o prenda. Sigue siendo tuyo y cuenta en tu patrimonio, pero no podrás disponer de él libremente, así que no lo contamos como dinero disponible.</span>
+                        </span>
+                    </label>
+                </div>
+
+                <!-- ─── EMPRESARIAL: rol + sector + retiro ─── -->
+                <div class="field" id="rol-empresarial-field" style="display:none;">
+                    <label class="field-label" for="asset-rol-empresarial">¿Cuál es tu rol en esta empresa?</label>
+                    <select id="asset-rol-empresarial" class="select">
+                        <option value="">Selecciona tu rol…</option>
+                        <option value="Propietario único">Propietario único</option>
+                        <option value="Socio">Socio</option>
+                        <option value="Representante legal">Representante legal</option>
+                        <option value="Socio y representante legal">Socio y representante legal</option>
+                        <option value="Accionista">Accionista (sin rol operativo)</option>
+                        <option value="Otro">Otro</option>
+                    </select>
+                    <div class="field-hint">Esto define tus obligaciones y responsabilidades frente a la empresa.</div>
+                </div>
+
+                <div class="field" id="rol-empresarial-otro-field" style="display:none;">
+                    <label class="field-label" for="asset-rol-empresarial-otro">Describe tu rol</label>
+                    <input type="text" id="asset-rol-empresarial-otro" class="input" placeholder="Ej: Director, miembro de junta, beneficiario final…" autocomplete="off">
+                </div>
+
+                <div class="field" id="sector-field" style="display:none;">
+                    <label class="field-label" for="asset-sector" id="sector-label">¿Cuál es el sector de la empresa?</label>
+                    <select id="asset-sector" class="select">
+                        <option value="">Selecciona el sector…</option>
+                        <option value="Global / Diversificado">Global / diversificado (ETFs globales, fondos multiactivo)</option>
+                        <option value="Tecnología">Tecnología y software</option>
+                        <option value="Salud y Farmacéutico">Salud y farmacéutico</option>
+                        <option value="Energía y Recursos Naturales">Energía y recursos naturales</option>
+                        <option value="Financiero y Bancario">Financiero y bancario</option>
+                        <option value="Consumo y Retail">Consumo y retail</option>
+                        <option value="Industrial y Manufactura">Industrial y manufactura</option>
+                        <option value="Real Estate / Inmobiliario">Inmobiliario y construcción</option>
+                        <option value="Materias Primas">Materias primas / commodities</option>
+                        <option value="Infraestructura">Infraestructura</option>
+                        <option value="Servicios Profesionales">Servicios profesionales (consultoría, legal, contabilidad)</option>
+                        <option value="Otro">Otro sector</option>
+                    </select>
+                    <div class="field-hint">Ayuda al asesor a entender la naturaleza del negocio y los riesgos asociados.</div>
+                </div>
+
+                <div id="emp-income-block" style="display:none;">
+                    <div class="field">
+                        <label class="field-label">¿Cómo retiras dinero de esta empresa?</label>
+                        <p class="field-hint" style="margin-top:0; margin-bottom:10px;">Esto es importante: <strong>el salario y las utilidades se manejan distinto</strong> en planeación patrimonial.</p>
+                        <div class="radio-list" id="emp-retiro-list">
+                            <div class="radio-option" data-retiro="salario">
+                                <span class="subtype-radio"></span>
+                                <div class="radio-content">
+                                    <div class="radio-option-label">Recibo un salario fijo mensual</div>
+                                    <div class="radio-option-hint">Estoy en nómina o me pago un salario regular cada mes</div>
+                                </div>
+                            </div>
+                            <div class="radio-option" data-retiro="utilidades">
+                                <span class="subtype-radio"></span>
+                                <div class="radio-content">
+                                    <div class="radio-option-label">Retiro utilidades / dividendos</div>
+                                    <div class="radio-option-hint">No tengo salario fijo, retiro plata cuando hay utilidades</div>
+                                </div>
+                            </div>
+                            <div class="radio-option" data-retiro="mixto">
+                                <span class="subtype-radio"></span>
+                                <div class="radio-content">
+                                    <div class="radio-option-label">Ambos: salario y utilidades</div>
+                                    <div class="radio-option-hint">Tengo un salario fijo y además retiro utilidades aparte</div>
+                                </div>
+                            </div>
+                            <div class="radio-option" data-retiro="ninguno">
+                                <span class="subtype-radio"></span>
+                                <div class="radio-content">
+                                    <div class="radio-option-label">No retiro nada todavía</div>
+                                    <div class="radio-option-hint">Las utilidades se reinvierten en la empresa</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="subsection" id="emp-salario-detail" style="display:none;">
+                        <div class="field" style="margin-bottom:0;">
+                            <label class="field-label" for="asset-emp-salario">¿Cuánto es tu salario mensual <em>neto</em>? <span class="optional">(en pesos)</span></label>
+                            <div class="money-input-wrap">
+                                <span class="money-input-prefix">$</span>
+                                <input type="text" id="asset-emp-salario" class="input" placeholder="0" inputmode="numeric" autocomplete="off">
+                            </div>
+                            <div class="field-hint">Lo que <strong>te queda en el bolsillo</strong> cada mes después de impuestos y aportes.</div>
+                        </div>
+                    </div>
+
+                    <div class="subsection" id="emp-utilidades-detail" style="display:none;">
+                        <div class="field">
+                            <label class="field-label" for="asset-emp-utilidades">¿Cuánto retiras de utilidades al año en promedio? <span class="optional">(en pesos)</span></label>
+                            <div class="money-input-wrap">
+                                <span class="money-input-prefix">$</span>
+                                <input type="text" id="asset-emp-utilidades" class="input" placeholder="0" inputmode="numeric" autocomplete="off">
+                            </div>
+                            <div class="field-hint">Total <strong>en el año</strong>. Puede ser irregular: una vez al año, cada semestre, etc.</div>
+                        </div>
+                        <div class="field" style="margin-bottom:0;">
+                            <label class="field-label">¿Con qué frecuencia retiras?</label>
+                            <select id="asset-emp-utilidades-freq" class="select">
+                                <option value="mensual">Más o menos mensual</option>
+                                <option value="trimestral">Cada 3 meses</option>
+                                <option value="semestral">Cada 6 meses</option>
+                                <option value="anual">Una vez al año</option>
+                                <option value="irregular">Sin patrón fijo</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="generic-income-block" style="display:none;">
+                    <div class="field">
+                        <label class="field-label" id="income-q-label"></label>
+                        <p class="field-hint" id="income-q-hint" style="margin-top:0; margin-bottom:10px;"></p>
+
+                        <div class="yesno" id="income-yesno" style="display:none;">
+                            <div class="yesno-option" data-income="no" id="income-no-label">No</div>
+                            <div class="yesno-option" data-income="si" id="income-si-label">Sí</div>
+                        </div>
+
+                        <div class="radio-list" id="income-rendimientos" style="display:none;">
+                            <div class="radio-option" data-rend="retiro">
+                                <span class="subtype-radio"></span>
+                                <div class="radio-content">
+                                    <div class="radio-option-label">Los retiro / los uso</div>
+                                    <div class="radio-option-hint">Salen de la inversión y los recibo en mi cuenta</div>
+                                </div>
+                            </div>
+                            <div class="radio-option" data-rend="reinvierte">
+                                <span class="subtype-radio"></span>
+                                <div class="radio-content">
+                                    <div class="radio-option-label">Se reinvierten</div>
+                                    <div class="radio-option-hint">Quedan dentro de la inversión y aumentan el valor (no es plata que recibo cada mes)</div>
+                                </div>
+                            </div>
+                            <div class="radio-option" data-rend="parcial">
+                                <span class="subtype-radio"></span>
+                                <div class="radio-content">
+                                    <div class="radio-option-label">Parte retiro, parte reinvierto</div>
+                                    <div class="radio-option-hint">Un mix de las dos opciones</div>
+                                </div>
+                            </div>
+                            <div class="radio-option" data-rend="ninguno">
+                                <span class="subtype-radio"></span>
+                                <div class="radio-content">
+                                    <div class="radio-option-label">No genera rendimientos</div>
+                                    <div class="radio-option-hint">Solo espero que se valorice / aprecie con el tiempo</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="subsection" id="income-amount-detail" style="display:none;">
+                        <div class="field" style="margin-bottom:0;">
+                            <label class="field-label" for="asset-monthly-income" id="income-amount-label">¿Cuánto en promedio al mes?</label>
+                            <div class="money-input-wrap">
+                                <span class="money-input-prefix">$</span>
+                                <input type="text" id="asset-monthly-income" class="input" placeholder="0" inputmode="numeric" autocomplete="off">
+                            </div>
+                            <div class="field-hint">Un promedio bruto está bien — no tiene que ser exacto.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Beneficio tributario — solo para productos que suelen tenerlo (FPV, AFC, pensión) -->
+                <div class="field" id="beneficio-tributario-field" style="display:none;">
+                    <label class="checkbox-row">
+                        <input type="checkbox" id="asset-beneficio-tributario">
+                        <span>
+                            <strong>Tiene beneficio tributario</strong>
+                            <span class="checkbox-hint" id="beneficio-tributario-hint">Los aportes a este producto te ayudan a pagar menos impuestos. Si no estás seguro, déjalo sin marcar y tu asesor lo revisa.</span>
+                        </span>
+                    </label>
+                </div>
+
+                <div class="error-msg" id="err-final">Completa todos los campos para guardar.</div>
+            </div>
+
+        </div>
+
+        <div class="modal-footer">
+            <button class="btn btn-secondary btn-back" id="btn-back">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                Atrás
+            </button>
+            <button class="btn btn-primary" id="btn-next">
+                Siguiente
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+            </button>
+        </div>
+    </div>
+</div>
+
 <script src="app.js"></script>
 </body>
 </html>
