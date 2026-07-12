@@ -15,7 +15,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles.css?v=59">
 <style>
 /* ═══ Simulador de Deuda (Módulo 7) ═══ */
 #modulo-7 .ds-hint{font-size:13px;line-height:1.5;color:rgba(0,0,0,.55);margin:0 0 14px}
@@ -594,6 +594,11 @@
       Metas y Proyección
       <span class="sb-dot" id="dot-8"></span>
     </a>
+    <a class="sb-item" data-module="12" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="8"/><rect x="12" y="6" width="3" height="12"/><rect x="17" y="13" width="3" height="5"/></svg>
+      Presupuesto mensual
+      <span class="sb-dot" id="dot-12"></span>
+    </a>
     <div class="sidebar-section" style="margin-top:8px">Resultado</div>
     <a class="sb-item" data-module="6" href="#">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
@@ -604,6 +609,16 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/></svg>
       Informe para mi Asesor
       <span class="sb-dot" id="dot-9"></span>
+    </a>
+    <a class="sb-item" data-module="10" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/></svg>
+      Perfil fiscal
+      <span class="sb-dot" id="dot-10"></span>
+    </a>
+    <a class="sb-item" data-module="11" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      Diagnóstico fiscal
+      <span class="sb-dot" id="dot-11"></span>
     </a>
   </aside>
 
@@ -1703,6 +1718,138 @@
       </div>
     </div>
 
+    <!-- ═══ MÓDULO 10 · PERFIL FISCAL ═══ -->
+    <div id="modulo-10" class="module">
+      <div class="pf-intro">
+        <h2 class="pf-h">Tu <em>perfil fiscal</em></h2>
+        <p class="pf-sub">Se llena una vez. Con esto la herramienta sabe qué impuestos te aplican y empieza a detectar tus vulnerabilidades. Donde algo sea técnico, te lo calculamos o lo explicamos con la <span class="info-tip" data-def="costo_fiscal" tabindex="0">i</span>.</p>
+      </div>
+
+      <!-- 1. Régimen y responsabilidades -->
+      <div class="pf-card">
+        <div class="pf-card-head"><span class="pf-num">1</span><h3>Régimen y responsabilidades<small>Lo que define qué debes presentar</small></h3></div>
+        <div class="pf-label">Régimen <span class="info-tip" data-def="regimen_fiscal" tabindex="0">i</span></div>
+        <div class="pf-seg" id="pf-regimen">
+          <button data-r="ord">Ordinario</button>
+          <button data-r="simple">Simple (RST)</button>
+          <button data-r="">No sé</button>
+        </div>
+        <div class="pf-label">¿Cuáles de estas te aplican?</div>
+        <div class="pf-toggles">
+          <span class="pf-tgl" data-k="iva"><span class="pf-box"></span>Responsable de IVA <span class="info-tip" data-def="resp_iva" tabindex="0">i</span></span>
+          <span class="pf-tgl" data-k="retencion"><span class="pf-box"></span>Agente de retención <span class="info-tip" data-def="resp_retencion" tabindex="0">i</span></span>
+          <span class="pf-tgl" data-k="ica"><span class="pf-box"></span>ICA municipal <span class="info-tip" data-def="resp_ica" tabindex="0">i</span></span>
+          <span class="pf-tgl" data-k="exogena"><span class="pf-box"></span>Obligado a exógena <span class="info-tip" data-def="resp_exogena" tabindex="0">i</span></span>
+        </div>
+        <div class="pf-grid2">
+          <div class="pf-field"><label>Actividad económica (CIIU)</label><div class="pf-inp"><input type="text" id="pf-ciiu" placeholder="Ej: 7020 · Consultoría"></div></div>
+          <div class="pf-field"><label>Municipio(s) de actividad <span class="info-tip" data-def="resp_ica" tabindex="0">i</span></label><div class="pf-inp"><input type="text" id="pf-municipios" placeholder="Ej: Medellín"></div></div>
+        </div>
+      </div>
+
+      <!-- 2. Identificación y movimientos -->
+      <div class="pf-card">
+        <div class="pf-card-head"><span class="pf-num">2</span><h3>Identificación y movimientos<small>Para fechas exactas y para los topes de declarar</small></h3></div>
+        <div class="pf-grid2">
+          <div class="pf-field"><label>Últimos 2 dígitos de tu cédula <span class="info-tip" data-def="fiscal_digitos" tabindex="0">i</span></label><div class="pf-inp"><input type="text" id="pf-digCedula" maxlength="2" inputmode="numeric" placeholder="00"></div></div>
+          <div class="pf-field"><label>Últimos 2 dígitos del NIT</label><div class="pf-inp"><input type="text" id="pf-digNit" maxlength="2" inputmode="numeric" placeholder="00"></div></div>
+          <div class="pf-field"><label>Consumos con tarjeta (año) <span class="info-tip" data-def="fiscal_consumos" tabindex="0">i</span></label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="pf-consumos" inputmode="numeric" placeholder="0"></div></div>
+          <div class="pf-field"><label>Compras y consumos totales (año) <span class="info-tip" data-def="fiscal_compras" tabindex="0">i</span></label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="pf-compras" inputmode="numeric" placeholder="0"></div></div>
+          <div class="pf-field"><label>Consignaciones / depósitos (año) <span class="info-tip" data-def="fiscal_consignaciones" tabindex="0">i</span></label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="pf-consignaciones" inputmode="numeric" placeholder="0"></div></div>
+        </div>
+        <p class="pf-note">Estos tres datos salen de tus extractos del banco y de la tarjeta; junto con tus ingresos y patrimonio completan los seis criterios que definen si estás obligado a declarar.</p>
+        <p class="pf-note" id="pf-compras-hint" style="display:none"></p>
+      </div>
+
+      <!-- 3. Costo fiscal de activos -->
+      <div class="pf-card">
+        <div class="pf-card-head"><span class="pf-num">3</span><h3>Costo fiscal de tus activos<small>No te preocupes si no lo sabes — lo calculamos</small></h3></div>
+        <p class="pf-note">El <strong>costo fiscal</strong> <span class="info-tip" data-def="costo_fiscal" tabindex="0">i</span> es lo que se resta del precio de venta para saber cuánto impuesto pagas si vendes. No te lo preguntamos: dinos el <strong>año y valor de compra</strong> o el <strong>avalúo</strong>, y lo calculamos con el método que te deje pagar menos.</p>
+        <div id="pf-activos"></div>
+      </div>
+
+      <!-- 4. Exterior -->
+      <div class="pf-card">
+        <div class="pf-card-head"><span class="pf-num">4</span><h3>¿Tienes algo fuera de Colombia?<small>Cuentas, inversiones o ingresos del exterior</small></h3></div>
+        <div class="pf-toggles">
+          <span class="pf-tgl" id="pf-tglExt"><span class="pf-box"></span>Sí, tengo activos o ingresos en el exterior <span class="info-tip" data-def="fiscal_exterior" tabindex="0">i</span></span>
+        </div>
+        <div class="pf-grid2" id="pf-extWrap" style="display:none;margin-top:14px">
+          <div class="pf-field"><label>Valor de activos en el exterior</label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="pf-extValor" inputmode="numeric" placeholder="0"></div></div>
+          <div class="pf-field"><label>Ingresos del exterior (año)</label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="pf-extIngresos" inputmode="numeric" placeholder="0"></div></div>
+        </div>
+        <p class="pf-note" id="pf-extNota"></p>
+      </div>
+
+      <!-- 5. IVA y seguridad social -->
+      <div class="pf-card">
+        <div class="pf-card-head"><span class="pf-num">5</span><h3>IVA y aportes<small>Para liquidar el IVA y tu renta exenta por aportes</small></h3></div>
+        <div class="pf-label">IVA del periodo <span class="info-tip" data-def="resp_iva" tabindex="0">i</span></div>
+        <div class="pf-grid2">
+          <div class="pf-field"><label>Ventas gravadas con IVA</label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="pf-ivaVentas" inputmode="numeric" placeholder="0"></div></div>
+          <div class="pf-field"><label>Compras con IVA (descontable)</label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="pf-ivaCompras" inputmode="numeric" placeholder="0"></div></div>
+        </div>
+        <p class="pf-note">Solo aplica si eres responsable de IVA. Con esto estimamos el IVA a pagar (IVA de ventas menos IVA de compras).</p>
+        <div class="pf-label" style="margin-top:18px">Aportes a seguridad social (en el año)</div>
+        <div class="pf-grid2">
+          <div class="pf-field"><label>Salud obligatoria</label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="pf-segSalud" inputmode="numeric" placeholder="0"></div></div>
+          <div class="pf-field"><label>Pensión obligatoria</label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="pf-segPension" inputmode="numeric" placeholder="0"></div></div>
+        </div>
+        <p class="pf-note">Tus aportes obligatorios bajan la base de tu renta: la salud es ingreso no constitutivo de renta y la pensión obligatoria es renta exenta. <strong>Si los dejas vacíos, los estimamos</strong> según tu tipo de ingreso (8% del salario si eres empleado; sobre el 40% de tus ingresos si eres independiente).</p>
+        <div class="pf-label" style="margin-top:18px">Para cerrar tu renta (opcional)</div>
+        <div class="pf-grid2">
+          <div class="pf-field"><label>Intereses de crédito de vivienda (año)</label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="pf-intVivienda" inputmode="numeric" placeholder="auto desde tus deudas"></div></div>
+          <div class="pf-field"><label>Retención en la fuente ya practicada (año)</label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="pf-retencion" inputmode="numeric" placeholder="0"></div></div>
+        </div>
+        <div class="pf-grid2" style="margin-top:12px">
+          <div class="pf-field"><label>Aportes voluntarios a FPV / AFC (año) <span class="info-tip" data-def="aporte_voluntario_fiscal" tabindex="0">i</span></label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="pf-aporteVol" inputmode="numeric" placeholder="0"></div></div>
+          <div class="pf-field"><label>4x1000 (GMF) pagado en el año <span class="info-tip" data-def="gmf_fiscal" tabindex="0">i</span></label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="pf-gmf" inputmode="numeric" placeholder="0"></div></div>
+        </div>
+        <p class="pf-note" id="pf-fpvHint"></p>
+        <p class="pf-note">Los intereses de vivienda se <strong>traen solos de tu crédito hipotecario</strong> en el módulo de deudas (puedes sobrescribirlos). Del 4x1000 es deducible el 50%. La retención es lo que tus pagadores ya te descontaron, y la <strong>medicina prepagada se detecta de tus gastos de salud</strong>.</p>
+      </div>
+
+      <div class="pf-card">
+        <div class="pf-card-head"><span class="pf-num">6</span><h3>¿Puedes usar el Régimen Simple?<small>Unas preguntas rápidas para saberlo</small></h3></div>
+        <p class="pf-note" style="margin-top:0">El Régimen Simple es una forma más fácil de pagar impuestos, con una sola tarifa. No todos pueden usarlo. Responde estas preguntas y, más abajo en tu diagnóstico, te decimos si te conviene o por qué no aplica en tu caso. Toca la <strong>i</strong> si tienes dudas.</p>
+        <div class="pf-grid2" style="margin-top:6px">
+          <div class="pf-field"><label>¿Vives en Colombia la mayor parte del año? <span class="info-tip" data-def="simple_residente" tabindex="0">i</span></label><select id="pf-sc-residente" class="pf-select"><option value="">Selecciona</option><option value="si">Sí</option><option value="no">No</option></select></div>
+          <div class="pf-field"><label>¿Tu trabajo principal es alguna de estas actividades? <span class="info-tip" data-def="simple_actividad" tabindex="0">i</span></label><select id="pf-sc-actividad" class="pf-select"><option value="">Selecciona</option><option value="si">Sí, es una de esas</option><option value="no">No</option></select></div>
+          <div class="pf-field"><label>¿En la práctica le trabajas a una sola empresa, con horario y jefe? <span class="info-tip" data-def="simple_realidad" tabindex="0">i</span></label><select id="pf-sc-realidad" class="pf-select"><option value="">Selecciona</option><option value="si">Sí</option><option value="no">No, tengo varios clientes</option></select></div>
+          <div class="pf-field"><label>¿Estás al día con la DIAN y con salud y pensión? <span class="info-tip" data-def="simple_aldia" tabindex="0">i</span></label><select id="pf-sc-aldia" class="pf-select"><option value="">Selecciona</option><option value="si">Sí</option><option value="no">No / no estoy seguro</option></select></div>
+          <div class="pf-field"><label>¿Tienes RUT y facturas electrónicamente? <span class="info-tip" data-def="simple_factura" tabindex="0">i</span></label><select id="pf-sc-factura" class="pf-select"><option value="">Selecciona</option><option value="si">Sí</option><option value="no">Todavía no</option></select></div>
+          <div class="pf-field"><label>¿Eres socio o dueño de otras empresas? <span class="info-tip" data-def="simple_socio" tabindex="0">i</span></label><select id="pf-sc-socio" class="pf-select"><option value="">Selecciona</option><option value="si">Sí</option><option value="no">No</option></select></div>
+        </div>
+      </div>
+
+      <div class="pf-gocentro">
+        <div>
+          <div class="pf-gocentro-t">¿Listo? Mira tu diagnóstico</div>
+          <div class="pf-gocentro-s">Con estos datos calculamos si debes declarar, tu renta, IVA, ICA y tus oportunidades de ahorro.</div>
+        </div>
+        <button class="pf-gocentro-btn" data-goto="11">Ver diagnóstico fiscal →</button>
+      </div>
+    </div>
+
+    <!-- ═══ MÓDULO 11 · DIAGNÓSTICO FISCAL ═══ -->
+    <div id="modulo-11" class="module">
+      <div class="pf-intro">
+        <h2 class="pf-h">Tu <em>diagnóstico fiscal</em></h2>
+        <p class="pf-sub">Calculado con tu Perfil fiscal y tus demás módulos. Es una estimación de planeación, no la liquidación oficial: lo cuantitativo lo calculamos exacto y lo que requiere criterio lo señalamos para tu contador.</p>
+      </div>
+      <div id="pf-diagnostico"></div>
+      <div id="pf-vulnerabilidades"></div>
+    </div>
+
+    <!-- ─── MÓDULO 12 · PRESUPUESTO MENSUAL ─── -->
+    <div id="modulo-12" class="module">
+      <div class="pf-intro">
+        <h2 class="pf-h">Tu <em>presupuesto</em> mensual</h2>
+        <p class="pf-sub">Cada peso con un trabajo, mes a mes. Le pones una meta a cada gasto, registras lo que gastas y ves lo que te queda. Los meses que llenes alimentan tu Diagnóstico fiscal con cifras reales.</p>
+      </div>
+      <div id="pg-screen"></div>
+    </div>
+
   </main>
 
   <!-- Bottom nav (mobile) -->
@@ -2214,6 +2361,6 @@
     </div>
 </div>
 
-<script src="app.js"></script>
+<script src="app.js?v=59"></script>
 </body>
 </html>

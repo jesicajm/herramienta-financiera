@@ -1,6 +1,7 @@
 /* ═══════════════════════════════════════════════════════════
    FIREBASE — auth + firestore
    ═══════════════════════════════════════════════════════════ */
+   console.log('%cABBA · build fiscal 2026-06-29-v59 · diagnóstico + vulnerabilidades + deducciones (dep336/387, GMF, vivienda auto, prepagada, FPV)', 'color:#0e4d3a;font-weight:bold');
    const firebaseConfig = {
     apiKey: "AIzaSyBLNS_xLAoAsnf5XfajAmVf12f4_mpUMfY",
     authDomain: "evaluafinanzas.firebaseapp.com",
@@ -20,6 +21,328 @@
     auth=firebase.auth();
     authAvailable=true;
   } catch(e){ console.warn('Firebase no configurado, usando localStorage.'); }
+
+  /* ═══════════════════════════════════════════════════════════
+     CONFIGURACIÓN FISCAL — parámetros por año (UVT, topes, tarifas, calendario)
+     Fuente de verdad: Firestore  config/fiscal/anios/{año}  (editable sin re-desplegar).
+     FISCAL_DEFAULT es el respaldo embebido por si el documento no carga.
+     Valores en UVT salvo que se indique; al cambiar la UVT, los topes en pesos se recalculan solos.
+     ═══════════════════════════════════════════════════════════ */
+  const FISCAL_DEFAULT = {
+    vigencia: { anio: 2026, fuente: 'UVT: Res. DIAN 000238/2025. Factores art. 73: Decreto 0449/2026 (AG 2025). Tarifas/calendario: verificar con DIAN y municipio.', actualizado: '2026-04-27', _respaldo: true },
+    uvt: 52374,                                   // UVT 2026 oficial (DIAN)
+    topesDeclaracion: { ingresosBrutos:1400, patrimonioBruto:4500, consumosTarjeta:1400, comprasConsumos:1400, consignaciones:1400 },
+    // Impuesto al patrimonio (art. 292-3 a 297-3 · Ley 2277/2022, régimen permanente). Base = patrimonio LÍQUIDO al 1-ene.
+    impuestoPatrimonio: {
+      umbralUVT:72000,               // régimen permanente: obligado si patrimonio líquido ≥ 72.000 UVT
+      umbralTemporal2026UVT:40000,   // Decreto 1474/2025 (emergencia, SOLO 2026, en revisión Corte Constitucional)
+      exclusionViviendaUVT:12000,    // exclusión de la vivienda de habitación
+      // Tarifas marginales (art. 296-3). acumUVT = impuesto acumulado hasta el 'desde' del rango.
+      tabla: [
+        { desde:0,      hasta:72000,  tarifa:0.000, acumUVT:0 },
+        { desde:72000,  hasta:122000, tarifa:0.005, acumUVT:0 },
+        { desde:122000, hasta:239000, tarifa:0.010, acumUVT:250 },   // (122000−72000)×0,5% = 250 UVT
+        { desde:239000, hasta:null,   tarifa:0.015, acumUVT:1420 }   // 250 + (239000−122000)×1% = 1.420 UVT · 1,5% solo hasta 2026
+      ]
+    },
+    renta: {
+      // Tarifa marginal por rangos en UVT (art. 241 E.T.) — estable, no cambia con la UVT
+      tabla241: [
+        { desde:0,     hasta:1090,  tarifa:0.00, baseUVT:0 },
+        { desde:1090,  hasta:1700,  tarifa:0.19, baseUVT:0 },
+        { desde:1700,  hasta:4100,  tarifa:0.28, baseUVT:116 },
+        { desde:4100,  hasta:8670,  tarifa:0.33, baseUVT:788 },
+        { desde:8670,  hasta:18970, tarifa:0.35, baseUVT:2296 },
+        { desde:18970, hasta:31000, tarifa:0.37, baseUVT:5901 },
+        { desde:31000, hasta:null,  tarifa:0.39, baseUVT:10352 }
+      ],
+      limiteRentasExentasDeducciones: { pct:0.40, topeUVT:1340 },
+      aporteVoluntario:        { pct:0.30, topeUVT:3800 },
+      deduccionDependientes:   { pctIngreso:0.10, topeUVTmes:32, maxDependientes:4 },
+      deduccionSalud:          { topeUVTmes:16 },     // medicina prepagada / pólizas
+      deduccionInteresesVivienda: { topeUVTanio:1200 },
+      rentaExentaLaboral:      { pct:0.25, topeUVTmes:790 }
+    },
+    gananciaOcasional: {
+      tarifa:0.15, tarifaLoterias:0.20,
+      // Exenciones de herencia (art. 307 · Ley 2277/2022) y seguros de vida (art. 303-1), en UVT.
+      herencia: {
+        viviendaCausanteUVT:13000,      // num 1: vivienda de habitación del causante
+        otrosInmueblesCausanteUVT:6500,  // num 2: otros inmuebles del causante
+        porBeneficiarioUVT:3250,         // num 3: por cónyuge/heredero legitimario (individual)
+        noLegitimarioPct:0.20,           // num 4: 20% para no legitimarios/no cónyuge
+        noLegitimarioTopeUVT:1625,       // num 4: tope
+        seguroVidaUVT:3250               // art. 303-1: seguro de vida
+      },
+      // Factores de ajuste del costo fiscal por AÑO DE ADQUISICIÓN y TIPO de bien (art. 73).
+      // IMPORTANTE: dependen del AÑO DE VENTA y los fija un decreto anual de la DIAN (ej. Decreto 0449/2026 para ventas del AG 2025).
+      // Acciones/aportes usan IPC (factores bajos); bienes raíces usan el índice de propiedad raíz (factores altos).
+      // Valores REFERENCIALES para una venta ~2025; el admin debe cargar la tabla oficial vigente en config/fiscal.
+      // Tabla OFICIAL del Decreto 0449 del 27-04-2026 (factores del art. 73 para enajenaciones del año gravable 2025).
+      // Por año de adquisición y tipo de bien. El factor del año de venta cambia cada año (nuevo decreto); actualizar entonces.
+      factoresArt73: {
+        _fuente: 'Decreto 0449/2026 (AG 2025)',
+        acciones: { '1955':4664.64,'1956':4571.26,'1957':4232.67,'1958':3571.20,'1959':3264.90,'1960':3047.31,'1961':2856.78,'1962':2688.94,'1963':2511.50,'1964':1920.42,'1965':1758.11,'1966':1533.84,'1967':1352.33,'1968':1255.75,'1969':1178.09,'1970':1083.26,'1971':1011.41,'1972':896.22,'1973':788.01,'1974':643.73,'1975':514.87,'1976':437.78,'1977':349.06,'1978':273.72,'1979':228.64,'1980':180.64,'1981':145.15,'1982':115.48,'1983':92.79,'1984':79.70,'1985':67.49,'1986':55.27,'1987':45.67,'1988':37.23,'1989':29.17,'1990':23.14,'1991':17.54,'1992':13.82,'1993':11.09,'1994':9.05,'1995':7.41,'1996':6.28,'1997':5.41,'1998':4.61,'1999':3.97,'2000':3.64,'2001':3.36,'2002':3.13,'2003':2.93,'2004':2.75,'2005':2.61,'2006':2.48,'2007':2.37,'2008':2.24,'2009':2.07,'2010':2.03,'2011':1.97,'2012':1.90,'2013':1.85,'2014':1.82,'2015':1.75,'2016':1.64,'2017':1.56,'2018':1.50,'2019':1.45,'2020':1.40,'2021':1.38,'2022':1.30,'2023':1.15,'2024':1.05,'2025':1.00,'2026':1.00 },
+        bienRaizUrbano: { '1955':36085.10,'1956':35363.86,'1957':32744.71,'1958':27626.91,'1959':25257.62,'1960':23574.13,'1961':21981.02,'1962':20800.81,'1963':19429.21,'1964':14857.22,'1965':13600.80,'1966':11865.93,'1967':10462.43,'1968':9714.61,'1969':9113.87,'1970':8380.22,'1971':7823.78,'1972':6934.19,'1973':6097.77,'1974':4981.35,'1975':3981.89,'1976':3386.47,'1977':2698.90,'1978':2117.65,'1979':1768.55,'1980':1398.18,'1981':1121.73,'1982':893.13,'1983':717.70,'1984':616.69,'1985':535.17,'1986':443.02,'1987':375.68,'1988':283.53,'1989':176.77,'1990':122.25,'1991':85.19,'1992':63.81,'1993':45.35,'1994':32.98,'1995':23.50,'1996':17.37,'1997':14.41,'1998':11.07,'1999':9.23,'2000':9.16,'2001':8.86,'2002':8.19,'2003':7.35,'2004':6.92,'2005':6.50,'2006':6.15,'2007':4.67,'2008':4.16,'2009':3.43,'2010':3.12,'2011':2.86,'2012':2.39,'2013':2.05,'2014':1.81,'2015':1.68,'2016':1.60,'2017':1.52,'2018':1.41,'2019':1.30,'2020':1.22,'2021':1.16,'2022':1.12,'2023':1.09,'2024':1.05,'2025':1.00,'2026':1.00 },
+        bienRaizRuralAgro: { '1986':429.25,'1990':118.45,'1995':22.77,'2000':8.88,'2005':6.29,'2010':3.02,'2014':1.76,'2018':1.36,'2020':1.18,'2022':1.09,'2023':1.06,'2024':1.03,'2025':1.00,'2026':1.00 },
+        bienRaizRural: { '1986':437.46,'1990':120.71,'1995':23.20,'2000':9.05,'2005':6.41,'2010':3.08,'2014':1.79,'2018':1.39,'2020':1.21,'2022':1.11,'2023':1.08,'2024':1.05,'2025':1.00,'2026':1.00 },
+        base1986: { acciones:55.27, bienRaizUrbano:443.02, bienRaizRuralAgro:429.25, bienRaizRural:437.46 }
+      }
+    },
+    iva: { tarifaGeneral:0.19, topeNoResponsableUVT:3500, periodicidadBimestralDesdeUVT:92000 },
+    exogena: { ingresosPNUVT:11800, rentasCapNoLabPNUVT:2400, simplePNUVT:11800, sancionMinUVT:10, ventana:'mayo–junio 2026' },   // Res. DIAN 000227/2025 (AG 2025)
+    activosExterior: { topeUVT:2000 },
+    simple: {                                                // Art. 908 ET · post Sentencia C-540/23 · tarifa PLANA por rango (no marginal)
+      topeIngresosUVT:100000,
+      grupos:[
+        { id:1, nombre:'Tiendas, minimercados, peluquería', incConsumo:0, rangos:[
+          {desde:0,hasta:6000,tarifa:0.012},{desde:6000,hasta:15000,tarifa:0.028},{desde:15000,hasta:30000,tarifa:0.044},{desde:30000,hasta:100000,tarifa:0.056} ] },
+        { id:2, nombre:'Comercio, industria, servicios técnicos, telecomunicaciones', incConsumo:0, rangos:[
+          {desde:0,hasta:6000,tarifa:0.016},{desde:6000,hasta:15000,tarifa:0.020},{desde:15000,hasta:30000,tarifa:0.035},{desde:30000,hasta:100000,tarifa:0.045} ] },
+        { id:3, nombre:'Comidas y bebidas, transporte', incConsumo:0.08, rangos:[
+          {desde:0,hasta:6000,tarifa:0.031},{desde:6000,hasta:15000,tarifa:0.034},{desde:15000,hasta:30000,tarifa:0.040},{desde:30000,hasta:100000,tarifa:0.045} ] },
+        { id:4, nombre:'Servicios profesionales, consultoría, profesiones liberales', incConsumo:0, rangos:[
+          {desde:0,hasta:6000,tarifa:0.059},{desde:6000,hasta:15000,tarifa:0.073},{desde:15000,hasta:30000,tarifa:0.12},{desde:30000,hasta:100000,tarifa:0.145} ] }
+      ]
+    },
+    ica: {                                                   // POR MUNICIPIO — agregar los que apliquen
+      medellin: { nombre:'Medellín', tarifasPorMil:{ servicios:7, comercio:5, industria:5 }, periodicidad:'anual' }
+    },
+    sas: {                                                   // Simulador SAS (persona jurídica) 2026
+      tarifaRenta: 0.35,                                     // renta persona jurídica (art. 240)
+      dividendoExentoUVT: 1090,                              // dividendos hasta 1.090 UVT no tienen retención (art. 242)
+      dividendoTarifa: 0.15,                                 // sobre el exceso, 15% (aprox. del impuesto a dividendos ya con descuento art. 254-1)
+      costoAnualTipico: 6000000,                             // contador + cámara + factura electrónica + firma (estimado editable)
+      smmlv: 1423500,                                        // SMMLV 2025 (base para topes de revisor fiscal 2026)
+      revisorFiscalIngresosSMMLV: 3000,                      // revisor fiscal obligatorio si ingresos ≥ 3.000 SMMLV
+      revisorFiscalActivosSMMLV: 5000                        // o si activos ≥ 5.000 SMMLV
+    },
+    calendario: {                                            // Plazos DIAN 2026 (Decreto 2229/2023 · Comunicado DIAN 090)
+      anio:2026,
+      // Declaración de renta personas naturales AG 2025: por los DOS últimos dígitos de la cédula/NIT. Índice 0 = dígitos 01-02.
+      rentaPN:[
+        '2026-08-12','2026-08-13','2026-08-14','2026-08-18','2026-08-19','2026-08-20','2026-08-21','2026-08-24','2026-08-25','2026-08-26',
+        '2026-08-27','2026-08-28','2026-08-31','2026-09-01','2026-09-02','2026-09-03','2026-09-04','2026-09-07','2026-09-08','2026-09-09',
+        '2026-09-10','2026-09-11','2026-09-14','2026-09-15','2026-09-16','2026-09-17','2026-09-18','2026-09-21','2026-09-22','2026-09-23',
+        '2026-09-24','2026-09-25','2026-09-28','2026-10-01','2026-10-02','2026-10-05','2026-10-06','2026-10-07','2026-10-08','2026-10-09',
+        '2026-10-13','2026-10-14','2026-10-15','2026-10-16','2026-10-19','2026-10-20','2026-10-21','2026-10-22','2026-10-23','2026-10-26'
+      ],
+      exogenaVentana:'mayo–junio 2026'   // Res. DIAN 000227/2025; fecha exacta por los 2 últimos dígitos del NIT
+    }
+  };
+  let FISCAL = FISCAL_DEFAULT;
+
+  /* Carga el config fiscal del año desde Firestore, con caché en localStorage y respaldo embebido. */
+  async function cargarConfigFiscal(anio){
+    anio = anio || new Date().getFullYear();
+    const cacheKey = 'abba_fiscal_' + anio;
+    if(!firestoreAvailable){
+      const c = localStorage.getItem(cacheKey);
+      FISCAL = c ? JSON.parse(c) : FISCAL_DEFAULT;
+      return FISCAL;
+    }
+    try{
+      const doc = await db.collection('config').doc('fiscal').collection('anios').doc(String(anio)).get();
+      if(doc.exists){
+        FISCAL = doc.data();
+        localStorage.setItem(cacheKey, JSON.stringify(FISCAL));
+      } else {
+        // No hay config del año: usar caché del año (o del anterior) o el respaldo, y marcar "sin verificar"
+        const prev = localStorage.getItem(cacheKey) || localStorage.getItem('abba_fiscal_' + (anio-1));
+        FISCAL = prev ? JSON.parse(prev) : FISCAL_DEFAULT;
+        FISCAL = { ...FISCAL, _sinVerificar:true };
+        console.warn('config/fiscal/anios/' + anio + ' no existe. Usando respaldo fiscal.');
+      }
+    }catch(e){
+      const c = localStorage.getItem(cacheKey);
+      FISCAL = c ? JSON.parse(c) : FISCAL_DEFAULT;
+    }
+    return FISCAL;
+  }
+
+  /* Helpers de acceso al config fiscal (úsalos en todo el motor de cálculo) */
+  function uvtValor(){ return (FISCAL && FISCAL.uvt) || FISCAL_DEFAULT.uvt; }   // UVT en pesos del año vigente
+  function enPesos(uvts){ return Math.round((uvts||0) * uvtValor()); }          // convierte UVT → pesos
+  function fiscalConfig(){ return FISCAL; }                                     // acceso al objeto completo
+
+  /* ═══════════════════════════════════════════════════════════
+     PRESUPUESTO MENSUAL · API (Fase A)
+     Base de datos por mes que alimenta la precisión fiscal y (en modo activo) el presupuesto.
+     Usa las mismas categorías de gasto del Módulo 1 como rubros.
+     ═══════════════════════════════════════════════════════════ */
+  function pgState(){ if(!state.presupuesto) state.presupuesto={modo:'basico',anioGravable:2026,mesActivo:'2026-01',arrastre:true,gastos:{},ingresos:{},seeded:false}; return state.presupuesto; }
+  var pgOpenMovs = {};   // UI transitoria: qué desgloses de movimientos están abiertos (no se persiste)
+  function pgMovOpen(scope){ return !!pgOpenMovs[scope]; }
+  function pgToggleMov(scope){ if(pgOpenMovs[scope]) delete pgOpenMovs[scope]; else pgOpenMovs[scope]=true; }
+  var pgOpenMeta = {};   // UI transitoria: qué paneles de configuración de meta están abiertos
+  function pgMetaOpen(k){ return !!pgOpenMeta[k]; }
+  function pgToggleMeta(k){ if(pgOpenMeta[k]) delete pgOpenMeta[k]; else pgOpenMeta[k]=true; }
+  function pgAnio(){ return pgState().anioGravable || new Date().getFullYear(); }
+  function pgModo(){ return pgState().modo || 'basico'; }
+  function pgMesKey(anio, m){ return anio + '-' + String(m).padStart(2,'0'); }   // m: 1..12
+  function pgMeses(anio){ anio = anio || pgAnio(); const a=[]; for(let m=1;m<=12;m++) a.push(pgMesKey(anio,m)); return a; }
+  function pgMesActivo(){ const p=pgState(); if(!p.mesActivo || p.mesActivo.slice(0,4)!=String(p.anioGravable)){ const h=pgHoy(); p.mesActivo = (h.slice(0,4)==String(p.anioGravable)) ? h : pgMesKey(pgAnio(),1); } return p.mesActivo; }
+  function pgSetMes(mesKey){ pgState().mesActivo = mesKey; }
+  function pgNombreMes(mesKey){ const M=['','enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre']; return M[+mesKey.slice(5,7)]||''; }
+  // Mes de HOY y clasificación (pasado / actual / futuro) respecto a un mes del año gravable.
+  function pgHoy(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
+  function pgHoyISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+  function pgFechaCorta(iso){ if(!iso) return ''; const p=String(iso).split('-'); if(p.length<3) return ''; const M=['','ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic']; return (+p[2])+' '+(M[+p[1]]||''); }
+  function pgClaseMes(mesKey){ const h=pgHoy(); return mesKey<h ? 'pasado' : (mesKey===h ? 'actual' : 'futuro'); }
+  function pgMesInicio(){ const p=pgState(); if(!p.mesInicio) p.mesInicio = pgHoy(); return p.mesInicio; }
+  // Categorías del Módulo 1 (rubros) con sus ÍTEMS dentro, en el orden persistente del Módulo 1.
+  function pgGenId(){ const p=pgState(); p._iseq=(p._iseq||0)+1; return 'x'+Date.now().toString(36)+p._iseq; }
+  // Estructura PROPIA del presupuesto (independiente del Módulo 1). Se siembra una vez desde el Módulo 1.
+  function pgSeedEstructura(){
+    const p=pgState();
+    if(p.cats && p.cats.length) return;
+    let order; try{ order=(typeof gastoCatOrder==='function')?gastoCatOrder():Object.keys(state.gastos||{}); }catch(e){ order=Object.keys(state.gastos||{}); }
+    const L=state.gastosLabels||{};
+    p.cats = order.map(catKey=>({
+      id: pgGenId(),
+      label: L[catKey] || (catKey.charAt(0).toUpperCase()+catKey.slice(1)),
+      items: ((state.gastosItems && state.gastosItems[catKey]) || []).map(it=>({ id:pgGenId(), nombre:(it && it.nombre)||'', montoTipico:+((it&&it.monto)||0) }))
+    }));
+    p.estructuraSeeded = true;
+  }
+  function pgCategorias(){ const p=pgState(); if(!p.cats || !p.cats.length) pgSeedEstructura(); return p.cats || []; }
+  function pgItemKey(catId, itemId){ return catId + '#' + itemId; }
+  function pgSplitKey(itemKey){ const i=itemKey.indexOf('#'); return [itemKey.slice(0,i), itemKey.slice(i+1)]; }
+  function pgFindCat(catId){ return pgCategorias().find(c=>c.id===catId); }
+  function pgFindItem(itemKey){ const [cid,iid]=pgSplitKey(itemKey); const c=pgFindCat(cid); return c ? (c.items.find(x=>x.id===iid)||null) : null; }
+  function pgItemNombre(it, idx){ return (it && it.nombre && it.nombre.trim()) ? it.nombre : ('Gasto '+(idx+1)); }
+  function pgGeneralItem(itemKey){ const it=pgFindItem(itemKey); return it ? (+it.montoTipico||0) : 0; }
+  function pgItemsFlat(){ const out=[]; pgCategorias().forEach(c=>{ (c.items||[]).forEach((it,idx)=>out.push({ itemKey:pgItemKey(c.id,it.id), catId:c.id, nombre:pgItemNombre(it,idx), montoTipico:+it.montoTipico||0 })); }); return out; }
+  // CRUD + reordenamiento de la estructura del presupuesto.
+  function pgAddCat(){ pgCategorias().push({ id:pgGenId(), label:'Nueva categoría', items:[] }); }
+  function pgAddItem(catId){ const c=pgFindCat(catId); if(c) c.items.push({ id:pgGenId(), nombre:'', montoTipico:0 }); }
+  function pgRenameCat(catId, label){ const c=pgFindCat(catId); if(c) c.label=label; }
+  function pgRenameItem(itemKey, nombre){ const it=pgFindItem(itemKey); if(it) it.nombre=nombre; }
+  function pgDelCat(catId){ const p=pgState(); p.cats=(p.cats||[]).filter(c=>c.id!==catId); }
+  function pgDelItem(itemKey){ const [cid,iid]=pgSplitKey(itemKey); const c=pgFindCat(cid); if(c) c.items=c.items.filter(x=>x.id!==iid); }
+  function pgMoveCat(fromIdx, toIdx){ const a=pgCategorias(); if(fromIdx<0||toIdx<0||fromIdx>=a.length||toIdx>=a.length) return; const [m]=a.splice(fromIdx,1); a.splice(toIdx,0,m); }
+  function pgMoveItem(catId, fromIdx, toIdx){ const c=pgFindCat(catId); if(!c) return; const a=c.items; if(fromIdx<0||toIdx<0||fromIdx>=a.length||toIdx>=a.length) return; const [m]=a.splice(fromIdx,1); a.splice(toIdx,0,m); }
+  function pgImportarDeModulo1(){ const p=pgState(); p.cats=[]; pgSeedEstructura(); }
+  // Celda asignado/real por ÍTEM × mes. real=null => no registrado (para lo fiscal se estima con la cifra del Módulo 1).
+  function pgCell(itemKey, mesKey){ const p=pgState(); p.gastos[itemKey]=p.gastos[itemKey]||{}; if(!p.gastos[itemKey][mesKey]) p.gastos[itemKey][mesKey]={meta:null,real:null}; return p.gastos[itemKey][mesKey]; }
+  function pgAsignadoRaw(itemKey, mesKey){ const m=pgCell(itemKey,mesKey).meta; return (typeof m==='number')?m:null; }   // explícito o null
+  // Asignado EFECTIVO: si no se fijó explícito este mes, se TRAE del último mes anterior que sí lo tenga (arrastre de asignación).
+  function pgAsignado(itemKey, mesKey){
+    const raw=pgAsignadoRaw(itemKey,mesKey); if(raw!==null) return raw;
+    // Mes activo sin ingreso registrado: no se hereda (no repartes plata que aún no ha entrado). Al registrar ingreso, vuelve a heredar.
+    if(pgClaseMes(mesKey)==='actual' && !pgIngresoRegistrado(mesKey)) return 0;
+    let y=+mesKey.slice(0,4), m=+mesKey.slice(5,7);
+    for(let i=0;i<24;i++){ m--; if(m<1){ m=12; y--; } const pk=y+'-'+String(m).padStart(2,'0'); const pr=pgAsignadoRaw(itemKey,pk); if(pr!==null) return pr; }
+    return 0;
+  }
+  function pgAsignadoHeredado(itemKey, mesKey){ return pgAsignadoRaw(itemKey,mesKey)===null && pgAsignado(itemKey,mesKey)>0; }   // ¿se trae del mes anterior?
+  function pgSetAsignado(itemKey, mesKey, v){ pgCell(itemKey,mesKey).meta = Math.max(0,+v||0); }
+  function pgRealRaw(itemKey, mesKey){ const r=pgCell(itemKey,mesKey).real; return (typeof r==='number')?r:null; }
+  function pgSetReal(itemKey, mesKey, v){ pgCell(itemKey,mesKey).real = (v===null||v==='')?null:Math.max(0,+v||0); }
+  // MOVIMIENTOS de gasto: desglose de lo gastado en transacciones. Si hay movimientos, el gastado del mes = su suma.
+  function pgMovs(itemKey, mesKey){ const c=pgCell(itemKey,mesKey); if(!Array.isArray(c.movs)) c.movs=[]; return c.movs; }
+  function pgMovsTotal(itemKey, mesKey){ return pgMovs(itemKey,mesKey).reduce((s,m)=>s+(+m.monto||0),0); }
+  function pgHasMovs(itemKey, mesKey){ return pgMovs(itemKey,mesKey).length>0; }
+  function pgAddMov(itemKey, mesKey, monto, nota, fecha){ pgMovs(itemKey,mesKey).push({id:pgGenId(), monto:Math.max(0,+monto||0), nota:(nota||'').trim(), fecha:fecha||pgHoyISO()}); }
+  function pgDelMov(itemKey, mesKey, movId){ const c=pgCell(itemKey,mesKey); c.movs=(c.movs||[]).filter(m=>m.id!==movId); }
+  function pgSetMovMonto(itemKey, mesKey, movId, v){ const m=pgMovs(itemKey,mesKey).find(x=>x.id===movId); if(m) m.monto=Math.max(0,+v||0); }
+  function pgSetMovNota(itemKey, mesKey, movId, v){ const m=pgMovs(itemKey,mesKey).find(x=>x.id===movId); if(m) m.nota=(v||'').trim(); }
+  function pgSetMovFecha(itemKey, mesKey, movId, v){ const m=pgMovs(itemKey,mesKey).find(x=>x.id===movId); if(m) m.fecha=v||pgHoyISO(); }
+  function pgRegistrado(itemKey, mesKey){ return pgHasMovs(itemKey,mesKey); }
+  function pgGastadoMes(itemKey, mesKey){ return pgHasMovs(itemKey,mesKey) ? pgMovsTotal(itemKey,mesKey) : 0; }   // solo por movimientos
+  function pgGastoFiscalMes(itemKey, mesKey){ return pgHasMovs(itemKey,mesKey) ? pgMovsTotal(itemKey,mesKey) : pgGeneralItem(itemKey); }   // real (movimientos) o estimado del M1 para flujo
+  // Sobrante disponible con ARRASTRE (R1): acumula (asignado + arrastre previo − gastado) mes a mes.
+  function pgDisponible(itemKey, mesKey){
+    const p=pgState(); const meses=pgMeses(mesKey.slice(0,4)); let saldo=0;
+    for(const mk of meses){ saldo += pgAsignado(itemKey,mk) - pgGastadoMes(itemKey,mk); if(mk===mesKey) break; if(!p.arrastre) saldo = 0; }
+    return saldo;
+  }
+  // ── FASE C · Tipos de meta por rubro ────────────────────────────────────
+  // tipo: 'mensual' (fija cada mes) · 'fecha' (llegar a un objetivo para una fecha) · 'llenar' (aportar hasta un tope)
+  function pgItemMeta(it){ if(!it) return {tipo:'mensual'}; if(!it.meta || typeof it.meta!=='object') it.meta={tipo:'mensual'}; if(!it.meta.tipo) it.meta.tipo='mensual'; return it.meta; }
+  function pgMesSig(mesKey){ let y=+mesKey.slice(0,4), m=+mesKey.slice(5,7); m++; if(m>12){m=1;y++;} return pgMesKey(y,m); }
+  function pgMesPrev(mesKey){ let y=+mesKey.slice(0,4), m=+mesKey.slice(5,7); m--; if(m<1){m=12;y--;} return pgMesKey(y,m); }
+  function pgMesesRestantes(desde, hasta){ const y1=+desde.slice(0,4),m1=+desde.slice(5,7),y2=+hasta.slice(0,4),m2=+hasta.slice(5,7); return Math.max(1,(y2-y1)*12+(m2-m1)+1); }
+  // Ahorrado hacia la meta ANTES de este mes (disponible acumulado del mes anterior, dentro del año).
+  function pgMetaAcumPrev(itemKey, mesKey){ if(+mesKey.slice(5,7)<=1) return 0; return Math.max(0, pgDisponible(itemKey, pgMesPrev(mesKey))); }
+  // INTEGRACIÓN con el módulo de Metas: la meta 'fecha' del presupuesto referencia una meta real (objetivo, fecha y saldo viven allá).
+  function pgMetasList(){ if(!state.metas) return []; try{ metaEnsureIds(); }catch(e){} return state.metas.items||[]; }
+  function pgMetaVinculada(it){ const meta=pgItemMeta(it); if(meta.tipo!=='fecha' || !meta.metaRef) return null; return pgMetasList().find(m=>m.id===meta.metaRef)||null; }
+  function pgMetaSaldoReal(v){ try{ return metaSaldoActual(v)||0; }catch(e){ return 0; } }
+  // Aporte mensual igual = (objetivo − saldo real) / meses que faltan hasta la fecha de la meta.
+  function pgMetaAportePorMes(it){
+    const v=pgMetaVinculada(it); if(!v || !v.fecha || !(+v.objetivo>0)) return 0;
+    const anio=pgAnio(); const inicio=(pgMesActivo().slice(0,4)===String(anio))?pgMesActivo():pgMesKey(anio,1);
+    const falta=Math.max(0, (+v.objetivo) - pgMetaSaldoReal(v));
+    if(v.fecha < inicio) return falta;                         // la fecha ya pasó → lo que falte, de una
+    return Math.round(falta / pgMesesRestantes(inicio, v.fecha));
+  }
+  // Escribe el aporte en cada mes desde el mes activo hasta la fecha de la meta (y 0 después, dentro del año).
+  function pgDistribuirMetaFecha(itemKey, it){
+    const v=pgMetaVinculada(it); if(!v || !v.fecha || !(+v.objetivo>0)) return;
+    const anio=pgAnio(); const inicio=(pgMesActivo().slice(0,4)===String(anio))?pgMesActivo():pgMesKey(anio,1);
+    const per=pgMetaAportePorMes(it);
+    let mk=inicio, guard=0;
+    while(guard<48){
+      if(mk.slice(0,4)===String(anio)){
+        if(mk>=inicio && mk<=v.fecha) pgSetAsignado(itemKey,mk,per);
+        else if(mk>v.fecha) pgSetAsignado(itemKey,mk,0);
+      }
+      if(mk===pgMesKey(anio,12)) break;
+      mk=pgMesSig(mk); guard++;
+    }
+  }
+  // Cupo que falta para el tope en una meta 'llenar'.
+  function pgMetaRoom(itemKey, it, mesKey){ const meta=pgItemMeta(it); if(meta.tipo!=='llenar' || !(+meta.tope>0)) return null; return Math.max(0, (+meta.tope) - pgMetaAcumPrev(itemKey, mesKey)); }
+  // Ingreso por mes. meta = esperado; real = registrado (null si no).
+  function pgIngresoCell(mesKey){ const p=pgState(); if(!p.ingresos[mesKey]) p.ingresos[mesKey]={meta:0,real:null}; return p.ingresos[mesKey]; }
+  function pgIngresoMensualGeneral(){ try{ return (state.ingresos||[]).reduce((s,i)=>s+(+i.monto||0),0); }catch(e){ return 0; } }
+  function pgIngresoRealRaw(mesKey){ const r=pgIngresoCell(mesKey).real; return (typeof r==='number')?r:null; }
+  function pgSetIngresoReal(mesKey, v){ pgIngresoCell(mesKey).real = (v===null||v==='')?null:Math.max(0,+v||0); }
+  // MOVIMIENTOS de ingreso: si hay movimientos, el ingreso del mes = su suma.
+  function pgIngMovs(mesKey){ const c=pgIngresoCell(mesKey); if(!Array.isArray(c.movs)) c.movs=[]; return c.movs; }
+  function pgIngMovsTotal(mesKey){ return pgIngMovs(mesKey).reduce((s,m)=>s+(+m.monto||0),0); }
+  function pgIngHasMovs(mesKey){ return pgIngMovs(mesKey).length>0; }
+  function pgAddIngMov(mesKey, monto, nota, fecha){ pgIngMovs(mesKey).push({id:pgGenId(), monto:Math.max(0,+monto||0), nota:(nota||'').trim(), fecha:fecha||pgHoyISO()}); }
+  function pgDelIngMov(mesKey, movId){ const c=pgIngresoCell(mesKey); c.movs=(c.movs||[]).filter(m=>m.id!==movId); }
+  function pgSetIngMovMonto(mesKey, movId, v){ const m=pgIngMovs(mesKey).find(x=>x.id===movId); if(m) m.monto=Math.max(0,+v||0); }
+  function pgSetIngMovNota(mesKey, movId, v){ const m=pgIngMovs(mesKey).find(x=>x.id===movId); if(m) m.nota=(v||'').trim(); }
+  function pgSetIngMovFecha(mesKey, movId, v){ const m=pgIngMovs(mesKey).find(x=>x.id===movId); if(m) m.fecha=v||pgHoyISO(); }
+  function pgIngresoRegistrado(mesKey){ return pgIngHasMovs(mesKey) || pgIngresoRealRaw(mesKey)!==null; }
+  function pgIngresoPlan(mesKey){ if(pgIngHasMovs(mesKey)) return pgIngMovsTotal(mesKey); const r=pgIngresoRealRaw(mesKey); return r!==null?r:(pgIngresoCell(mesKey).meta||0); }        // para asignar
+  function pgIngresoFiscalMes(mesKey){ if(pgIngHasMovs(mesKey)) return pgIngMovsTotal(mesKey); const r=pgIngresoRealRaw(mesKey); return r!==null?r:pgIngresoMensualGeneral(); }        // para lo fiscal
+  // PREFILL OPCIONAL (no automático): siembra lo asignado de cada ítem con su cifra del Módulo 1, solo meses actual/futuros.
+  function pgPrefill(anio){
+    anio = anio || pgAnio(); const p=pgState(); const meses=pgMeses(anio); pgMesInicio();
+    pgItemsFlat().forEach(it=>{ meses.forEach(mk=>{ if(pgClaseMes(mk)==='pasado') return; const c=pgCell(it.itemKey,mk); if(!(c.meta>0)) c.meta = it.montoTipico; }); });
+    p.prefilled = true;
+  }
+  // Totales del mes.
+  function pgTotAsignado(mesKey){ return pgItemsFlat().reduce((s,it)=>s+pgAsignado(it.itemKey,mesKey),0); }
+  function pgTotGastadoMes(mesKey){ return pgItemsFlat().reduce((s,it)=>s+pgGastadoMes(it.itemKey,mesKey),0); }
+  function pgTotFiscalGasto(mesKey){ return pgItemsFlat().reduce((s,it)=>s+pgGastoFiscalMes(it.itemKey,mesKey),0); }
+  function pgListoParaAsignar(mesKey){ return pgIngresoPlan(mesKey) - pgTotAsignado(mesKey); }
+  // Totales por categoría (para el encabezado de grupo).
+  function pgCatAsignado(catKey, items, mesKey){ return items.reduce((s,it)=>s+pgAsignado(pgItemKey(catKey,it.id),mesKey),0); }
+  function pgCatGastado(catKey, items, mesKey){ return items.reduce((s,it)=>s+pgGastadoMes(pgItemKey(catKey,it.id),mesKey),0); }
+  function pgCatDisponible(catKey, items, mesKey){ return items.reduce((s,it)=>s+pgDisponible(pgItemKey(catKey,it.id),mesKey),0); }
+
+  /* Sembrado ÚNICO del config fiscal en Firestore. Ejecutar una sola vez desde la consola
+     del navegador (estando dentro de la app):  sembrarConfigFiscal(2026)
+     Crea el documento config/fiscal/anios/{año} con los valores de respaldo, listos para editar. */
+  async function sembrarConfigFiscal(anio){
+    anio = anio || new Date().getFullYear();
+    if(!firestoreAvailable){ console.warn('Firestore no disponible (modo localStorage).'); return false; }
+    if(!confirm('¿Crear/sobrescribir el config fiscal '+anio+' en Firestore con los valores de respaldo?')) return false;
+    const seed = JSON.parse(JSON.stringify(FISCAL_DEFAULT));
+    if(seed.vigencia){ delete seed.vigencia._respaldo; seed.vigencia.anio = anio; seed.vigencia.fuente += ' · sembrado inicial, validar con DIAN/municipio'; }
+    try{
+      await db.collection('config').doc('fiscal').collection('anios').doc(String(anio)).set(seed, {merge:false});
+      console.log('%c✓ Config fiscal '+anio+' creado en Firestore. Edítalo en: config → fiscal → anios → '+anio, 'color:#0e4d3a;font-weight:bold');
+      return true;
+    }catch(e){ console.error('No se pudo crear el config fiscal:', e); return false; }
+  }
+  if(typeof window!=='undefined') window.sembrarConfigFiscal = sembrarConfigFiscal;
   
   /* AuthService — abstrae los métodos de auth para que el resto de la app no dependa de Firebase directamente */
   const authService = {
@@ -123,6 +446,9 @@
     7:'Simulador de Deuda',
     8:'Metas y Proyección',
     9:'Informe para mi Asesor',
+    10:'Perfil fiscal',
+    11:'Diagnóstico fiscal',
+    12:'Presupuesto mensual',
     'var':'Ingresos Variables'
   };
   
@@ -150,6 +476,27 @@
     gastosLabels:{},
     gastosOrder:['alimentacion','vivienda','transporte','salud','entretenimiento','comunicaciones','otros'], // orden persistente de categorías (los objetos no conservan orden en Firestore)
     deudas:[],
+    fiscal:{
+      regimen:'',                       // 'ord' | 'simple' | ''
+      resp:{ iva:false, retencion:false, ica:false, exogena:false },
+      ciiu:'', municipios:'',
+      digitosCedula:'', digitosNit:'',
+      consumosTarjeta:0, comprasConsumos:0, consignaciones:0,
+      exterior:{ tiene:false, valor:0, ingresos:0 },
+      iva:{ ventasGravadas:0, comprasConIva:0 },
+      segSocial:{ salud:0, pension:0 },
+      interesesVivienda:0,                // deducción intereses crédito de vivienda (tope 1.200 UVT)
+      retencion:0,                        // retención en la fuente ya practicada en el año
+      aporteVoluntario:0,                 // aportes voluntarios FPV/AFC en el año (renta exenta, tope 30% / 3.800 UVT)
+      gmf:0,                              // 4x1000 (GMF) pagado en el año; deducible el 50% (art. 115)
+      simpleGrupo:4,                      // grupo del Régimen Simple para el comparador (4 = servicios profesionales)
+      simpleCheck:{},                      // respuestas de elegibilidad Simple: {residente,actividad,realidad,aldia,factura,socio}
+      sas:{ costosNegocio:0, salario:0, costosAnuales:null, repartoPct:100 },   // simulador SAS (costosAnuales null = usa el típico de config)
+      herencia:{ vivienda:0, otrosInmuebles:0, otrosBienes:0, seguroVida:0, numHerederos:1, esLegitimario:true },   // calculador de ganancia ocasional por herencia
+      patrimonio:{ viviendaHabitacion:0 },   // valor de la vivienda de habitación (para la exclusión del impuesto al patrimonio)
+      ingresosExcluidos:{},               // { claveLinea: true } → ingresos que ya vienen de un activo (no contar)
+      costoFiscal:{}                     // { [assetId]: {metodo,anioCompra,valorCompra,avaluo,costoFiscal} }
+    },
     activos:[
       {nombre:'Dinero ahorrado en cuenta',valor:0,tipo:'LÍQUIDO'},
       {nombre:'Cuentas por cobrar',valor:0,tipo:'LÍQUIDO'},
@@ -206,6 +553,21 @@
       seeded:false,
       items:[],                 // [{nombre, objetivo, fecha(YYYY-MM), fuente, saldoManual, aporte}]
       proy:{ rendimiento:9, anios:28, inicialOverride:null, aporteOverride:null, aniosUserSet:false }
+    },
+    /* ── PRESUPUESTO MENSUAL (Fase A · base de datos por mes) ──
+       modo 'basico'  = no presupuesta; los meses se rellenan solos con la cifra general (lo fiscal queda preciso sin esfuerzo).
+       modo 'activo'  = presupuesta mes a mes con metas, real y arrastre de sobrantes.
+       Usa los MISMOS rubros del Módulo 1 (categorías de gasto). Datos por categoría × mes (YYYY-MM). */
+    presupuesto:{
+      modo:'basico',
+      anioGravable:2026,
+      mesActivo:'2026-01',
+      mesInicio:'',                  // mes en que se activó el presupuesto (se presupuesta desde aquí)
+      arrastre:true,                 // arrastrar el sobrante de un mes al siguiente (R1)
+      gastos:{},                     // { [itemKey]: { 'YYYY-MM': {meta, real} } }  (itemKey = catId#itemId)
+      ingresos:{},                   // { 'YYYY-MM': {meta, real} }  (ingreso total del mes)
+      cats:[],                       // estructura PROPIA del presupuesto (independiente del Módulo 1); se siembra una vez
+      seeded:false
     }
   };
 
@@ -1872,6 +2234,10 @@ function showToast(msg, type) {
   /* ═══════════════════════════════════════════════════════════
      HELPERS — formato y parseo
      ═══════════════════════════════════════════════════════════ */
+  function escapeHtml(str){
+    if (str == null) return '';
+    return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  }
   const n = v => {
     if (v == null || v === '') return 0;
     const s = String(v).replace(/[^\d-]/g,'');
@@ -1880,11 +2246,6 @@ function showToast(msg, type) {
   const fmt = v => {
     if (v == null || isNaN(v)) return currency + ' 0';
     return currency + ' ' + Math.round(Number(v)).toLocaleString('es-CO');
-  };
-  // Formato compacto (prefijo solo "$") para montos grandes en tarjetas estrechas del tablero
-  const fmtCorto = v => {
-    if (v == null || isNaN(v)) return '$ 0';
-    return '$ ' + Math.round(Number(v)).toLocaleString('es-CO');
   };
   const fmtNum = v => {
     if (v == null || isNaN(v)) return '0';
@@ -1936,6 +2297,8 @@ function showToast(msg, type) {
   const SVG_WARN  = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`;
   const SVG_INFO  = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`;
   const SVG_X     = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+  const SVG_LIST  = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="8" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="8" y1="18" x2="20" y2="18"/><circle cx="3.6" cy="6" r="1.1" fill="currentColor" stroke="none"/><circle cx="3.6" cy="12" r="1.1" fill="currentColor" stroke="none"/><circle cx="3.6" cy="18" r="1.1" fill="currentColor" stroke="none"/></svg>`;
+  const SVG_TARGET= `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/></svg>`;
   
   function debtGroup(val){const dt=DEBT_TYPES.find(d=>d.val===val);return dt?dt.group:'otro';}
   function debtTypeOptions(selected='CONSUMO_TARJETA'){
@@ -1991,7 +2354,7 @@ function showToast(msg, type) {
     document.getElementById('topbar-title').textContent = MODULE_TITLES[id] || '';
     // Re-render desde el estado vivo: los cambios de cualquier módulo se reflejan
     // al entrar a otro, sin necesidad de guardar.
-    if(id===1){renderIngresosTable();calcM1();}
+    if(id===1){renderIngresosTable();renderGastosTable('gastos-body');calcM1();}
     if(id===2){calcM2();}
     if(id===3){renderActivosTable();calcM3();}
     if(id===4){renderAhorroTable();calcM4();}
@@ -2000,6 +2363,9 @@ function showToast(msg, type) {
     if(id===7){renderDebtSim();}
     if(id===8){renderMetas();}
     if(id===9){renderInformeM9();}
+    if(id===10){renderPerfilFiscal();}
+    if(id===11){renderCentroFiscal();}
+    if(id===12){renderPresupuesto();}
     if(id==='var'){renderMVar();}
     window.scrollTo({top:0,behavior:'smooth'});
   }
@@ -2776,9 +3142,12 @@ function showToast(msg, type) {
   }
   function recomputeGastosTotales(){ Object.keys(state.gastos).forEach(recomputeGastoTotal); }
 
-  function renderGastosTable(){
+  let _gastosTarget='gastos-body';
+  function renderGastosTable(targetId){
+    if(targetId) _gastosTarget=targetId;
     ensureGastosItems();
-    const body=document.getElementById('gastos-body');
+    const body=document.getElementById(_gastosTarget);
+    if(!body) return;
     body.innerHTML='';
     gastoCatOrder().forEach(k=>{
       const custom = isGastoCustom(k);
@@ -2985,7 +3354,7 @@ function showToast(msg, type) {
     if(!Array.isArray(state.gastosOrder)) state.gastosOrder=[];
     state.gastosOrder.push(key);
     renderGastosTable();calcM1();
-    const nuevo=document.querySelector(`#gastos-body input[data-labelkey="${key}"]`);
+    const nuevo=document.querySelector(`#${_gastosTarget} input[data-labelkey="${key}"]`);
     if(nuevo) nuevo.focus();
   }
   
@@ -3109,7 +3478,7 @@ function showToast(msg, type) {
     const sig=JSON.stringify(cargoItems)+'|'+manual.length;
     if(sig!==_cargoSig){
       _cargoSig=sig;
-      if(document.getElementById('gastos-body')) renderGastosTable();
+      if(document.getElementById('gastos-body')) renderGastosTable('gastos-body');
       calcM1();
     }
   }
@@ -4249,12 +4618,6 @@ function showToast(msg, type) {
     catch(e){ return null; }
   }
 
-  // Escape HTML local (la función del módulo no es visible en este scope)
-  function escDash(str){
-    if (str == null) return '';
-    return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-  }
-
   function renderDashboardPatrimonio(){
     const data = getMapaData();
     const section = document.getElementById('db-patrimonio-section');
@@ -4266,9 +4629,9 @@ function showToast(msg, type) {
     // Estado vacío
     if(!activos.length || !r){
       if(empty) empty.style.display = 'block';
-      document.getElementById('db-patrimonio-neto').textContent = fmtCorto(0);
-      document.getElementById('db-activos-brutos').textContent = fmtCorto(0);
-      document.getElementById('db-deudas-total').textContent = fmtCorto(0);
+      document.getElementById('db-patrimonio-neto').textContent = fmt(0);
+      document.getElementById('db-activos-brutos').textContent = fmt(0);
+      document.getElementById('db-deudas-total').textContent = fmt(0);
       document.getElementById('db-patrimonio-detalle').textContent = '';
       document.getElementById('db-patrimonio-crecimiento').textContent = '';
       document.getElementById('db-activos-count').textContent = '';
@@ -4282,7 +4645,7 @@ function showToast(msg, type) {
     document.getElementById('db-liquidez-card').style.display = '';
 
     // ── Bloque 1: Patrimonio neto ──
-    document.getElementById('db-patrimonio-neto').textContent = fmtCorto(r.patrimonioNetoCOP);
+    document.getElementById('db-patrimonio-neto').textContent = fmt(r.patrimonioNetoCOP);
     const usdEl = document.getElementById('db-patrimonio-usd');
     if (usdEl) {
       if (r.trmUSD && r.trmUSD > 0) {
@@ -4293,8 +4656,8 @@ function showToast(msg, type) {
         usdEl.style.display = 'none';
       }
     }
-    document.getElementById('db-activos-brutos').textContent = fmtCorto(r.patrimonioBrutoCOP);
-    document.getElementById('db-deudas-total').textContent = fmtCorto(r.deudaTotalCOP);
+    document.getElementById('db-activos-brutos').textContent = fmt(r.patrimonioBrutoCOP);
+    document.getElementById('db-deudas-total').textContent = fmt(r.deudaTotalCOP);
     document.getElementById('db-activos-count').textContent =
       r.cantidadBienes + (r.cantidadBienes === 1 ? ' activo registrado' : ' activos registrados');
     const det = document.getElementById('db-patrimonio-detalle');
@@ -4557,7 +4920,7 @@ function showToast(msg, type) {
 
     // ── Ingreso pasivo y proyección ──
     const ingresoPasivo = r.ingresoPasivoMensualCOP || 0;
-    document.getElementById('db-ingreso-pasivo').textContent = fmtCorto(ingresoPasivo);
+    document.getElementById('db-ingreso-pasivo').textContent = fmt(ingresoPasivo);
 
     // % de gastos mensuales que cubre el ingreso pasivo
     let gastoMensual = 0;
@@ -4581,8 +4944,8 @@ function showToast(msg, type) {
 
     // Patrimonio proyectado
     const proy = r.patrimonioProyectado || {a5:0,a10:0,a15:0};
-    document.getElementById('db-proy-10').textContent = fmtCorto(proy.a10);
-    document.getElementById('db-proy-15').textContent = fmtCorto(proy.a15);
+    document.getElementById('db-proy-10').textContent = fmt(proy.a10);
+    document.getElementById('db-proy-15').textContent = fmt(proy.a15);
     const proyNota = document.getElementById('db-proy-nota');
     const totalAct = activos.length;
     const proyectables = r.activosProyectables || 0;
@@ -4667,7 +5030,7 @@ function showToast(msg, type) {
       const pct = (ingCOP != null && totalCOP > 0) ? Math.round(ingCOP/totalCOP*100) : null;
       return `<div class="db-dep-row">
         <div class="db-dep-bar-wrap"><div class="db-dep-bar" style="width:${pct!=null?Math.min(pct,100):50}%"></div></div>
-        <div class="db-dep-info"><span class="db-dep-name">${escDash(g.nombre)}</span><span class="db-dep-pct">${pct!=null?pct+'%':fmt(g.ingreso)}</span></div>
+        <div class="db-dep-info"><span class="db-dep-name">${escapeHtml(g.nombre)}</span><span class="db-dep-pct">${pct!=null?pct+'%':fmt(g.ingreso)}</span></div>
       </div>`;
     }).join('');
 
@@ -5680,6 +6043,8 @@ function showToast(msg, type) {
     if(f.indexOf('activo:') === 0){ const nombre = f.slice(7); const a = (state.activos||[]).find(x=>x.nombre===nombre); return a ? (a.valor||0) : 0; }
     return m.saldoManual || 0;
   }
+  // Ids estables para vincular metas desde el presupuesto (Fase C · integración).
+  function metaEnsureIds(){ let ch=false; ((state.metas&&state.metas.items)||[]).forEach(m=>{ if(m && !m.id){ m.id='m'+pgGenId(); ch=true; } }); if(ch){ try{ scheduleSave('metas'); }catch(e){} } return ch; }
   function proyeccionPatrimonio(P0, aporteMensual, rDec, anios){
     const im = rDec > 0 ? Math.pow(1 + rDec, 1/12) - 1 : 0;
     let saldo = P0, aportado = P0;
@@ -5815,6 +6180,7 @@ function showToast(msg, type) {
   }
 
   function recalcMetas(){
+    metaEnsureIds();
     const items = state.metas.items || [];
     document.querySelectorAll('#metas-body .meta-card').forEach(card=>{
       const i = +card.dataset.i; const m = items[i]; if(!m) return;
@@ -5901,11 +6267,12 @@ function showToast(msg, type) {
 
     const kpis = document.getElementById('meta-proy-kpis');
     if(kpis){
+      const kpiV = v => '<div class="kpi-value kpi-v-split"><span class="kpi-cur">'+currency+'</span> '+fmtInput(v)+'</div>';
       kpis.innerHTML =
         '<div class="kpi-grid">'
-        + '<div class="kpi is-info"><div class="kpi-label">Patrimonio neto hoy</div><div class="kpi-value">' + fmt(inicial) + '</div><div class="kpi-sub">Activos − deudas</div></div>'
-        + '<div class="kpi is-pos span-2"><div class="kpi-label">Patrimonio proyectado a ' + anios + ' años</div><div class="kpi-value">' + fmt(r.final) + '</div><div class="kpi-sub">Aportando ' + fmt(aporte) + '/mes al ' + rendVal + '% anual</div></div>'
-        + '<div class="kpi"><div class="kpi-label">Rendimiento generado</div><div class="kpi-value">' + fmt(r.rendimiento) + '</div><div class="kpi-sub">Lo que trabaja tu dinero</div></div>'
+        + '<div class="kpi is-info"><div class="kpi-label">Patrimonio neto hoy</div>' + kpiV(inicial) + '<div class="kpi-sub">Activos − deudas</div></div>'
+        + '<div class="kpi is-pos span-2"><div class="kpi-label">Patrimonio proyectado a ' + anios + ' años</div>' + kpiV(r.final) + '<div class="kpi-sub">Aportando ' + fmt(aporte) + '/mes al ' + rendVal + '% anual</div></div>'
+        + '<div class="kpi"><div class="kpi-label">Rendimiento generado</div>' + kpiV(r.rendimiento) + '<div class="kpi-sub">Lo que trabaja tu dinero</div></div>'
         + '</div>';
     }
     const nota = document.getElementById('meta-proy-nota');
@@ -5949,7 +6316,7 @@ function showToast(msg, type) {
 
   function addMeta(nombre){
     if((state.metas.items||[]).length >= 20){ showToast('Máximo 20 metas','error'); return; }
-    state.metas.items.push({nombre:nombre||'', objetivo:0, fecha:'', fuente:'manual', saldoManual:0, aporte:0});
+    state.metas.items.push({id:'m'+pgGenId(), nombre:nombre||'', objetivo:0, fecha:'', fuente:'manual', saldoManual:0, aporte:0});
     renderMetasRows(); recalcMetas();
     const last = document.querySelector('#metas-body .meta-card:last-child input[data-f=nombre]');
     if(last && !nombre) last.focus();
@@ -5995,7 +6362,7 @@ function showToast(msg, type) {
   /* ═══════════════════════════════════════════════════════════
      AUTOGUARDADO EN TIEMPO REAL (Firestore)
      ═══════════════════════════════════════════════════════════ */
-  const NAME_TO_ID = {ingresos_gastos:1, endeudamiento:2, activos:3, ahorro:4, presupuesto_anual:5, tablero:6, simulador_deuda:7, metas:8, ingresos_variables:'var'};
+  const NAME_TO_ID = {ingresos_gastos:1, endeudamiento:2, activos:3, ahorro:4, presupuesto_anual:5, tablero:6, simulador_deuda:7, metas:8, ingresos_variables:'var', fiscal:10};
   const _saveTimers = {};
   const _lastSaved = {};
   let _autosaveReady = false;   // se activa tras la carga inicial (evita guardar durante el render inicial)
@@ -6024,6 +6391,8 @@ function showToast(msg, type) {
       case 'simulador_deuda': return state.debtSim;
       case 'metas': return state.metas;
       case 'ingresos_variables': return state.varIncome;
+      case 'fiscal': return state.fiscal;
+      case 'presupuesto': return state.presupuesto;
     }
     return null;
   }
@@ -6123,6 +6492,7 @@ function showToast(msg, type) {
 
   async function loadAllData(){
     showToast('Cargando tus datos…','info');
+    await cargarConfigFiscal();   // Fase 0: deja FISCAL listo (con respaldo) antes de renderizar cualquier módulo
     const [m1,m2,m3,m4,m5,m6,mVar,mSim,mMetas] = await Promise.all(
       ['ingresos_gastos','endeudamiento','activos','ahorro','presupuesto_anual','tablero','ingresos_variables','simulador_deuda','metas']
       .map(m=>loadModule(m))
@@ -6184,8 +6554,28 @@ function showToast(msg, type) {
       state.metas = {...state.metas, ...mMetas, proy:{...state.metas.proy, ...(mMetas.proy||{})}};
       if(mMetas.items && mMetas.items.length){ state.metas.seeded = true; completedModules.add(8); }
     }
+    const mFiscal = await loadModule('fiscal');
+    if(mFiscal){
+      state.fiscal = {
+        ...state.fiscal, ...mFiscal,
+        resp:{ ...state.fiscal.resp, ...(mFiscal.resp||{}) },
+        exterior:{ ...state.fiscal.exterior, ...(mFiscal.exterior||{}) },
+        iva:{ ...state.fiscal.iva, ...(mFiscal.iva||{}) },
+        segSocial:{ ...state.fiscal.segSocial, ...(mFiscal.segSocial||{}) },
+        costoFiscal:{ ...(mFiscal.costoFiscal||{}) }
+      };
+      completedModules.add(10);
+    }
+    const mPre = await loadModule('presupuesto');
+    if(mPre){
+      state.presupuesto = {
+        ...state.presupuesto, ...mPre,
+        gastos:{ ...(mPre.gastos||{}) },
+        ingresos:{ ...(mPre.ingresos||{}) }
+      };
+    }
     renderIngresosTable();calcM1();
-    renderGastosTable();
+    renderGastosTable('gastos-body');
     renderDeudasTable();calcM2();
     initMapaPatrimonial();renderActivosTable();calcM3();
     renderAhorroTable();calcM4();
@@ -7006,7 +7396,7 @@ function showToast(msg, type) {
   
   /* INIT */
   renderIngresosTable();calcM1();
-  renderGastosTable();
+  renderGastosTable('gastos-body');
   renderDeudasTable();calcM2();
   initMapaPatrimonial();renderActivosTable();calcM3();
   renderAhorroTable();calcM4();
@@ -7884,7 +8274,7 @@ function showToast(msg, type) {
     };
   
     renderIngresosTable();
-    renderGastosTable();
+    renderGastosTable('gastos-body');
     calcM1();
     renderDeudasTable();calcM2();
     renderActivosTable();calcM3();
@@ -7967,7 +8357,7 @@ function showToast(msg, type) {
     };
   
     renderIngresosTable();
-    renderGastosTable();
+    renderGastosTable('gastos-body');
     calcM1();
     renderDeudasTable();calcM2();
     renderActivosTable();calcM3();
@@ -8015,7 +8405,1827 @@ function showToast(msg, type) {
   /* ═══════════════════════════════════════════════════════════
      SISTEMA DE DEFINICIONES (tooltips informativos)
      ═══════════════════════════════════════════════════════════ */
+  /* ═══════════════════════════════════════════════════════════
+     MÓDULO 10 · PERFIL FISCAL
+     ═══════════════════════════════════════════════════════════ */
+  function factorArt73(anio, tipo){
+    if(!tipo) return 1;   // activos sin ajuste del art. 73 (vehículos, cripto, oro, arte, ETF, FIC, REIT, cartera)
+    const tab = ((fiscalConfig().gananciaOcasional||{}).factoresArt73||{})[tipo] || {};
+    const ys = Object.keys(tab).map(Number).filter(y=>!isNaN(y)).sort((a,b)=>a-b);
+    if(!ys.length) return 1;
+    if(anio <= ys[0]) return tab[ys[0]];
+    if(anio >= ys[ys.length-1]) return tab[ys[ys.length-1]];
+    if(tab[anio] != null) return tab[anio];
+    // Año intermedio sin valor exacto: interpolar entre el inferior y el superior más cercanos
+    let lo = ys[0], hi = ys[ys.length-1];
+    for(const y of ys){ if(y<=anio) lo=y; if(y>=anio){ hi=y; break; } }
+    if(hi===lo) return tab[lo];
+    return +(tab[lo] + (tab[hi]-tab[lo])*((anio-lo)/(hi-lo))).toFixed(4);
+  }
+  // Clasifica el activo para el art. 73: solo bienes raíces y acciones/aportes tienen ajuste.
+  function tipoArt73(a){
+    if(!a) return null;
+    if(a.category === 'Inmueble') return 'bienRaizUrbano';
+    if(a.category === 'Empresarial') return 'acciones';
+    if(a.category === 'Financiero' && a.subtype === 'Acciones en bolsa') return 'acciones';
+    return null;   // demás activos: el costo fiscal es el de adquisición, sin ajuste del art. 73
+  }
+  function calcCostoFiscal(cf, tipo){
+    if(cf.origen === 'heredado'){
+      // Costo fiscal de un bien heredado = valor de adjudicación en la sucesión (art. 303/277),
+      // ajustable por art. 73 tomando como año de adquisición el de la sucesión.
+      return Math.round((cf.valorSucesion||0) * factorArt73(+cf.anioSucesion || new Date().getFullYear(), tipo));
+    }
+    if(cf.metodo === 'avaluo') return Math.round(cf.avaluo||0);
+    return Math.round((cf.valorCompra||0) * factorArt73(+cf.anioCompra || new Date().getFullYear(), tipo));
+  }
+  // Subtipos financieros que SÍ generan ganancia ocasional al venderse (inversiones de capital).
+  // Se excluyen efectivo, cuentas, CDT, bonos, AFC, FPV, fiducias y cuentas por cobrar (su rendimiento es interés = renta de capital, no ganancia ocasional).
+  const PF_FIN_GANANCIA = ['Acciones en bolsa','ETF o fondo de inversión internacional','Fondo de inversión colectiva FIC','REIT','Cartera gestionada por terceros'];
+  function pfAssetsVendibles(){
+    const acts = (state.mapaPatrimonial && state.mapaPatrimonial.activos) || [];
+    return acts.filter(a=>{
+      if(!a || !(a.value>0)) return false;
+      // Solo "Financiero" se filtra por subtipo; las demás categorías (Inmueble, Empresarial,
+      // Alternativo, Uso Personal) son activos fijos cuya venta genera ganancia ocasional.
+      if(a.category === 'Financiero') return PF_FIN_GANANCIA.includes(a.subtype);
+      return true;
+    });
+  }
+
+  function pfActualizarExtNota(){
+    const el = document.getElementById('pf-extNota'); if(!el) return;
+    const f = state.fiscal;
+    if(!f.exterior.tiene){ el.textContent=''; return; }
+    const tope = enPesos((fiscalConfig().activosExterior||{}).topeUVT || 2000);
+    if((f.exterior.valor||0) > tope){
+      el.innerHTML = '⚠ Tus activos en el exterior ('+fmt(f.exterior.valor)+') superan el tope de '+fmt(tope)+' (2.000 UVT): debes presentar la declaración de activos en el exterior.';
+      el.className = 'pf-note pf-warn';
+    } else {
+      el.innerHTML = 'Por ahora estás por debajo del tope de '+fmt(tope)+' (2.000 UVT) para declarar activos en el exterior.';
+      el.className = 'pf-note';
+    }
+  }
+
+  function renderPfActivos(){
+    const cont = document.getElementById('pf-activos'); if(!cont) return;
+    const f = state.fiscal;
+    const acts = pfAssetsVendibles();
+    cont.innerHTML = '';
+    if(!acts.length){
+      cont.innerHTML = '<div class="pf-empty">Aún no has registrado activos que puedan venderse (inmuebles, vehículos, inversiones) en tu Mapa Patrimonial. Cuando los registres, aquí calcularemos su costo fiscal.</div>';
+      return;
+    }
+    const nota = document.createElement('div');
+    nota.className = 'pf-note';
+    nota.style.marginBottom = '6px';
+    nota.innerHTML = 'Esto es una <strong>estimación</strong> para planear. El factor del art. 73 lo fija un decreto de la DIAN según el <strong>año de venta</strong>; al vender, tu contador escoge el método que más te convenga (art. 70, 72 o 73) y aplica las exenciones del caso (vivienda, acciones en bolsa, etc.).';
+    cont.appendChild(nota);
+    const anioActual = new Date().getFullYear();
+    acts.forEach(a=>{
+      const cf = f.costoFiscal[a.id] || {origen:'comprado', metodo:'precio', anioCompra:'', valorCompra:0, avaluo:0, valorSucesion:0, anioSucesion:'', ventaEstimada:0};
+      if(!cf.origen) cf.origen = 'comprado';
+      f.costoFiscal[a.id] = cf;
+      const tipo = tipoArt73(a);
+      const esInmueble = a.category === 'Inmueble';
+      const esVivienda = a.subtype === 'Casa o apartamento donde vivo';
+      const card = document.createElement('div');
+      card.className = 'pf-asset';
+      let opts=''; for(let y=anioActual; y>=1990; y--){ opts += '<option value="'+y+'"'+(String(cf.anioCompra)===String(y)?' selected':'')+'>'+y+'</option>'; }
+      let optsSuc=''; for(let y=anioActual; y>=1990; y--){ optsSuc += '<option value="'+y+'"'+(String(cf.anioSucesion)===String(y)?' selected':'')+'>'+y+'</option>'; }
+      card.innerHTML =
+        '<div class="pf-asset-top"><span class="pf-asset-name">'+(a.description||a.subtype||'Activo')+'</span><span class="pf-asset-val">Valor hoy: '+fmt(a.value||0)+'</span></div>'
+        + '<div class="pf-seg pf-seg-sm" data-origen>'
+        +   '<button data-o="comprado"'+(cf.origen!=='heredado'?' class="active"':'')+'>Comprado</button>'
+        +   '<button data-o="heredado"'+(cf.origen==='heredado'?' class="active"':'')+'>Heredado o donado</button>'
+        + '</div>'
+        + '<div class="pf-comprado" '+(cf.origen==='heredado'?'style="display:none"':'')+'>'
+        +   '<div class="pf-seg pf-seg-sm" data-met>'
+        +     '<button data-m="precio"'+(cf.metodo!=='avaluo'?' class="active"':'')+'>Año y valor de compra</button>'
+        +     (esInmueble ? '<button data-m="avaluo"'+(cf.metodo==='avaluo'?' class="active"':'')+'>Avalúo catastral</button>' : '')
+        +   '</div>'
+        +   '<div class="pf-met-precio" '+(cf.metodo==='avaluo'?'style="display:none"':'')+'>'
+        +     '<div class="pf-grid2">'
+        +       '<div class="pf-field"><label>Año de compra</label><div class="pf-inp"><select data-cf="anioCompra">'+opts+'</select></div></div>'
+        +       '<div class="pf-field"><label>Valor de compra</label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" data-cf="valorCompra" inputmode="numeric"></div></div>'
+        +     '</div>'
+        +   '</div>'
+        +   '<div class="pf-met-avaluo" '+(cf.metodo!=='avaluo'?'style="display:none"':'')+'>'
+        +     '<div class="pf-field"><label>Avalúo catastral <span class="info-tip" data-def="avaluo_catastral" tabindex="0">i</span></label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" data-cf="avaluo" inputmode="numeric"></div></div>'
+        +   '</div>'
+        + '</div>'
+        + '<div class="pf-heredado" '+(cf.origen!=='heredado'?'style="display:none"':'')+'>'
+        +   '<div class="pf-grid2">'
+        +     '<div class="pf-field"><label>Año de la sucesión</label><div class="pf-inp"><select data-cf="anioSucesion">'+optsSuc+'</select></div></div>'
+        +     '<div class="pf-field"><label>Valor de adjudicación <span class="info-tip" data-def="costo_heredado" tabindex="0">i</span></label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" data-cf="valorSucesion" inputmode="numeric"></div></div>'
+        +   '</div>'
+        +   '<div class="pf-cf-prev" style="margin-top:7px">Es el valor con el que el bien te fue adjudicado en la sucesión. Si no lo tienes, usa el <strong>avalúo catastral</strong> del año en que lo heredaste.</div>'
+        + '</div>'
+        + '<div class="pf-cf-out"><span class="l">Costo fiscal estimado <em data-cf-metodo></em></span><span class="v" data-cf-val>$0</span></div>'
+        + '<div class="pf-field" style="margin-top:12px"><label>Precio de venta estimado <span style="font-weight:400;color:var(--ink-3,#6f6e6a)">(opcional)</span></label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" data-cf="ventaEstimada" inputmode="numeric" placeholder="para estimar el impuesto"></div></div>'
+        + '<div class="pf-cf-prev" data-cf-prev></div>';
+      cont.appendChild(card);
+      // valores iniciales
+      const valInp = card.querySelector('[data-cf=valorCompra]'); if(valInp) valInp.value = cf.valorCompra>0?fmtInput(cf.valorCompra):'';
+      const avaInp = card.querySelector('[data-cf=avaluo]'); if(avaInp) avaInp.value = cf.avaluo>0?fmtInput(cf.avaluo):'';
+      const sucInp = card.querySelector('[data-cf=valorSucesion]'); if(sucInp) sucInp.value = cf.valorSucesion>0?fmtInput(cf.valorSucesion):'';
+      if(valInp) attachMoneyInput(valInp);
+      if(avaInp) attachMoneyInput(avaInp);
+      if(sucInp) attachMoneyInput(sucInp);
+      const ventaInp = card.querySelector('[data-cf=ventaEstimada]'); if(ventaInp){ ventaInp.value = cf.ventaEstimada>0?fmtInput(cf.ventaEstimada):''; attachMoneyInput(ventaInp); }
+
+      const refrescar=()=>{
+        cf.costoFiscal = calcCostoFiscal(cf, tipo);
+        card.querySelector('[data-cf-val]').textContent = fmt(cf.costoFiscal);
+        let metodoTxt;
+        if(cf.origen==='heredado') metodoTxt = tipo ? '· valor de sucesión, ajustado art. 73' : '· valor de sucesión';
+        else if(cf.metodo==='avaluo') metodoTxt = '· avalúo (art. 72)';
+        else metodoTxt = tipo ? '· precio ajustado (art. 73)' : '· costo de adquisición';
+        card.querySelector('[data-cf-metodo]').textContent = metodoTxt;
+        const prev = card.querySelector('[data-cf-prev]');
+        if(cf.costoFiscal<=0){ prev.innerHTML=''; scheduleSave('fiscal'); return; }
+        const tarifa = (fiscalConfig().gananciaOcasional||{}).tarifa || 0.15;
+        const anioAdq = +(cf.origen==='heredado' ? cf.anioSucesion : cf.anioCompra) || 0;
+        const aniosTenidos = anioAdq ? (anioActual - anioAdq) : null;
+        const usaEjemplo = !(cf.ventaEstimada>0);
+        const venta = usaEjemplo ? Math.max(cf.costoFiscal, Math.round(cf.costoFiscal*1.25)) : cf.ventaEstimada;
+        const ganancia = Math.max(0, venta - cf.costoFiscal);
+        let html = (usaEjemplo ? 'Ejemplo: si vendieras en <b>'+fmt(venta)+'</b>, ' : 'Con una venta de <b>'+fmt(venta)+'</b>, ')
+                 + 'la utilidad sería <b>'+fmt(ganancia)+'</b>. ';
+        if(aniosTenidos !== null && aniosTenidos < 2){
+          html += '<span style="color:var(--warn,#8a5a14)">A hoy lo tienes hace '+aniosTenidos+' año'+(aniosTenidos===1?'':'s')+': si lo vendes antes de cumplir 2 años, esa utilidad tributa como <strong>renta ordinaria</strong> (tu tarifa marginal, hasta 39%), no como ganancia ocasional del 15%.</span>';
+        } else {
+          let exenta = 0, notaEx = '';
+          if(esVivienda){
+            const tope = enPesos(5000);
+            exenta = Math.min(ganancia, tope);
+            notaEx = ' Por ser tu vivienda de habitación, las primeras 5.000 UVT ('+fmt(tope)+') pueden ir <strong>exentas</strong> si reinviertes todo el dinero en otra vivienda, abonas a tu crédito hipotecario o lo llevas a una cuenta AFC.';
+          }
+          const gravable = Math.max(0, ganancia - exenta);
+          const go = Math.round(gravable * tarifa);
+          html += 'Impuesto de ganancia ocasional ≈ <b>'+fmt(go)+'</b> ('+Math.round(tarifa*100)+'%).' + notaEx;
+          if(tipo==='acciones' && a.category==='Financiero'){
+            html += ' Si son acciones de la Bolsa de Valores de Colombia, la utilidad puede estar <strong>exenta</strong> (regla del 10%).';
+          }
+        }
+        prev.innerHTML = html;
+        scheduleSave('fiscal');
+      };
+      // origen
+      card.querySelectorAll('[data-origen] button').forEach(b=>{
+        b.addEventListener('click',()=>{
+          cf.origen = b.dataset.o;
+          card.querySelectorAll('[data-origen] button').forEach(x=>x.classList.remove('active')); b.classList.add('active');
+          card.querySelector('.pf-comprado').style.display = cf.origen==='heredado'?'none':'block';
+          card.querySelector('.pf-heredado').style.display = cf.origen==='heredado'?'block':'none';
+          refrescar();
+        });
+      });
+      // método
+      card.querySelectorAll('[data-met] button').forEach(b=>{
+        b.addEventListener('click',()=>{
+          cf.metodo = b.dataset.m;
+          card.querySelectorAll('[data-met] button').forEach(x=>x.classList.remove('active')); b.classList.add('active');
+          card.querySelector('.pf-met-precio').style.display = cf.metodo==='avaluo'?'none':'block';
+          card.querySelector('.pf-met-avaluo').style.display = cf.metodo==='avaluo'?'block':'none';
+          refrescar();
+        });
+      });
+      card.querySelector('[data-cf=anioCompra]').addEventListener('change',function(){ cf.anioCompra=this.value; refrescar(); });
+      const sucSel = card.querySelector('[data-cf=anioSucesion]'); if(sucSel) sucSel.addEventListener('change',function(){ cf.anioSucesion=this.value; refrescar(); });
+      if(valInp) valInp.addEventListener('input',function(){ cf.valorCompra=n(this.value); refrescar(); });
+      if(avaInp) avaInp.addEventListener('input',function(){ cf.avaluo=n(this.value); refrescar(); });
+      if(sucInp) sucInp.addEventListener('input',function(){ cf.valorSucesion=n(this.value); refrescar(); });
+      if(ventaInp) ventaInp.addEventListener('input',function(){ cf.ventaEstimada=n(this.value); refrescar(); });
+      refrescar();
+    });
+  }
+
+  /* ═══ FASE 2 · MOTOR DE CÁLCULO Y DIAGNÓSTICO FISCAL ═══ */
+  // Fuente de activos (módulo Mapa abierto → mp.assets; si no, estado persistente).
+  function pfFuenteActivos(){
+    if(typeof mp!=='undefined' && Array.isArray(mp.assets) && mp.assets.length) return {acts:mp.assets, trm:mp.trm||{}};
+    const mpp = state.mapaPatrimonial || {}; return {acts:mpp.activos||[], trm:mpp.trm||{}};
+  }
+  function pfMontoCOP(val, currency, trm){ let v=+val||0; if(currency && currency!=='COP'){ const t=trm[currency]; if(t) v=v*t; } return v; }
+
+  // Detalle ESTRICTO del ingreso anual, por fuente, con deduplicación explícita.
+  // Cada línea manual (M1, variable, no periódico) lleva una clave; si está en state.fiscal.ingresosExcluidos
+  // (porque ya proviene de un activo), NO se suma. El ingreso de activos es la fuente canónica y siempre se cuenta.
+  function pfIngresoDetalle(){
+    const f = state.fiscal;
+    const excl = f.ingresosExcluidos || {};
+    const lineas = [];
+    (state.ingresos||[]).forEach((ing,i)=>{
+      if(ing && ing.linkedToMVar) return;   // línea sincronizada del ingreso variable: se cuenta abajo con el detalle real, no aquí
+      const monto = +ing.monto||0; if(monto<=0) return;
+      const key = 'm1:'+(ing.nombre||('fila'+i));
+      lineas.push({ key, fuente:'Laboral / fijo (M1)', clase:'trabajo', nombre: ing.nombre||'Ingreso', anual: monto*12, excluido: !!excl[key] });
+    });
+    const v = state.varIncome;
+    if(v && v.active && Array.isArray(v.contratos)){
+      // Consolidamos los meses por fecha (suma entre contratos el mismo mes), tomamos los 12 MÁS RECIENTES y sumamos el bruto real.
+      let combinados = [];
+      try { combinados = getCombinedMeses().filter(m=>(+m.bruto||0)>0); } catch(e){ combinados = []; }
+      combinados.sort((a,b)=>((a.anio||0)*12+(a.monthIdx||0))-((b.anio||0)*12+(b.monthIdx||0)));
+      const last12 = combinados.slice(-12);
+      if(last12.length>0){
+        const anual = last12.reduce((s,m)=>s+(+m.bruto||0),0);   // suma REAL de los meses (sin anualizar → no infla)
+        const keys = new Set(last12.map(m=>(m.anio||0)*12+(m.monthIdx||0)));
+        // Retención: por contrato, bruto de sus meses dentro de la ventana × su % de retención
+        let retencion = 0;
+        v.contratos.forEach(c=>{
+          if(!c || !c.retencionAplica) return;
+          const pct = (+c.retencionPct||0)/100;
+          (c.meses||[]).forEach(m=>{ if(m && keys.has((m.anio||0)*12+(m.monthIdx||0))) retencion += (+m.bruto||0)*pct; });
+        });
+        const key = 'var:consolidado';
+        lineas.push({ key, fuente:'Variable', clase:'trabajo', nombre:'Ingresos variables ('+last12.length+' meses)', anual, retencion:Math.round(retencion), mesesUsados:last12.length, excluido: !!excl[key] });
+      }
+    }
+    ((state.p5&&state.p5.ingresos)||[]).forEach((r,i)=>{
+      if(r.yaEnM1) return;
+      const monto = +r.monto||0; if(monto<=0) return;
+      const anual = (r.frec==='TODOS LOS MESES') ? monto*12 : monto;
+      const key = 'p5:'+(r.nombre||('fila'+i));
+      lineas.push({ key, fuente:'No periódico (M5)', clase:'noLaboral', nombre: r.nombre||'Ingreso', anual, excluido: !!excl[key] });
+    });
+    const {acts,trm} = pfFuenteActivos();
+    const deActivos = acts.reduce((s,a)=>{ if(!a)return s; const im=+a.monthlyIncome||0; if(im<=0)return s; return s + pfMontoCOP(im,a.currency,trm)*12; },0);
+    // ── FASE D · Puente con el presupuesto real ──────────────────────────────
+    // Reemplaza el ×12 del ingreso fijo (M1) por la suma REAL de los meses del presupuesto,
+    // SOLO si el ingreso fijo es la única fuente (sin variable, activos ni no periódicos) y
+    // ninguna línea del M1 está excluida. Así nunca duplica ni deja fuera otras fuentes.
+    let fuenteReal=false, mesesReales=0;
+    try{
+      const varTot = lineas.filter(l=>l.fuente==='Variable' && !l.excluido).reduce((s,l)=>s+l.anual,0);
+      const noPer  = lineas.filter(l=>l.fuente.indexOf('No periódico')===0 && !l.excluido).reduce((s,l)=>s+l.anual,0);
+      const m1Lines = lineas.filter(l=>l.fuente.indexOf('Laboral')===0);
+      const m1Excluidas = m1Lines.some(l=>l.excluido);
+      const hayOtras = varTot>0 || deActivos>0 || noPer>0;
+      if(!hayOtras && !m1Excluidas){
+        const bud = pgIngresoAnioFiscal(pgAnio());
+        if(bud.hayAlguno){
+          for(let i=lineas.length-1;i>=0;i--){ if(lineas[i].fuente.indexOf('Laboral')===0) lineas.splice(i,1); }
+          lineas.push({ key:'pg:real', fuente:'Presupuesto (real)', clase:'trabajo', nombre:'Ingreso registrado del año'+(bud.reales<12?' ('+bud.reales+'/12 meses reales, resto estimado)':''), anual: bud.total, excluido:false, real:true });
+          fuenteReal=true; mesesReales=bud.reales;
+        }
+      }
+    }catch(e){}
+    const vivas = lineas.filter(l=>!l.excluido);
+    const manualContado = vivas.reduce((s,l)=>s+l.anual,0);
+    return { lineas, deActivos, fuenteReal, mesesReales, total: manualContado + deActivos,
+             // Rentas de trabajo (salarios, honorarios) vs no laborales/capital (M5, arriendos y rendimientos de activos)
+             ingresoTrabajo: vivas.filter(l=>l.clase==='trabajo').reduce((s,l)=>s+l.anual,0),
+             ingresoNoLaboral: vivas.filter(l=>l.clase!=='trabajo').reduce((s,l)=>s+l.anual,0) + deActivos,
+             laboral: vivas.filter(l=>l.fuente.indexOf('Laboral')===0).reduce((s,l)=>s+l.anual,0),
+             variable: vivas.filter(l=>l.fuente==='Variable').reduce((s,l)=>s+l.anual,0),
+             retencionDetectada: vivas.reduce((s,l)=>s+(l.retencion||0),0),
+             noPeriodico: vivas.filter(l=>l.fuente.indexOf('No periódico')===0).reduce((s,l)=>s+l.anual,0) };
+  }
+  function pfIngresoAnualBruto(){ return pfIngresoDetalle().total; }
+  function pfPatrimonioBruto(){
+    // 1) Si el Mapa Patrimonial está hidratado en memoria, usar su cálculo (incluye TRM y % de propiedad).
+    try{ const g = totalGrossAssets(); if(g>0) return g; }catch(e){}
+    // 2) Fallback robusto: leer del estado persistido (por si el mapa aún no se hidrató al abrir el módulo fiscal).
+    try{
+      const data = state.mapaPatrimonial || {};
+      const acts = data.activos || [];
+      const trm = data.trm || {};
+      return acts.reduce((s,a)=>{
+        if(!a) return s;
+        let v = +a.value || 0;
+        if(a.currency && a.currency!=='COP') v = v * (+trm[a.currency] || 0);
+        const pct = (a.porcentajePropio!=null && a.porcentajePropio>0 && a.porcentajePropio<=100) ? a.porcentajePropio : 100;
+        return s + v*pct/100;
+      }, 0);
+    }catch(e){ return 0; }
+  }
+
+  // Impuesto de renta por la tabla del art. 241 (en UVT). impUVT = (baseUVT − desde)×tarifa + acumulado.
+  function aplicarTabla241(basePesos){
+    const tabla = ((fiscalConfig().renta)||{}).tabla241 || [];
+    if(!tabla.length || basePesos<=0) return 0;
+    const bgUVT = basePesos / uvtValor();
+    let r = tabla.find(x => bgUVT > x.desde && (x.hasta==null || bgUVT <= x.hasta));
+    if(!r) r = tabla[0];
+    return Math.round(Math.max(0, (bgUVT - r.desde) * r.tarifa + (r.baseUVT||0)) * uvtValor());
+  }
+
+  function pfDebeDeclarar(){
+    const t = (fiscalConfig().topesDeclaracion)||{};
+    const f = state.fiscal;
+    const ingresos = pfIngresoAnualBruto();
+    const patrimonio = pfPatrimonioBruto();
+    const criterios = [];
+    criterios.push({k:'Patrimonio bruto', uvt:t.patrimonioBruto, v:patrimonio, tope:enPesos(t.patrimonioBruto), supera: patrimonio > enPesos(t.patrimonioBruto)});
+    criterios.push({k:'Ingresos brutos', uvt:t.ingresosBrutos, v:ingresos, tope:enPesos(t.ingresosBrutos), supera: ingresos >= enPesos(t.ingresosBrutos)});
+    criterios.push({k:'Consumos con tarjeta de crédito', uvt:t.consumosTarjeta, v:(f.consumosTarjeta||0), tope:enPesos(t.consumosTarjeta), supera:(f.consumosTarjeta||0) > enPesos(t.consumosTarjeta)});
+    criterios.push({k:'Compras y consumos totales', uvt:t.comprasConsumos, v:(f.comprasConsumos||0), tope:enPesos(t.comprasConsumos), supera:(f.comprasConsumos||0) > enPesos(t.comprasConsumos)});
+    criterios.push({k:'Consignaciones y depósitos', uvt:t.consignaciones, v:(f.consignaciones||0), tope:enPesos(t.consignaciones), supera:(f.consignaciones||0) > enPesos(t.consignaciones)});
+    criterios.push({k:'Ser responsable de IVA', uvt:null, v:null, tope:null, supera: !!(f.resp && f.resp.iva)});
+    const razones = criterios.filter(c=>c.supera);
+    return { debe: razones.length>0, razones, criterios, ingresos, patrimonio };
+  }
+
+  // ¿Está obligado a presentar información exógena? (persona natural, AG 2025 · Res. DIAN 000227/2025)
+  function pfExogenaObligado(){
+    const f = state.fiscal;
+    const ex = (fiscalConfig().exogena)||(FISCAL_DEFAULT.exogena)||{};
+    const ingresos = pfIngresoAnualBruto();
+    // 1) Agente de retención: obligado sin importar el monto.
+    if(f.resp && f.resp.retencion) return { obligado:true, motivo:'retencion' };
+    // 2) Marcado manualmente en el perfil.
+    if(f.resp && f.resp.exogena) return { obligado:true, motivo:'marcado' };
+    // 3) Régimen Simple con ingresos sobre el tope.
+    if(f.regimen==='simple' && ingresos > enPesos(ex.simplePNUVT||11800)) return { obligado:true, motivo:'simple' };
+    // 4) Ordinario: ingresos sobre 11.800 UVT (2ª condición de rentas de capital/no laborales la valida el contador).
+    if(ingresos > enPesos(ex.ingresosPNUVT||11800)) return { obligado:'revisar', motivo:'ingresos' };
+    return { obligado:false, motivo:null };
+  }
+
+  // Aporte obligatorio a seguridad social: usa lo registrado; si está vacío, lo estima según el tipo de ingreso.
+  function pfAporteSegSocial(){
+    const f = state.fiscal;
+    const manual = (f.segSocial.salud||0) + (f.segSocial.pension||0);
+    if(manual > 0) return { valor: manual, origen:'registrado' };
+    const ingreso = pfIngresoAnualBruto();
+    const tipo = (state.profile && state.profile.tipoIngreso) || 'independiente';
+    let valor;
+    if(tipo === 'empleado') valor = ingreso * 0.08;              // 4% salud + 4% pensión (parte del empleado)
+    else valor = (ingreso * 0.40) * 0.285;                       // independiente/mixto: IBC 40% × (12,5% salud + 16% pensión)
+    return { valor: Math.round(valor), origen:'estimado', tipo };
+  }
+
+  // Detecta medicina prepagada / pólizas de salud ya registradas en los gastos (categoría salud).
+  function pfPrepagadaAnual(){
+    const items = (state.gastosItems && state.gastosItems['salud']) || [];
+    let mensual = 0;
+    items.forEach(it=>{
+      const n = ((it && it.nombre)||'').toLowerCase();
+      if(/prepagad|p[oó]liza|seguro|complementari|plan compl/.test(n)) mensual += +it.monto||0;
+    });
+    return Math.round(mensual*12);
+  }
+  // Detecta si tiene productos con beneficio tributario (FPV/AFC/seguro de pensión) registrados como activos.
+  function pfTieneFPV(){
+    const {acts} = pfFuenteActivos();
+    return acts.some(a=> a && (a.beneficioTributario || a.subtype==='Fondo de pensiones voluntarias FPV' || a.subtype==='Cuenta AFC' || a.subtype==='Seguro de pensión con ahorro'));
+  }
+  // Estima los intereses de vivienda del año desde el módulo de deudas (crédito hipotecario): saldo × tasa E.A.
+  function pfInteresesViviendaAuto(){
+    return (state.deudas||[]).reduce((s,d)=>{
+      if(!d) return s;
+      const esHipo = d.tipo==='APAL_HIPOTECA' || /hipotec|habitacional|vivienda/i.test(d.nombre||'');
+      if(!esHipo) return s;
+      return s + (+d.saldo||0) * (+d.tasa_anual||0);
+    }, 0);
+  }
+
+  // Tabla art. 383 (retención mensual sobre la base depurada en UVT). Bases acumuladas en UVT.
+  function aplicarTabla383(baseMesPesos){
+    const u = (baseMesPesos||0) / uvtValor();
+    let impUVT;
+    if(u<=95) impUVT=0;
+    else if(u<=150) impUVT=(u-95)*0.19;
+    else if(u<=360) impUVT=(u-150)*0.28+10.45;
+    else if(u<=640) impUVT=(u-360)*0.33+69.25;
+    else if(u<=945) impUVT=(u-640)*0.35+161.65;
+    else if(u<=2300) impUVT=(u-945)*0.37+268.40;
+    else impUVT=(u-2300)*0.39+769.75;
+    return Math.max(0, Math.round(impUVT * uvtValor()));
+  }
+  // Estima la retefuente del año sobre rentas de trabajo (art. 383), mensualizando la base gravable atribuible a trabajo.
+  function pfRetencionTrabajoEstimada(){
+    const r = pfRentaEstimada();
+    if(r.esSimple || r.ingresoTrabajo<=0 || r.ingresos<=0) return 0;
+    const baseTrabajoAnual = r.baseGravable * (r.ingresoTrabajo / r.ingresos);
+    return aplicarTabla383(baseTrabajoAnual/12) * 12;
+  }
+
+  function pfRentaEstimada(opts){
+    opts = opts || {};
+    const f = state.fiscal;
+    const det = pfIngresoDetalle();
+    const ingresos = det.total;
+    const esSimple = f.regimen === 'simple';
+    const seg = pfAporteSegSocial();
+    const incrngo = seg.valor;                                   // aportes obligatorios (salud INCR + pensión exenta)
+    const rentaLiquida = Math.max(0, ingresos - incrngo);
+    // Nota: la cascada ordinaria se calcula SIEMPRE (aunque el usuario esté en Simple) para poder comparar los dos regímenes.
+    const trabajoNeto = Math.max(0, det.ingresoTrabajo - incrngo);
+    const tipo = (state.profile && state.profile.tipoIngreso) || '';
+    const exenta25 = tipo ? 0.25 * trabajoNeto : 0;              // 25% renta exenta de trabajo (art. 206-10), solo rentas de trabajo
+    const dep = (state.profile && +state.profile.dependientes) || 0;
+    const hayTrabajo = det.ingresoTrabajo > 0;
+    const esLaboral = (tipo === 'empleado' || tipo === 'mixto');     // tiene relación laboral
+    const dep387 = (dep>0 && hayTrabajo && esLaboral) ? Math.min(0.10*det.ingresoTrabajo, enPesos(384)) : 0;   // dentro del tope
+    const dep336 = (dep>0 && hayTrabajo) ? enPesos(72 * Math.min(dep,4)) : 0;                                   // fuera del tope
+    const viviendaAuto = pfInteresesViviendaAuto();
+    const viviendaBase = (f.interesesVivienda>0) ? f.interesesVivienda : viviendaAuto;
+    const dedVivienda = Math.min(viviendaBase, enPesos(1200));
+    const viviendaEsAuto = !(f.interesesVivienda>0) && viviendaAuto>0;
+    const dedGMF = Math.round((f.gmf||0) * 0.50);                // 50% del 4x1000 (art. 115)
+    const prepagadaAnual = pfPrepagadaAnual();
+    const dedSalud = Math.min(prepagadaAnual, enPesos(16*12));   // medicina prepagada, tope 16 UVT/mes
+    const aporteVolBase = (opts.aporteVolOverride!=null) ? opts.aporteVolOverride : (f.aporteVoluntario||0);
+    const aporteVolReg = Math.min(aporteVolBase, 0.30*ingresos, enPesos(3800));  // FPV/AFC, tope 30% / 3.800 UVT
+    const topeBeneficios = Math.min(0.40 * rentaLiquida, enPesos(((fiscalConfig().renta||{}).limiteRentasExentasDeducciones||{}).topeUVT || 1340));
+    const beneficios = Math.min(dep387 + dedVivienda + dedGMF + dedSalud + aporteVolReg + exenta25, topeBeneficios);
+    const baseGravable = Math.max(0, rentaLiquida - beneficios - dep336);   // dep336 va por fuera del tope
+    const impuesto = aplicarTabla241(baseGravable);
+    const retencion = (f.retencion>0) ? f.retencion : (det.retencionDetectada||0);
+    const retencionEsAuto = !(f.retencion>0) && (det.retencionDetectada||0)>0;
+    return {
+      esSimple, ingresos, det, seg, incrngo, rentaLiquida, ingresoTrabajo:det.ingresoTrabajo, ingresoNoLaboral:det.ingresoNoLaboral,
+      trabajoNeto, exenta25, dep, hayTrabajo, esLaboral, dep387, dep336, dedVivienda, viviendaEsAuto, dedGMF, dedSalud, prepagadaAnual, aporteVolReg, topeBeneficios, beneficios, baseGravable, impuesto,
+      retencion, retencionEsAuto, saldo: impuesto - retencion, baseSinDeduc: rentaLiquida
+    };
+  }
+
+  function pfIvaPeriodo(){
+    const f = state.fiscal;
+    if(!(f.resp && f.resp.iva)) return null;
+    const tarifa = (fiscalConfig().iva||{}).tarifaGeneral || 0.19;
+    const generado = Math.round((f.iva.ventasGravadas||0) * tarifa);
+    const descontable = Math.round((f.iva.comprasConIva||0) * tarifa);
+    return { generado, descontable, saldo: generado - descontable, tarifa };
+  }
+
+  function pfIcaEstimado(){
+    const f = state.fiscal;
+    if(!(f.resp && f.resp.ica)) return null;
+    if(f.regimen === 'simple') return { integradoSimple:true };
+    const ingresos = pfIngresoAnualBruto();
+    const ica = (fiscalConfig().ica)||{};
+    const muni = ica.medellin || Object.values(ica)[0];
+    if(!muni || !muni.tarifasPorMil) return { ingresos, sinTarifa:true };
+    const porMil = muni.tarifasPorMil.servicios || muni.tarifasPorMil.comercio || 0;
+    return { ingresos, municipio:muni.nombre, porMil, valor: Math.round(ingresos * porMil / 1000) };
+  }
+
+  function pfSimpleEstimado(grupoId){
+    const cfg = fiscalConfig().simple || {};
+    const grupos = (cfg.grupos && cfg.grupos.length) ? cfg.grupos : ((FISCAL_DEFAULT.simple||{}).grupos||[]);
+    if(!grupos.length) return null;
+    const grupo = grupos.find(g=>g.id===grupoId) || grupos[grupos.length-1];
+    const ingresos = pfIngresoAnualBruto();
+    const uvt = uvtValor();
+    const ingresosUVT = ingresos / uvt;
+    const r = (grupo.rangos||[]).find(x=> ingresosUVT >= x.desde && ingresosUVT < x.hasta) || (grupo.rangos||[])[(grupo.rangos||[]).length-1];
+    const tarifa = r ? r.tarifa : 0;
+    const impuesto = Math.round(ingresos * tarifa);
+    return { grupo, tarifa, impuesto, ingresos, ingresosUVT, excedeTope: ingresosUVT > (cfg.topeIngresosUVT||100000), incConsumo: grupo.incConsumo||0 };
+  }
+
+  // Elegibilidad para el Régimen Simple. Combina lo automático (ingresos, perfil) con las respuestas del usuario. Lenguaje simple: lo lee el usuario.
+  function pfElegibleSimple(){
+    const det = pfIngresoDetalle();
+    const ingresos = det.total;
+    const uvt = uvtValor();
+    const topeUVT = (fiscalConfig().simple||{}).topeIngresosUVT || 100000;
+    const sc = (state.fiscal && state.fiscal.simpleCheck) || {};
+    const motivos = [], advertencias = [];
+    if(ingresos>0 && ingresos/uvt >= topeUVT)
+      motivos.push('Tus ingresos ('+fmt(ingresos)+') pasan el tope del Simple, que es de '+fmt(enPesos(topeUVT))+' al año. Por encima de ese monto no se puede usar.');
+    const tipo = (state.profile && state.profile.tipoIngreso) || '';
+    if(tipo === 'empleado')
+      motivos.push('Tus ingresos son de un sueldo como empleado. El Simple es para quien trabaja por su cuenta o tiene un negocio, no para empleados.');
+    else if(tipo === 'mixto')
+      advertencias.push('Tienes sueldo de empleado y también ingresos por tu cuenta. La parte del sueldo no entra al Simple; la comparación aplica solo a lo que ganas por tu cuenta.');
+    const pasivo = det.deActivos || 0;
+    if(ingresos>0 && pasivo/ingresos >= 0.20)
+      motivos.push('Tus ingresos por arriendos y rendimientos ('+fmt(pasivo)+') son el '+Math.round(pasivo/ingresos*100)+'% de todo lo que ganas. Cuando eso llega al 20% o más, no se puede usar el Simple.');
+    if(sc.residente === 'no')
+      motivos.push('Para usar el Simple debes vivir en Colombia la mayor parte del año.');
+    if(sc.actividad === 'si')
+      motivos.push('Tu actividad principal es una de las que no pueden usar el Simple (como asesoría en inversiones o créditos, préstamos, energía, venta de carros, combustibles o armas).');
+    if(sc.realidad === 'si')
+      motivos.push('Aunque factures por tu cuenta, en la práctica trabajas como empleado de una sola empresa, así que no puedes usar el Simple.');
+    if(sc.aldia === 'no')
+      motivos.push('Para entrar al Simple debes estar al día con la DIAN y con tus aportes de salud y pensión.');
+    if(sc.factura === 'no')
+      advertencias.push('Para pasarte al Simple vas a necesitar tener RUT y factura electrónica. Puedes sacarlos antes de inscribirte.');
+    if(sc.socio === 'si')
+      advertencias.push('Como eres socio o dueño de otras empresas, tus ingresos se suman con los de ellas para el límite. Vale la pena revisarlo con cuidado.');
+    const faltan = ['residente','actividad','realidad','aldia','factura','socio'].filter(k=>!sc[k]).length;
+    if(faltan>0 && motivos.length===0)
+      advertencias.push('Te faltan '+faltan+' pregunta(s) por responder en el Perfil fiscal (sección "¿Puedes usar el Régimen Simple?"). Complétalas para estar seguro.');
+    advertencias.push('Si te conviene y cumples, el cambio al Simple se solicita una vez al año, hasta el último día hábil de febrero.');
+    return { elegible: motivos.length===0, motivos, advertencias };
+  }
+
+  function pfComparadorHtml(){
+    const f = state.fiscal;
+    const renta = pfRentaEstimada();
+    if(renta.ingresos<=0) return '';
+    const elig = pfElegibleSimple();
+    if(!elig.elegible){
+      let h = '<div class="pf-diag-card"><div class="pf-diag-t">Régimen Simple: no aplicable a tu caso</div>';
+      h += '<p class="pf-note" style="margin-top:0">Con tus datos actuales no podrías optar por el Régimen Simple, así que compararlo no aportaría. Las razones:</p>';
+      elig.motivos.forEach(m=> h += '<div class="pf-vuln sev-media"><div class="pf-vuln-ico">!</div><div class="pf-vuln-body"><div class="pf-vuln-d">'+m+'</div></div></div>');
+      h += '<p class="pf-note">Requisitos completos en los artículos 905 y 906 del Estatuto Tributario. Tu asesor confirma la elegibilidad.</p></div>';
+      return h;
+    }
+    let icaOrd = 0;
+    if(f.resp && f.resp.ica){
+      const ica=(fiscalConfig().ica)||{}; const muni=ica.medellin||Object.values(ica)[0];
+      if(muni&&muni.tarifasPorMil){ const pm=muni.tarifasPorMil.servicios||muni.tarifasPorMil.comercio||0; icaOrd=Math.round(renta.ingresos*pm/1000); }
+    }
+    const ordTotal = renta.impuesto + icaOrd;
+    const grupoId = +f.simpleGrupo||4;
+    const simple = pfSimpleEstimado(grupoId);
+    if(!simple) return '';
+    const ordGana = ordTotal <= simple.impuesto;
+    const dif = Math.abs(ordTotal - simple.impuesto);
+    const grupos = ((fiscalConfig().simple||{}).grupos||[]).length ? (fiscalConfig().simple||{}).grupos : ((FISCAL_DEFAULT.simple||{}).grupos||[]);
+    let html = '<div class="pf-diag-card"><div class="pf-diag-t">¿Ordinario o Simple?</div>';
+    html += '<p class="pf-note" style="margin-top:0">El Régimen Simple reemplaza renta e ICA por una sola tarifa plana sobre tus ingresos brutos. Con tus cifras:</p>';
+    html += '<label class="pf-mini-label">Tu actividad en el Simple</label><select id="pf-simple-grupo" class="pf-select">';
+    grupos.forEach(g=>{ html += '<option value="'+g.id+'"'+(g.id===grupoId?' selected':'')+'>'+g.nombre+'</option>'; });
+    html += '</select>';
+    html += '<div class="pf-vs">';
+    html += '<div class="pf-vs-col'+(ordGana?' win':'')+'">'+(ordGana?'<span class="pf-vs-badge">Te conviene</span>':'')+'<div class="pf-vs-name">Ordinario</div><div class="pf-vs-total">'+fmt(ordTotal)+'</div><div class="pf-vs-detail"><span>Renta <b>'+fmt(renta.impuesto)+'</b></span><span>ICA <b>'+fmt(icaOrd)+'</b></span></div></div>';
+    html += '<div class="pf-vs-col'+(!ordGana?' win':'')+'">'+(!ordGana?'<span class="pf-vs-badge">Te conviene</span>':'')+'<div class="pf-vs-name">Simple</div><div class="pf-vs-total">'+fmt(simple.impuesto)+'</div><div class="pf-vs-detail"><span>Tarifa <b>'+(simple.tarifa*100).toFixed(1)+'%</b></span><span>Renta + ICA integrados</span></div></div>';
+    html += '</div>';
+    html += '<div class="pf-diag-out"><span>'+(ordGana?'El Ordinario te ahorra':'El Simple te ahorra')+'</span><b>'+fmt(dif)+'</b></div>';
+    html += '<p class="pf-note">'+(simple.excedeTope?'<strong>⚠ Superas el tope de 100.000 UVT</strong>, no podrías optar por el Simple. ':'')+'En el Simple <strong>pierdes las deducciones</strong> (dependientes, aportes voluntarios, vivienda, 25% exento). El IVA sigue aparte en ambos, y el cambio de régimen se hace una vez al año en los plazos de la DIAN.'+(simple.incConsumo>0?' Si vendes comidas y bebidas, suma 8% de INC.':'')+'</p>';
+    if(elig.advertencias && elig.advertencias.length){
+      html += '<div class="pf-simple-adv"><strong>Antes de decidir, confirma:</strong>';
+      elig.advertencias.forEach(a=> html += '<div class="pf-simple-adv-i">• '+a+'</div>');
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function pfOptimizadorHtml(){
+    const f = state.fiscal;
+    const renta = pfRentaEstimada();
+    if(renta.esSimple || renta.ingresos<=0) return '';
+    const maxAporte = Math.round(Math.min(0.30*renta.ingresos, enPesos(3800)));
+    if(maxAporte<=0) return '';
+    const actual = Math.min(f.aporteVoluntario||0, maxAporte);
+    const impSin = pfRentaEstimada({aporteVolOverride:0}).impuesto;
+    const impCon = pfRentaEstimada({aporteVolOverride:actual}).impuesto;
+    const step = Math.max(100000, Math.round(maxAporte/100/100000)*100000);
+    let html = '<div class="pf-diag-card"><div class="pf-diag-t">Optimizador: aporte a pensión voluntaria / AFC</div>';
+    html += '<p class="pf-note" style="margin-top:0">Cada peso que aportes (hasta el 30% de tu ingreso, tope 3.800 UVT) baja tu base de renta. Mueve el control:</p>';
+    html += '<div class="pf-opt-top"><span>Aporte al año</span><span class="pf-opt-val" id="pf-opt-val">'+fmt(actual)+'</span></div>';
+    html += '<input type="range" id="pf-opt-slider" min="0" max="'+maxAporte+'" step="'+step+'" value="'+actual+'" class="pf-range">';
+    html += '<div class="pf-vs" style="margin-top:6px">';
+    html += '<div class="pf-vs-col"><div class="pf-vs-name">Impuesto con el aporte</div><div class="pf-vs-total" id="pf-opt-imp">'+fmt(impCon)+'</div></div>';
+    html += '<div class="pf-vs-col win"><div class="pf-vs-name">Ahorro vs no aportar</div><div class="pf-vs-total" id="pf-opt-ahorro">'+fmt(impSin-impCon)+'</div></div>';
+    html += '</div>';
+    html += '<p class="pf-note">Además del ahorro tributario, ese dinero queda invertido a tu nombre para tu retiro. El cupo máximo con tu ingreso es '+fmt(maxAporte)+'.</p>';
+    html += '<button class="pf-cta-mini" data-cta-whatsapp style="margin-top:4px">Quiero aprovechar mi cupo</button>';
+    html += '</div>';
+    return html;
+  }
+
+  // Impuesto de renta personal aproximado sobre un monto de rentas de trabajo (para el sueldo que te pagas desde la SAS).
+  // Impuesto de renta sobre el sueldo que te pagas desde la SAS, con TODAS las deducciones del cliente y aportes calculados.
+  function pfRentaSobreSalario(salario){
+    if(salario<=0) return { impuesto:0, aportes:0, base:0 };
+    const f = state.fiscal;
+    const smmlv = ((fiscalConfig().sas)||{}).smmlv || 1423500;
+    // aportes obligatorios del trabajador: salud 4% + pensión 4% (+ 1% fondo de solidaridad si el sueldo mensual ≥ 4 SMMLV)
+    let tasa = 0.08;
+    if((salario/12) >= 4*smmlv) tasa += 0.01;
+    const aportes = Math.round(salario * tasa);
+    const neto = salario - aportes;
+    const exenta25 = 0.25 * neto;                                  // 25% exento (es empleado de la SAS → renta de trabajo)
+    const dep = (state.profile && +state.profile.dependientes) || 0;
+    const dep387 = (dep>0) ? Math.min(0.10*salario, enPesos(384)) : 0;   // relación laboral → aplica el 10%
+    const dep336 = (dep>0) ? enPesos(72*Math.min(dep,4)) : 0;
+    const viviendaAuto = pfInteresesViviendaAuto();
+    const dedVivienda = Math.min((f.interesesVivienda>0?f.interesesVivienda:viviendaAuto), enPesos(1200));
+    const dedGMF = Math.round((f.gmf||0)*0.50);
+    const dedSalud = Math.min(pfPrepagadaAnual(), enPesos(16*12));
+    const aporteVolReg = Math.min(f.aporteVoluntario||0, 0.30*salario, enPesos(3800));
+    const tope = Math.min(0.40*neto, enPesos(1340));
+    const beneficios = Math.min(dep387+dedVivienda+dedGMF+dedSalud+aporteVolReg+exenta25, tope);
+    const base = Math.max(0, neto - beneficios - dep336);
+    return { impuesto: aplicarTabla241(base), aportes, base };
+  }
+
+  function pfSasEstimado(opts){
+    opts = opts || {};
+    const cfg = (fiscalConfig().sas) || (FISCAL_DEFAULT.sas) || {};
+    const s = (state.fiscal && state.fiscal.sas) || {};
+    const det = pfIngresoDetalle();
+    const ingresos = det.total;
+    const costosNegocio = (opts.costosNegocio!=null) ? opts.costosNegocio : (+s.costosNegocio||0);
+    const salario = (opts.salario!=null) ? opts.salario : (+s.salario||0);
+    const costosAnuales = (opts.costosAnuales!=null) ? opts.costosAnuales : (s.costosAnuales!=null ? +s.costosAnuales : (cfg.costoAnualTipico||6000000));
+    const repartoPct = (opts.repartoPct!=null) ? opts.repartoPct : (s.repartoPct!=null ? +s.repartoPct : 100);
+    const utilidad = Math.max(0, ingresos - costosNegocio - salario);   // el sueldo también lo descuenta la empresa
+    const impuestoRenta = Math.round((cfg.tarifaRenta||0.35) * utilidad);
+    const utilidadDespues = utilidad - impuestoRenta;
+    const dividendos = Math.round(utilidadDespues * (repartoPct/100));
+    const exento = enPesos(cfg.dividendoExentoUVT||1090);
+    const impuestoDividendos = Math.round((cfg.dividendoTarifa||0.15) * Math.max(0, dividendos - exento));
+    const salT = pfRentaSobreSalario(salario);                          // impuesto de renta del sueldo con las deducciones del cliente
+    const impuestoSalario = salT.impuesto;
+    const aportesSalario = salT.aportes;
+    const totalImpuestos = impuestoRenta + impuestoDividendos + impuestoSalario;
+    const total = totalImpuestos + costosAnuales;                       // total en impuestos + costo de la SAS (los aportes van aparte)
+    const smmlv = cfg.smmlv || 1423500;
+    const requiereRevisor = ingresos >= (cfg.revisorFiscalIngresosSMMLV||3000)*smmlv;
+    return { ingresos, costosNegocio, salario, utilidad, impuestoRenta, utilidadDespues, dividendos, impuestoDividendos, impuestoSalario, aportesSalario, repartoPct, totalImpuestos, costosAnuales, total, requiereRevisor };
+  }
+
+  function pfSasHtml(){
+    const renta = pfRentaEstimada();
+    if(renta.ingresos<=0) return '';
+    const tipo = (state.profile && state.profile.tipoIngreso) || '';
+    if(tipo === 'empleado'){
+      let h = '<div class="pf-diag-card"><div class="pf-diag-t">¿Te conviene crear una empresa (SAS)?</div>';
+      h += '<p class="pf-note" style="margin-top:0">Tus ingresos son un <strong>sueldo de la empresa donde trabajas</strong>, y ese sueldo no lo puedes pasar por una empresa propia: te lo paga tu empleador directamente. Por eso, crear una SAS no cambiaría tus impuestos en este caso.</p>';
+      h += '<p class="pf-note">Este simulador aplica a quienes trabajan por su cuenta o tienen un negocio (honorarios, ventas, servicios). Si además del sueldo tienes ingresos por tu cuenta, ajústalo en tu perfil y te mostramos la comparación.</p></div>';
+      return h;
+    }
+    const pn = renta.impuesto;                 // impuesto de renta hoy como persona natural
+    const sas = pfSasEstimado();
+    const sasGana = sas.total < pn;
+    const dif = Math.abs(pn - sas.total);
+    const exento = enPesos(1090);
+    let html = '<div class="pf-diag-card"><div class="pf-diag-t">¿Te conviene crear una empresa (SAS)?</div>';
+    if(tipo === 'mixto') html += '<div class="pf-simple-adv" style="margin-top:0;margin-bottom:10px"><strong>Ojo:</strong> tienes sueldo como empleado y también ingresos por tu cuenta. Solo la parte que ganas <strong>por tu cuenta</strong> podría pasar por una SAS; el sueldo de tu empleo no. Toma esta simulación como una referencia sobre tu actividad independiente.</div>';
+    html += '<p class="pf-note" style="margin-top:0">Simulación: si tus ingresos entraran por una empresa (SAS). Puedes pagarte una parte como <strong>sueldo</strong> y dejar el resto como <strong>utilidad</strong> (para repartir como dividendos o reinvertir). El impuesto de tu sueldo se calcula con tus mismas deducciones.</p>';
+    html += '<div class="pf-grid2" style="margin-top:6px">';
+    html += '<div class="pf-field"><label>Costos de tu negocio al año <span class="info-tip" data-def="sas_costos_negocio" tabindex="0">i</span></label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="pf-sas-costos" inputmode="numeric" placeholder="0"></div></div>';
+    html += '<div class="pf-field"><label>Sueldo que te pagas al año <span class="info-tip" data-def="sas_salario" tabindex="0">i</span></label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="pf-sas-salario" inputmode="numeric" placeholder="0"></div></div>';
+    html += '<div class="pf-field"><label>Costo de tener la SAS al año <span class="info-tip" data-def="sas_costos_sas" tabindex="0">i</span></label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="pf-sas-mant" inputmode="numeric" placeholder="6.000.000"></div></div>';
+    html += '</div>';
+    html += '<div class="pf-opt-top" style="margin-top:10px"><span>¿Cuánto de la utilidad te pasas como dividendos? <span class="info-tip" data-def="sas_dividendos" tabindex="0">i</span></span><span class="pf-opt-val" id="pf-sas-repval">'+sas.repartoPct+'%</span></div>';
+    html += '<input type="range" id="pf-sas-reparto" min="0" max="100" step="10" value="'+sas.repartoPct+'" class="pf-range">';
+
+    html += '<div class="pf-diag-sub">Por el lado de la empresa</div>';
+    html += '<div class="pf-diag-row"><span>Tus ingresos del año</span><b id="pf-sas-ing">'+fmt(sas.ingresos)+'</b></div>';
+    html += '<div class="pf-diag-row"><span>− Costos de tu negocio</span><b id="pf-sas-cn">−'+fmt(sas.costosNegocio)+'</b></div>';
+    html += '<div class="pf-diag-row"><span>− Sueldo que te pagas</span><b id="pf-sas-salln">−'+fmt(sas.salario)+'</b></div>';
+    html += '<div class="pf-diag-row pf-diag-strong"><span>= Utilidad de la empresa</span><b id="pf-sas-util">'+fmt(sas.utilidad)+'</b></div>';
+    html += '<div class="pf-diag-row"><span>− Impuesto de renta de la SAS <span class="pf-mut">(35%)</span></span><b id="pf-sas-renta">−'+fmt(sas.impuestoRenta)+'</b></div>';
+    html += '<div class="pf-diag-row"><span>Dividendos que te pasas <span class="pf-mut">(<span id="pf-sas-reppct">'+sas.repartoPct+'</span>%)</span></span><b id="pf-sas-divmonto">'+fmt(sas.dividendos)+'</b></div>';
+    html += '<div class="pf-diag-row"><span>− Impuesto por dividendos <span class="pf-mut">(15% sobre lo que pasa de '+fmt(exento)+')</span></span><b id="pf-sas-div">−'+fmt(sas.impuestoDividendos)+'</b></div>';
+    html += '<div class="pf-diag-sub">Por el lado de tu sueldo</div>';
+    html += '<div class="pf-diag-row"><span>Tu sueldo del año</span><b id="pf-sas-salln2">'+fmt(sas.salario)+'</b></div>';
+    html += '<div class="pf-diag-row pf-diag-off"><span>Aportes a salud y pensión <span class="pf-mut">(automáticos, van a tu salud y pensión)</span></span><b id="pf-sas-aportes">'+fmt(sas.aportesSalario)+'</b></div>';
+    html += '<div class="pf-diag-row"><span>− Impuesto de renta sobre tu sueldo <span class="pf-mut">(con tus deducciones)</span></span><b id="pf-sas-impsal">−'+fmt(sas.impuestoSalario)+'</b></div>';
+    html += '<div class="pf-diag-sub">En total</div>';
+    html += '<div class="pf-diag-row"><span>Impuestos (empresa + dividendos + sueldo)</span><b id="pf-sas-imptot">'+fmt(sas.totalImpuestos)+'</b></div>';
+    html += '<div class="pf-diag-row"><span>+ Costo de mantener la SAS</span><b id="pf-sas-costoan">+'+fmt(sas.costosAnuales)+'</b></div>';
+    html += '<div class="pf-diag-out"><span>Total con SAS <span class="pf-mut">(impuestos + costos)</span></span><b id="pf-sas-total">'+fmt(sas.total)+'</b></div>';
+
+    html += '<div class="pf-vs" style="margin-top:12px">';
+    html += '<div class="pf-vs-col'+(!sasGana?' win':'')+'" id="pf-sas-pncol">'+(!sasGana?'<span class="pf-vs-badge">Te conviene</span>':'')+'<div class="pf-vs-name">Como estás hoy</div><div class="pf-vs-total">'+fmt(pn)+'</div></div>';
+    html += '<div class="pf-vs-col'+(sasGana?' win':'')+'" id="pf-sas-sascol">'+(sasGana?'<span class="pf-vs-badge">Te conviene</span>':'')+'<div class="pf-vs-name">Con una SAS</div><div class="pf-vs-total" id="pf-sas-totcol">'+fmt(sas.total)+'</div></div>';
+    html += '</div>';
+    html += '<div class="pf-diag-out"><span id="pf-sas-vered">'+(sasGana?'Con una SAS ahorrarías':'Quedándote como estás ahorras')+'</span><b id="pf-sas-dif">'+fmt(dif)+'</b></div>';
+    html += '<p class="pf-note">El sueldo baja el impuesto de la empresa, pero paga su propio impuesto y aportes; dejar utilidad paga 35% y, si la repartes, dividendos. Prueba distintos montos de sueldo y reparto. No incluye los aportes que paga la empresa sobre el sueldo'+(sas.requiereRevisor?' ni el revisor fiscal que necesitarías':'')+'; confírmalo con un contador.</p>';
+    html += '<button class="pf-cta-mini" data-cta-asesor style="margin-top:4px">Quiero que me asesoren si crear una SAS</button>';
+    html += '</div>';
+    return html;
+  }
+
+  function abrirWhatsAppAsesor(tema){
+    const num = '573104278004';
+    const msg = encodeURIComponent('Hola, vengo de ABBA Patrimonial y quiero información sobre: '+((tema||'').replace(/\s+/g,' ').trim()));
+    const url = 'https://wa.me/'+num+'?text='+msg;
+    try {
+      const a = document.createElement('a');
+      a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    } catch(e){
+      try { window.open(url, '_blank'); } catch(e2){ window.location.href = url; }
+    }
+  }
+
+  // Impuesto al patrimonio por la tabla marginal del art. 296-3 (en UVT).
+  function aplicarTablaPatrimonio(baseGravablePesos){
+    const tabla = ((fiscalConfig().impuestoPatrimonio)||{}).tabla || (FISCAL_DEFAULT.impuestoPatrimonio||{}).tabla || [];
+    if(!tabla.length || baseGravablePesos<=0) return 0;
+    const bUVT = baseGravablePesos / uvtValor();
+    let r = tabla.find(x => bUVT > x.desde && (x.hasta==null || bUVT <= x.hasta));
+    if(!r) r = tabla[tabla.length-1];
+    return Math.round(Math.max(0, (bUVT - r.desde) * r.tarifa + (r.acumUVT||0)) * uvtValor());
+  }
+  function pfTotalDeudas(){ return (state.deudas||[]).reduce((s,d)=>s+(d.saldo||0),0); }
+  // Gasto anual estimado (mensual registrado × 12) — sugerencia para "compras y consumos totales".
+  function pfGastoAnualEstimado(){
+    try{
+      let mensual = 0; const gi = state.gastosItems || {};
+      Object.keys(gi).forEach(k=>{ (gi[k]||[]).forEach(it=>{ if(!it.linkedToDeuda) mensual += (+it.monto||0); }); });
+      return Math.round(mensual*12);
+    }catch(e){ return 0; }
+  }
+  function pfImpuestoPatrimonio(){
+    const cfg = (fiscalConfig().impuestoPatrimonio)||(FISCAL_DEFAULT.impuestoPatrimonio)||{};
+    const bruto = pfPatrimonioBruto();
+    const deudas = pfTotalDeudas();
+    const liquido = Math.max(0, bruto - deudas);
+    const vivienda = (state.fiscal.patrimonio && +state.fiscal.patrimonio.viviendaHabitacion) || 0;
+    const exclusion = Math.min(vivienda, enPesos(cfg.exclusionViviendaUVT||12000));
+    const baseGravable = Math.max(0, liquido - exclusion);
+    const umbral = enPesos(cfg.umbralUVT||72000);
+    const umbralTemp = enPesos(cfg.umbralTemporal2026UVT||40000);
+    const obligado = liquido >= umbral;
+    const enZonaTemporal = !obligado && liquido >= umbralTemp;   // entre 40.000 y 72.000 UVT
+    const impuesto = obligado ? aplicarTablaPatrimonio(baseGravable) : 0;
+    return { bruto, deudas, liquido, vivienda, exclusion, baseGravable, umbral, umbralTemp, obligado, enZonaTemporal, impuesto };
+  }
+
+  function pfPatrimonioResumen(){
+    const r = pfImpuestoPatrimonio();
+    let h = '';
+    h += '<div class="pf-diag-row"><span>Patrimonio bruto <span class="pf-mut">(tu Mapa Patrimonial)</span></span><b>'+fmt(r.bruto)+'</b></div>';
+    h += '<div class="pf-diag-row"><span>− Deudas <span class="pf-mut">(tus créditos)</span> <span class="info-tip" data-def="pat_deudas" tabindex="0">i</span></span><b>−'+fmt(r.deudas)+'</b></div>';
+    h += '<div class="pf-diag-row pf-diag-strong"><span>= Patrimonio líquido</span><b>'+fmt(r.liquido)+'</b></div>';
+    if(r.exclusion>0) h += '<div class="pf-diag-row"><span>− Exclusión vivienda de habitación <span class="pf-mut">(máx. 12.000 UVT)</span></span><b>−'+fmt(r.exclusion)+'</b></div>';
+    h += '<div class="pf-diag-row"><span>Umbral para el impuesto <span class="pf-mut">(72.000 UVT)</span></span><b>'+fmt(r.umbral)+'</b></div>';
+    if(r.obligado){
+      h += '<div class="pf-diag-row pf-diag-strong"><span>Base gravable</span><b>'+fmt(r.baseGravable)+'</b></div>';
+      h += '<div class="pf-diag-out"><span>Impuesto al patrimonio estimado</span><b>'+fmt(r.impuesto)+'</b></div>';
+      h += '<div class="pf-note" style="margin-top:8px;color:var(--warn,#b45309)">Tu patrimonio líquido supera las 72.000 UVT: estás obligado a declarar y pagar el impuesto al patrimonio (Formulario 420). La 1ª cuota vence entre el 12 y el 26 de mayo de 2026 según tu NIT.</div>';
+    } else if(r.enZonaTemporal){
+      h += '<div class="pf-note" style="margin-top:8px;color:var(--warn,#b45309)">No superas el umbral permanente de 72.000 UVT ('+fmt(r.umbral)+'), pero sí las 40.000 UVT ('+fmt(r.umbralTemp)+'). Por el Decreto 1474 de 2025 (emergencia económica, solo 2026) <strong>podrías quedar obligado</strong>. Ese decreto está en revisión de la Corte Constitucional, así que confírmalo con tu contador antes de declarar.</div>';
+    } else {
+      h += '<div class="pf-note" style="margin-top:8px;color:var(--pos,#0e7c4a)">Tu patrimonio líquido está por debajo del umbral: por ahora <strong>no pagarías</strong> impuesto al patrimonio.</div>';
+    }
+    return h;
+  }
+  // ═══ MÓDULO 12 · PRESUPUESTO MENSUAL (Fase B) ═══
+  function pgNombreMesCap(mesKey){ const n=pgNombreMes(mesKey); return n.charAt(0).toUpperCase()+n.slice(1); }
+  function pgMesTieneDatos(mk){ return pgItemsFlat().some(it=>pgRegistrado(it.itemKey,mk)) || pgIngresoRegistrado(mk); }
+  function pgAcumuladoAnio(anio){
+    let ing=0, gas=0, estimado=false; const items=pgItemsFlat();
+    pgMeses(anio).forEach(mk=>{
+      ing += pgIngresoFiscalMes(mk); gas += pgTotFiscalGasto(mk);
+      if(!pgIngresoRegistrado(mk)) estimado=true;
+      items.forEach(it=>{ if(!pgRegistrado(it.itemKey,mk)) estimado=true; });
+    });
+    return {ing, gas, estimado};
+  }
+  // FASE D: ingreso del año para lo fiscal — suma los meses reales y cae al estimado en los que falten.
+  function pgIngresoAnioFiscal(anio){ anio=anio||pgAnio(); let total=0, reales=0; pgMeses(anio).forEach(mk=>{ total+=pgIngresoFiscalMes(mk); if(pgIngresoRegistrado(mk)) reales++; }); return {total, reales, hayAlguno:reales>0}; }
+  function pgStripHtml(anio, mesKey){
+    const act=+mesKey.slice(5,7); let s='';
+    for(let m=1;m<=12;m++){ const mk=pgMesKey(anio,m); const cls = m===act?'now':(pgMesTieneDatos(mk)?'done':(pgClaseMes(mk)==='pasado'?'past':'')); s+='<span class="'+cls+'"></span>'; }
+    return s;
+  }
+  // Encabezado de categoría editable (renombrar, arrastrar, eliminar).
+  function pgCatHeadHtml(c, ci, mesKey, conDisp){
+    return '<div class="pg-cat-head">'
+      + '<span class="pg-drag" draggable="true" data-dragcat="'+ci+'" title="Arrastrar categoría">⠿</span>'
+      + '<input class="pg-est-catname" data-catid="'+c.id+'" value="'+escapeHtml(c.label||'')+'" placeholder="Categoría">'
+      + '<button class="pg-est-del" data-delcat="'+c.id+'" title="Eliminar categoría">✕</button>'
+      + '</div>';
+  }
+  function pgChip(v){ v=+v||0; return (v<0?'-$ ':'$ ')+fmtInput(Math.abs(v)); }
+  function pgMesAbrev(mesKey){ const M=['','ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic']; return M[+mesKey.slice(5,7)]||''; }
+  function pgMetaBtnHtml(it, ik, mesKey){
+    const meta=pgItemMeta(it); const open=pgMetaOpen(ik); let tag='';
+    if(meta.tipo==='fecha'){ const v=pgMetaVinculada(it); if(v) tag='<span class="pg-meta-tag">'+escapeHtml((v.nombre||'meta').slice(0,16))+'</span>'; }
+    else if(meta.tipo==='llenar' && +meta.tope>0) tag='<span class="pg-meta-tag">tope</span>';
+    return '<button class="pg-metabtn'+(meta.tipo!=='mensual'?' set':'')+(open?' open':'')+'" data-metatoggle="'+ik+'" title="Configurar la meta de este rubro">'+SVG_TARGET+tag+'</button>';
+  }
+  function pgMetaProgHtml(acum, obj){ const pct=obj>0?Math.min(100,Math.round(Math.max(0,acum)/obj*100)):0; return '<div class="pg-meta-bar"><span style="width:'+pct+'%"></span></div><div class="pg-meta-progtxt">'+fmt(Math.max(0,acum))+' de '+fmt(obj)+' · '+pct+'%</div>'; }
+  function pgMetaPanelHtml(it, ik, mesKey){
+    const meta=pgItemMeta(it); const anio=pgAnio();
+    const seg=(t,lbl)=>'<button class="pg-meta-seg'+(meta.tipo===t?' on':'')+'" data-metatipo="'+ik+'" data-tipo="'+t+'">'+lbl+'</button>';
+    let h='<div class="pg-meta-cfg">';
+    h+='<div class="pg-meta-hd"><span>Meta de este rubro</span><button class="pg-movs-hide" data-metatoggle="'+ik+'">Ocultar ▴</button></div>';
+    h+='<div class="pg-meta-segs">'+seg('mensual','Mensual fija')+seg('fecha','Para una fecha')+seg('llenar','Hasta llenar')+'</div>';
+    if(meta.tipo==='mensual'){
+      h+='<div class="pg-meta-note">Asignas un monto fijo cada mes en la casilla <strong>Asignado</strong>; se trae solo del mes anterior.</div>';
+    } else if(meta.tipo==='fecha'){
+      const metas=pgMetasList();
+      if(!metas.length){
+        h+='<div class="pg-meta-note">No tienes metas creadas todavía. Ve al módulo <strong>Metas y proyección</strong>, crea una (ej. "Fondo de emergencia") con su objetivo y fecha, y vuelve aquí para programar el aporte mensual.</div>';
+      } else {
+        const v=pgMetaVinculada(it);
+        h+='<label class="pg-meta-f pg-meta-fw"><span>Vincular con una meta de tu módulo de Metas</span><select class="pg-meta-ref" data-metaref="'+ik+'"><option value="">— Elige una meta —</option>'
+          + metas.map(m=>'<option value="'+m.id+'"'+(v&&v.id===m.id?' selected':'')+'>'+escapeHtml(m.nombre||'(sin nombre)')+'</option>').join('')
+          + '</select></label>';
+        if(v){
+          const saldo=pgMetaSaldoReal(v), obj=+v.objetivo||0;
+          if(obj>0 && v.fecha){
+            const per=pgMetaAportePorMes(it), falta=Math.max(0,obj-saldo);
+            h+=pgMetaProgHtml(saldo, obj);
+            h+='<div class="pg-meta-note">Objetivo <strong>'+fmt(obj)+'</strong> para <strong>'+pgMesAbrev(v.fecha)+' '+v.fecha.slice(0,4)+'</strong>. Saldo real hoy: '+fmt(saldo)+' (de tu módulo de Metas). Te falta '+fmt(falta)+' → aporte sugerido <strong>'+fmt(per)+'/mes</strong> en los meses que restan.</div>';
+            h+='<button class="pg-meta-apply" data-metaapply="'+ik+'">Repartir el aporte en los meses que faltan</button>';
+          } else {
+            h+='<div class="pg-meta-note">La meta <strong>'+escapeHtml(v.nombre||'')+'</strong> aún no tiene objetivo o fecha. Complétalos en el módulo <strong>Metas y proyección</strong> y vuelve.</div>';
+          }
+        } else {
+          h+='<div class="pg-meta-note">Elige arriba a qué meta va este rubro. El objetivo, la fecha y el saldo se toman de tu módulo de Metas — aquí solo programas el aporte mensual.</div>';
+        }
+      }
+    } else {
+      const room=pgMetaRoom(ik,it,mesKey), acum=pgMetaAcumPrev(ik,mesKey);
+      h+='<div class="pg-meta-fields">'
+        +'<label class="pg-meta-f"><span>Tope</span><div class="pf-inp pf-mono pg-meta-inp"><span class="pf-pre">$</span><input class="pg-meta-tope" data-metatope="'+ik+'" inputmode="numeric" value="'+(+meta.tope>0?fmtInput(meta.tope):'')+'" placeholder="0"></div></label>'
+        +'</div>';
+      if(+meta.tope>0){
+        h+=pgMetaProgHtml(acum, +meta.tope);
+        h+='<div class="pg-meta-note">Aporta lo que puedas cada mes en <strong>Asignado</strong>. Te queda <strong>'+fmt(room||0)+'</strong> para el tope; no te dejo pasarte.</div>';
+      } else h+='<div class="pg-meta-note">Pon el tope (ej. el máximo deducible de tu pensión voluntaria o AFC).</div>';
+    }
+    h+='</div>';
+    return h;
+  }
+  // Panel de MOVIMIENTOS reutilizable. scope = itemKey (gasto) o 'ING' (ingreso).
+  function pgMovsPanelHtml(scope, movs){
+    const hoy=pgHoyISO(); const esIng=(scope==='ING');
+    const ph=esIng?'¿De dónde?':'¿En qué?'; const phAdd=esIng?'¿De dónde? (opcional)':'¿En qué? (opcional)';
+    let h='<div class="pg-movs">';
+    h+='<div class="pg-movs-hd"><span>Movimientos</span><button class="pg-movs-hide" data-movtoggle="'+scope+'">Ocultar ▴</button></div>';
+    if(!movs.length) h+='<div class="pg-mov-empty">Aún no registras nada aquí. Agrega tu primer movimiento abajo — el total se suma solo.</div>';
+    movs.forEach(m=>{
+      h+='<div class="pg-mov">'
+        + '<input type="date" class="pg-mov-fecha-inp" data-movscope="'+scope+'" data-movid="'+m.id+'" value="'+(m.fecha||hoy)+'">'
+        + '<input class="pg-mov-nota" data-movscope="'+scope+'" data-movid="'+m.id+'" value="'+escapeHtml(m.nota||'')+'" placeholder="'+ph+'">'
+        + '<div class="pf-inp pf-mono pg-mov-inp"><span class="pf-pre">$</span><input class="pg-mov-monto" data-movscope="'+scope+'" data-movid="'+m.id+'" inputmode="numeric" value="'+(m.monto?fmtInput(m.monto):'')+'" placeholder="0"></div>'
+        + '<button class="pg-mov-del" data-movscope="'+scope+'" data-movid="'+m.id+'" title="Eliminar movimiento">'+SVG_X+'</button>'
+        + '</div>';
+    });
+    h+='<div class="pg-mov pg-mov-add">'
+      + '<input type="date" class="pg-mov-newfecha" data-movscope="'+scope+'" value="'+hoy+'">'
+      + '<input class="pg-mov-newnota" data-movscope="'+scope+'" placeholder="'+phAdd+'">'
+      + '<div class="pf-inp pf-mono pg-mov-inp"><span class="pf-pre">$</span><input class="pg-mov-newmonto" data-movscope="'+scope+'" inputmode="numeric" placeholder="0"></div>'
+      + '<button class="pg-mov-addbtn" data-movscope="'+scope+'">Agregar</button>'
+      + '</div>';
+    if(movs.length) h+='<div class="pg-movs-tot"><span>Total registrado</span><strong>'+fmt(movs.reduce((s,m)=>s+(+m.monto||0),0))+'</strong></div>';
+    h+='</div>';
+    return h;
+  }
+  function pgItemHandleHtml(c, ii){ return '<span class="pg-drag pg-drag-sm" draggable="true" data-dragitem="'+ii+'" data-dragcatid="'+c.id+'" title="Arrastrar">⠿</span>'; }
+  function pgItemNameInputHtml(c, it, ii){ const ik=pgItemKey(c.id,it.id); return '<input class="pg-est-itemname pg-row-name" data-itemkey="'+ik+'" value="'+escapeHtml(it.nombre||'')+'" placeholder="Gasto '+(ii+1)+'">'; }
+  function pgAddCatBtnHtml(){ return '<div style="margin-top:8px"><button class="pf-cta-mini" id="pg-add-cat">+ Nueva categoría</button></div>'; }
+  // Bloque de PRESUPUESTO (asignado + gastado + disponible), filas editables.
+  function pgBudgetBlockHtml(mesKey, clase){
+    let html='';
+    const ingresoReg = pgIngresoRegistrado(mesKey);
+    const bloqueo = (clase==='actual') && !ingresoReg;   // mes activo sin ingreso: primero registrar
+    if(bloqueo){
+      html += '<div class="pg-rta wait"><div class="pg-rta-l"><div class="t">Registra tu ingreso del mes</div><div class="s">Aún no registras cuánto te entró en '+pgNombreMes(mesKey)+'. Regístralo abajo para empezar a repartirlo entre tus gastos.</div></div><div class="pg-rta-amt">'+fmt(0)+'</div></div>';
+    } else {
+      const rta=pgListoParaAsignar(mesKey);
+      const rtaCls = rta===0 ? 'zero' : (rta>0?'':'neg');
+      const rtaMsg = rta>0 ? 'Tienes pesos sin asignar. Repártelos entre tus gastos hasta llegar a cero.' : (rta<0 ? 'Asignaste más de lo que ingresó. Bájale a algún gasto hasta llegar a cero.' : '¡Listo! Cada peso de tu ingreso tiene un destino.');
+      html += '<div class="pg-rta '+rtaCls+'"><div class="pg-rta-l"><div class="t">Listo para asignar</div><div class="s">'+rtaMsg+'</div></div><div class="pg-rta-amt">'+fmt(rta)+'</div></div>';
+    }
+    const ingk = clase==='futuro' ? 'meta' : 'real';
+    const ingMov = (ingk==='real');   // los movimientos aplican a lo real, no al plan futuro
+    const ingHasM = ingMov && pgIngHasMovs(mesKey), ingMovs=pgIngMovs(mesKey), ingOpen = ingMov && pgMovOpen('ING');
+    html += '<div class="pg-card"><div class="pg-inc"><div class="pg-inc-body"><div class="pg-inc-t">Ingreso '+(clase==='futuro'?'esperado de ':'de ')+pgNombreMes(mesKey)+'</div><div class="pg-inc-s">'+(clase==='futuro'?'Lo que planeas recibir; es lo que repartes abajo':'Lo que realmente te entró')+'</div></div>'
+      + '<div class="pg-inc-r">'
+      + (ingMov
+          ? (ingHasM
+              ? '<button class="pg-inc-sum" data-movtoggle="ING" title="Ver o editar registros">'+pgChip(pgIngMovsTotal(mesKey))+'<span class="pg-gc-n">'+ingMovs.length+'</span><span class="pg-gc-ch">'+(ingOpen?'▴':'▾')+'</span></button>'
+              : '<button class="pg-inc-reg'+(ingOpen?' open':'')+'" data-movtoggle="ING" title="Registrar lo que te entró (concepto, monto y fecha)">Registrar<span class="pg-gc-ch">'+(ingOpen?'▴':'▾')+'</span></button>')
+          : '<div class="pf-inp pf-mono pg-inc-inp"><span class="pf-pre">$</span><input type="text" id="pg-ing" data-ingk="'+ingk+'" inputmode="numeric" placeholder="0"></div>')
+      + '</div></div>'
+      + (ingOpen ? pgMovsPanelHtml('ING', ingMovs) : '')
+      + '</div>';
+    html += '<div class="pg-card"><div class="pf-diag-t" style="margin-bottom:4px">Reparte tu ingreso · '+pgNombreMes(mesKey)+'</div>'
+      + '<p class="pf-note" style="margin-top:0">En <strong>Asignado</strong> escribes cuánto le das a cada gasto (cada mes se <strong>trae solo lo del anterior</strong>, marcado con ↩). Lo <strong>Gastado</strong> se registra tocando el botón <em>Registrar</em> del gasto y anotando cada compra con su fecha; el total se suma solo. Renombra tocando el nombre, arrastra con ⠿ para reordenar, y usa "+ gasto" o "+ Nueva categoría".</p>';
+    const cats=pgCategorias();
+    cats.forEach((c,ci)=>{
+      html += '<div class="pg-cat pg-est-cat" data-catidx="'+ci+'">'+pgCatHeadHtml(c, ci, mesKey, false);
+      html += '<div class="pg-cat-items">';
+      const canMov = clase!=='futuro';   // los movimientos son gastos reales; en meses futuros no aplican
+      (c.items||[]).forEach((it,ii)=>{
+        const ik=pgItemKey(c.id,it.id);
+        const asig=pgAsignado(ik,mesKey), gast=pgGastadoMes(ik,mesKey), disp=pgDisponible(ik,mesKey);
+        const heredado=pgAsignadoHeredado(ik,mesKey);
+        const pct = asig>0 ? Math.min(100, Math.round(gast/asig*100)) : 0;
+        const over = gast>asig && asig>0; const availCls = disp<0?'over':(disp===0?'zero':'ok');
+        const movs=pgMovs(ik,mesKey), hasM=movs.length>0, open=canMov && pgMovOpen(ik);
+        const gastCell = canMov
+          ? '<div class="pg-col"><div class="l">Gastado</div><button class="pg-gasto'+(hasM?' has':' empty')+(open?' open':'')+'" data-movtoggle="'+ik+'" title="Registrar lo gastado por movimientos">'+(hasM?pgChip(gast)+'<span class="pg-gc-n">'+movs.length+'</span>':'Registrar')+'<span class="pg-gc-ch">'+(open?'▴':'▾')+'</span></button></div>'
+          : '<div class="pg-col"><div class="l">Gastado</div><span class="pg-avail zero">—</span></div>';
+        html += '<div class="pg-row pg-est-item" data-catid="'+c.id+'" data-itemidx="'+ii+'"><div class="pg-row-top pg-row-edit">'
+          + pgItemHandleHtml(c,ii) + pgItemNameInputHtml(c,it,ii) + pgMetaBtnHtml(it, ik, mesKey)
+          + '<div class="pg-col"><div class="l">Asignado'+(heredado?' <span class="pg-heredado-tag" title="Se trae del mes anterior; edítalo si presupuestas distinto">↩</span>':'')+'</div><div class="pf-inp pf-mono pg-asig-box"><span class="pf-pre">$</span><input class="pg-inp'+(heredado?' pg-carried':'')+'" data-item="'+ik+'" data-k="meta" inputmode="numeric" value="'+(asig>0?fmtInput(asig):'')+'" placeholder="0"></div></div>'
+          + gastCell
+          + '<div class="pg-col"><div class="l">Disponible</div><span class="pg-avail '+availCls+'">'+pgChip(disp)+'</span></div>'
+          + '<button class="pg-est-del pg-row-del" data-delitem="'+ik+'" title="Eliminar gasto">✕</button>'
+          + '</div><div class="pg-bar"><span class="'+(over?'over':'')+'" style="width:'+pct+'%"></span></div>'
+          + (pgMetaOpen(ik) ? pgMetaPanelHtml(it, ik, mesKey) : '')
+          + (open ? pgMovsPanelHtml(ik, movs) : '')
+          + '</div>';
+      });
+      html += '<button class="pg-est-add" data-additem="'+c.id+'">+ gasto</button>';
+      html += '</div></div>';
+    });
+    html += pgAddCatBtnHtml();
+    html += '</div>';
+    return html;
+  }
+  // Bloque de REGISTRO de lo real (meses pasados o modo básico), filas editables.
+  function pgActualsBlockHtml(mesKey, clase){
+    let html='';
+    const titulo = clase==='pasado' ? ('Registra lo que pasó en '+pgNombreMes(mesKey)) : ('Registra lo real de '+pgNombreMes(mesKey));
+    html += '<div class="pg-card"><div class="pf-diag-t">'+titulo+'</div>';
+    html += '<p class="pf-note" style="margin-top:0">'+(clase==='pasado'?'Este mes ya pasó: no se presupuesta, se registra.':'Registra lo que llevas del mes.')+' Toca <em>Registrar</em> en cada gasto y anota cada compra con su fecha; el total se suma solo. Renombra, arrastra con ⠿ o agrega gastos aquí mismo.</p>';
+    const aIngHasM=pgIngHasMovs(mesKey), aIngMovs=pgIngMovs(mesKey), aIngOpen=pgMovOpen('ING');
+    html += '<div class="pg-inc" style="margin:4px 0 12px"><div class="pg-inc-body"><div class="pg-inc-t">Ingreso de '+pgNombreMes(mesKey)+'</div><div class="pg-inc-s">Lo que realmente te entró</div></div>'
+      + '<div class="pg-inc-r">'
+      + (aIngHasM
+          ? '<button class="pg-inc-sum" data-movtoggle="ING" title="Ver o editar registros">'+pgChip(pgIngMovsTotal(mesKey))+'<span class="pg-gc-n">'+aIngMovs.length+'</span><span class="pg-gc-ch">'+(aIngOpen?'▴':'▾')+'</span></button>'
+          : '<button class="pg-inc-reg'+(aIngOpen?' open':'')+'" data-movtoggle="ING" title="Registrar lo que te entró (concepto, monto y fecha)">Registrar<span class="pg-gc-ch">'+(aIngOpen?'▴':'▾')+'</span></button>')
+      + '</div></div>'
+      + (aIngOpen ? pgMovsPanelHtml('ING', aIngMovs) : '');
+    const cats=pgCategorias();
+    cats.forEach((c,ci)=>{
+      html += '<div class="pg-cat pg-est-cat" data-catidx="'+ci+'">'+pgCatHeadHtml(c, ci, mesKey, false);
+      html += '<div class="pg-cat-items">';
+      (c.items||[]).forEach((it,ii)=>{
+        const ik=pgItemKey(c.id,it.id);
+        const movs=pgMovs(ik,mesKey), hasM=movs.length>0, open=pgMovOpen(ik);
+        const est=fmtInput(it.montoTipico);
+        const gastCell = hasM
+          ? '<div class="pg-col"><div class="l">Gastado real</div><button class="pg-gasto has'+(open?' open':'')+'" data-movtoggle="'+ik+'" title="Ver o editar movimientos">'+pgChip(pgGastadoMes(ik,mesKey))+'<span class="pg-gc-n">'+movs.length+'</span><span class="pg-gc-ch">'+(open?'▴':'▾')+'</span></button></div>'
+          : '<div class="pg-col"><div class="l">Gastado real</div><button class="pg-gasto empty'+(open?' open':'')+'" data-movtoggle="'+ik+'" title="Sin registrar; si lo dejas así se estima en $'+est+'">Registrar<span class="pg-gc-ch">'+(open?'▴':'▾')+'</span></button></div>';
+        html += '<div class="pg-row pg-est-item" data-catid="'+c.id+'" data-itemidx="'+ii+'"><div class="pg-row-top pg-row-edit">'
+          + pgItemHandleHtml(c,ii) + pgItemNameInputHtml(c,it,ii)
+          + gastCell
+          + '<button class="pg-est-del pg-row-del" data-delitem="'+ik+'" title="Eliminar gasto">✕</button>'
+          + '</div>'
+          + (open ? pgMovsPanelHtml(ik, movs) : '')
+          + '</div>';
+      });
+      html += '<button class="pg-est-add" data-additem="'+c.id+'">+ gasto</button>';
+      html += '</div></div>';
+    });
+    html += pgAddCatBtnHtml();
+    html += '</div>';
+    return html;
+  }
+  function renderPresupuesto(){
+    const cont=document.getElementById('pg-screen'); if(!cont) return;
+    const p=pgState(); const anio=pgAnio(); const mesKey=pgMesActivo(); const modo=pgModo(); const clase=pgClaseMes(mesKey);
+    let html='';
+    // Controles
+    html += '<div class="pg-card"><div class="pg-controls">';
+    html += '<div class="pf-field"><label>Modo</label><div class="pf-inp"><select id="pg-modo"><option value="basico"'+(modo!=='activo'?' selected':'')+'>Básico (solo registro fiscal)</option><option value="activo"'+(modo==='activo'?' selected':'')+'>Presupuesto activo</option></select></div></div>';
+    html += '<div class="pf-field"><label>Año gravable</label><div class="pf-inp"><select id="pg-anio">'+[2024,2025,2026,2027].map(y=>'<option value="'+y+'"'+(anio===y?' selected':'')+'>'+y+'</option>').join('')+'</select></div></div>';
+    html += '</div></div>';
+    // Navegador de mes
+    const claseTag = clase==='pasado'?'· mes pasado':(clase==='actual'?'· mes actual':'· mes futuro');
+    html += '<div class="pg-card"><div class="pg-monthnav">'
+      + '<button class="pg-navbtn" id="pg-prev" aria-label="Mes anterior">‹</button>'
+      + '<div class="pg-mlabel"><div class="m">'+pgNombreMesCap(mesKey)+'</div><div class="y">'+anio+' '+claseTag+'</div></div>'
+      + '<button class="pg-navbtn" id="pg-next" aria-label="Mes siguiente">›</button></div>'
+      + '<div class="pg-strip">'+pgStripHtml(anio,mesKey)+'</div>'
+      + '<div class="pg-strip-cap">Presupuestas desde '+pgNombreMes(pgMesInicio())+'; los meses anteriores se registran.</div></div>';
+
+    if(clase==='pasado'){
+      html += pgActualsBlockHtml(mesKey, 'pasado');
+    } else if(modo!=='activo'){
+      // MODO BÁSICO: registro simple mes a mes (sin asignar).
+      if(clase==='futuro'){
+        html += '<div class="pg-card"><div class="pf-diag-t">'+pgNombreMesCap(mesKey)+' aún no llega</div><p class="pf-note" style="margin-top:0">En modo básico solo registras lo que ya pasó. Cuando este mes avance, aquí anotas —de forma sencilla— lo que ingresaste y gastaste, y tu Diagnóstico fiscal se mantiene exacto. Si prefieres <em>planear</em> los meses que vienen, cambia a "Presupuesto activo" arriba.</p></div>';
+      } else {
+        html += pgActualsBlockHtml(mesKey, 'actual');
+      }
+    } else {
+      // MODO ACTIVO: presupuestar (mes actual/futuro).
+      html += pgBudgetBlockHtml(mesKey, clase);
+    }
+
+    // Resumen del año gravable (fiscal)
+    const bud=pgIngresoAnioFiscal(anio); const ingEst=bud.reales<12;
+    html += '<div class="pg-card"><div class="pf-diag-t">Ingreso del año gravable '+anio+'</div>'
+      + '<p class="pf-note" style="margin-top:0">'+(ingEst?'Suma tus meses registrados ('+bud.reales+'/12) y estima el resto con tu cifra mensual del Módulo 1.':'Los 12 meses registrados: cifra real, base exacta de tu declaración '+anio+'.')+'</p>'
+      + '<div class="pg-yg pg-yg-solo"><div class="yg"><div class="l">Ingresos del año</div><div class="v inc">'+fmt(bud.total)+'</div></div></div>'
+      + '<p class="pf-note">'+(ingEst?'<strong>Estimado.</strong> ':'<strong>Real. </strong>')+'Esta es la base de ingreso que alimenta tu renta, mes a mes y no como promedio anualizado.</p></div>';
+    cont.innerHTML = html;
+    pgWireScreen();
+  }
+  function pgWireScreen(){
+    const p=pgState();
+    const rerender=()=>{ scheduleSave('presupuesto'); renderPresupuesto(); };
+    const modoSel=document.getElementById('pg-modo');
+    if(modoSel) modoSel.addEventListener('change', function(){ p.modo=this.value; if(p.modo==='activo') pgMesInicio(); rerender(); });
+    const anioSel=document.getElementById('pg-anio');
+    if(anioSel) anioSel.addEventListener('change', function(){ p.anioGravable=+this.value; const h=pgHoy(); p.mesActivo = (h.slice(0,4)==String(p.anioGravable)) ? h : pgMesKey(p.anioGravable,1); rerender(); });
+    const prev=document.getElementById('pg-prev'), next=document.getElementById('pg-next');
+    const mover=(d)=>{ let m=+p.mesActivo.slice(5,7)+d; if(m<1)m=12; if(m>12)m=1; p.mesActivo=pgMesKey(p.anioGravable,m); rerender(); };
+    if(prev) prev.addEventListener('click', ()=>mover(-1));
+    if(next) next.addEventListener('click', ()=>mover(1));
+    const activar=document.getElementById('pg-activar');
+    if(activar) activar.addEventListener('click', ()=>{ p.modo='activo'; pgMesInicio(); rerender(); });
+    // Editor de estructura del presupuesto (independiente del Módulo 1).
+    const saveStruct=()=>{ scheduleSave('presupuesto'); };
+    document.querySelectorAll('.pg-est-catname').forEach(inp=>{
+      inp.addEventListener('input', function(){ pgRenameCat(this.dataset.catid, this.value); saveStruct(); });
+    });
+    document.querySelectorAll('.pg-est-itemname').forEach(inp=>{
+      inp.addEventListener('input', function(){ pgRenameItem(this.dataset.itemkey, this.value); saveStruct(); });
+    });
+    document.querySelectorAll('[data-delcat]').forEach(b=>{ b.addEventListener('click', ()=>{ pgDelCat(b.dataset.delcat); rerender(); }); });
+    document.querySelectorAll('[data-delitem]').forEach(b=>{ b.addEventListener('click', ()=>{ pgDelItem(b.dataset.delitem); rerender(); }); });
+    document.querySelectorAll('[data-additem]').forEach(b=>{ b.addEventListener('click', ()=>{ pgAddItem(b.dataset.additem); rerender(); }); });
+    const addCat=document.getElementById('pg-add-cat');
+    if(addCat) addCat.addEventListener('click', ()=>{ pgAddCat(); rerender(); });
+    // Arrastre de categorías e ítems (desde el asa ⠿, para no interferir con los inputs).
+    (function(){
+      let drag=null;
+      document.querySelectorAll('.pg-drag[data-dragcat]').forEach(h=>{
+        h.addEventListener('dragstart', e=>{ drag={tipo:'cat', catIdx:+h.dataset.dragcat}; e.dataTransfer.effectAllowed='move'; try{e.dataTransfer.setData('text','')}catch(_){}; });
+      });
+      document.querySelectorAll('.pg-drag[data-dragitem]').forEach(h=>{
+        h.addEventListener('dragstart', e=>{ e.stopPropagation(); drag={tipo:'item', catId:h.dataset.dragcatid, itemIdx:+h.dataset.dragitem}; e.dataTransfer.effectAllowed='move'; try{e.dataTransfer.setData('text','')}catch(_){}; });
+      });
+      document.querySelectorAll('.pg-est-cat').forEach(el=>{
+        el.addEventListener('dragover', e=>{ if(drag&&drag.tipo==='cat'){ e.preventDefault(); el.classList.add('dragover'); } });
+        el.addEventListener('dragleave', ()=>{ el.classList.remove('dragover'); });
+        el.addEventListener('drop', e=>{ if(drag&&drag.tipo==='cat'){ e.preventDefault(); el.classList.remove('dragover'); pgMoveCat(drag.catIdx, +el.dataset.catidx); drag=null; rerender(); } });
+      });
+      document.querySelectorAll('.pg-est-item').forEach(el=>{
+        el.addEventListener('dragover', e=>{ if(drag&&drag.tipo==='item'&&drag.catId===el.dataset.catid){ e.preventDefault(); } });
+        el.addEventListener('drop', e=>{ if(drag&&drag.tipo==='item'&&drag.catId===el.dataset.catid){ e.preventDefault(); e.stopPropagation(); pgMoveItem(drag.catId, drag.itemIdx, +el.dataset.itemidx); drag=null; rerender(); } });
+      });
+    })();
+    const mesKey=pgMesActivo();
+    const ing=document.getElementById('pg-ing');
+    if(ing){
+      const ingk=ing.dataset.ingk||'real';
+      const cur = ingk==='meta' ? (pgIngresoCell(mesKey).meta||0) : pgIngresoRealRaw(mesKey);
+      ing.value = (cur!=null && cur>0)?fmtInput(cur):''; attachMoneyInput(ing);
+      ing.addEventListener('blur', function(){ const v=this.value.trim()===''?null:n(this.value); if(ingk==='meta') pgIngresoCell(mesKey).meta=(v||0); else pgSetIngresoReal(mesKey, v); rerender(); });
+      ing.addEventListener('keydown', function(e){ if(e.key==='Enter') this.blur(); });
+    }
+    document.querySelectorAll('.pg-inp').forEach(inp=>{
+      attachMoneyInput(inp);
+      inp.addEventListener('focus', function(){ this.value = n(this.value)||''; });
+      inp.addEventListener('blur', function(){
+        const ik=this.dataset.item, k=this.dataset.k;
+        if(k==='meta'){
+          let v = this.value.trim()==='' ? 0 : n(this.value);
+          const it=pgFindItem(ik); const meta=it?pgItemMeta(it):null;
+          if(meta && meta.tipo==='llenar' && +meta.tope>0){ const room=pgMetaRoom(ik,it,mesKey); if(room!=null && v>room) v=room; }
+          // Solo se fija explícito si cambia respecto a lo efectivo (heredado); si no, se mantiene la herencia.
+          if(v !== pgAsignado(ik, mesKey)) pgSetAsignado(ik, mesKey, v);
+        } else {
+          const v = this.value.trim()==='' ? null : n(this.value);
+          pgSetReal(ik, mesKey, v);
+        }
+        rerender();
+      });
+      inp.addEventListener('keydown', function(e){ if(e.key==='Enter') this.blur(); });
+    });
+    // ── MOVIMIENTOS (desglose por transacciones) ──────────────────────────────
+    const isIng = s => s==='ING';
+    // Abrir / cerrar el desglose de un gasto o del ingreso.
+    document.querySelectorAll('[data-movtoggle]').forEach(b=>{
+      b.addEventListener('click', ()=>{ pgToggleMov(b.dataset.movtoggle); renderPresupuesto(); });
+    });
+    // Agregar un movimiento.
+    document.querySelectorAll('.pg-mov-addbtn').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        const scope=b.dataset.movscope, wrap=b.closest('.pg-mov-add');
+        const montoEl=wrap.querySelector('.pg-mov-newmonto'), notaEl=wrap.querySelector('.pg-mov-newnota'), fechaEl=wrap.querySelector('.pg-mov-newfecha');
+        const monto=n(montoEl?montoEl.value:0);
+        if(monto<=0){ if(montoEl) montoEl.focus(); return; }
+        const nota=notaEl?notaEl.value:'', fecha=fechaEl?fechaEl.value:'';
+        if(isIng(scope)) pgAddIngMov(mesKey, monto, nota, fecha); else pgAddMov(scope, mesKey, monto, nota, fecha);
+        pgOpenMovs[scope]=true; rerender();
+      });
+    });
+    document.querySelectorAll('.pg-mov-newmonto').forEach(inp=>{
+      attachMoneyInput(inp);
+      inp.addEventListener('keydown', function(e){ if(e.key==='Enter'){ const btn=this.closest('.pg-mov-add').querySelector('.pg-mov-addbtn'); if(btn) btn.click(); } });
+    });
+    document.querySelectorAll('.pg-mov-newnota').forEach(inp=>{
+      inp.addEventListener('keydown', function(e){ if(e.key==='Enter'){ const m=this.closest('.pg-mov-add').querySelector('.pg-mov-newmonto'); if(m) m.focus(); } });
+    });
+    // Editar fecha de un movimiento (nuevo o existente).
+    document.querySelectorAll('.pg-mov-fecha-inp').forEach(inp=>{
+      inp.addEventListener('change', function(){ const s=this.dataset.movscope, id=this.dataset.movid; if(isIng(s)) pgSetIngMovFecha(mesKey,id,this.value); else pgSetMovFecha(s,mesKey,id,this.value); pgOpenMovs[s]=true; scheduleSave('presupuesto'); });
+    });
+    // Eliminar un movimiento.
+    document.querySelectorAll('.pg-mov-del').forEach(b=>{
+      b.addEventListener('click', ()=>{ const s=b.dataset.movscope; if(isIng(s)) pgDelIngMov(mesKey,b.dataset.movid); else pgDelMov(s,mesKey,b.dataset.movid); pgOpenMovs[s]=true; rerender(); });
+    });
+    // Editar monto de un movimiento existente.
+    document.querySelectorAll('.pg-mov-monto').forEach(inp=>{
+      attachMoneyInput(inp);
+      inp.addEventListener('blur', function(){ const s=this.dataset.movscope, id=this.dataset.movid, v=n(this.value); if(isIng(s)) pgSetIngMovMonto(mesKey,id,v); else pgSetMovMonto(s,mesKey,id,v); pgOpenMovs[s]=true; rerender(); });
+      inp.addEventListener('keydown', function(e){ if(e.key==='Enter') this.blur(); });
+    });
+    // Editar concepto (no cambia totales; solo guarda).
+    document.querySelectorAll('.pg-mov-nota').forEach(inp=>{
+      inp.addEventListener('blur', function(){ const s=this.dataset.movscope, id=this.dataset.movid; if(isIng(s)) pgSetIngMovNota(mesKey,id,this.value); else pgSetMovNota(s,mesKey,id,this.value); scheduleSave('presupuesto'); });
+    });
+    // ── FASE C · Metas por rubro ──────────────────────────────────────────────
+    document.querySelectorAll('[data-metatoggle]').forEach(b=>{
+      b.addEventListener('click', ()=>{ pgToggleMeta(b.dataset.metatoggle); renderPresupuesto(); });
+    });
+    document.querySelectorAll('[data-metatipo]').forEach(b=>{
+      b.addEventListener('click', ()=>{ const ik=b.dataset.metatipo, it=pgFindItem(ik); if(it) pgItemMeta(it).tipo=b.dataset.tipo; pgOpenMeta[ik]=true; rerender(); });
+    });
+    document.querySelectorAll('.pg-meta-ref').forEach(sel=>{
+      sel.addEventListener('change', function(){ const ik=this.dataset.metaref, it=pgFindItem(ik); if(it) pgItemMeta(it).metaRef=this.value||null; pgOpenMeta[ik]=true; rerender(); });
+    });
+    document.querySelectorAll('.pg-meta-tope').forEach(inp=>{
+      attachMoneyInput(inp);
+      inp.addEventListener('blur', function(){ const ik=this.dataset.metatope, it=pgFindItem(ik); if(it) pgItemMeta(it).tope=Math.max(0,n(this.value)); pgOpenMeta[ik]=true; rerender(); });
+      inp.addEventListener('keydown', function(e){ if(e.key==='Enter') this.blur(); });
+    });
+    document.querySelectorAll('.pg-meta-apply').forEach(b=>{
+      b.addEventListener('click', ()=>{ const ik=b.dataset.metaapply, it=pgFindItem(ik); if(it) pgDistribuirMetaFecha(ik, it); pgOpenMeta[ik]=true; rerender(); });
+    });
+  }
+
+  function pfPatrimonioHtml(){
+    const p = (state.fiscal.patrimonio)||{};
+    let html = '<div class="pf-diag-card"><div class="pf-diag-t">Impuesto al patrimonio</div>';
+    html += '<p class="pf-note" style="margin-top:0">Es un impuesto <strong>distinto</strong> a la declaración de renta: solo lo pagan los patrimonios grandes. Se calcula sobre tu <strong>patrimonio líquido</strong> (lo que tienes menos lo que debes) al 1 de enero, y solo aplica si supera 72.000 UVT (unos $3.771 millones).</p>';
+    html += '<div class="pf-field" style="margin-top:6px"><label>Valor de tu vivienda de habitación <span class="info-tip" data-def="pat_vivienda" tabindex="0">i</span></label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="pf-pat-viv" inputmode="numeric" placeholder="0"></div></div>';
+    html += '<div id="pf-pat-out" style="margin-top:10px">'+pfPatrimonioResumen()+'</div>';
+    html += '<p class="pf-note">El patrimonio bruto y las deudas se toman de tu Mapa Patrimonial y de tus créditos. <strong>Ojo con las deudas:</strong> ante la DIAN solo cuentan las que tengan soporte. Un crédito bancario se prueba con el extracto; pero un préstamo con un particular o familiar solo se acepta si está documentado con fecha cierta (un pagaré o contrato autenticado en notaría) o si quien te prestó declara esa cuenta por cobrar. Una deuda familiar informal que la DIAN rechace sube tu patrimonio gravable y puede incluso tratarse como donación. La exclusión aplica solo a tu vivienda de habitación. Tarifas marginales 0,5% / 1% / 1,5% (la de 1,5% solo hasta 2026). Estimación de planeación; la liquidación la valida tu contador.</p>';
+    html += '<button class="pf-cta-mini" data-cta-asesor style="margin-top:4px">Quiero asesoría para mi impuesto al patrimonio</button>';
+    html += '</div>';
+    return html;
+  }
+
+  function pfHerenciaEstimado(){
+    const goc = fiscalConfig().gananciaOcasional || FISCAL_DEFAULT.gananciaOcasional || {};
+    const cfg = goc.herencia || (FISCAL_DEFAULT.gananciaOcasional||{}).herencia || {};
+    const h = (state.fiscal && state.fiscal.herencia) || {};
+    const tarifa = goc.tarifa || 0.15;
+    const N = Math.max(1, +h.numHerederos || 1);
+    const vivienda = +h.vivienda || 0;
+    const otrosInm = +h.otrosInmuebles || 0;
+    const otrosBienes = +h.otrosBienes || 0;
+    const seguro = +h.seguroVida || 0;
+    const esLeg = h.esLegitimario !== false;
+    const totalRecibido = vivienda + otrosInm + otrosBienes + seguro;
+    // Exenciones sobre inmuebles del causante (se reparten entre los herederos que los reciben)
+    const exViv = Math.min(vivienda, enPesos(cfg.viviendaCausanteUVT||13000) / N);
+    const exOtrosInm = Math.min(otrosInm, enPesos(cfg.otrosInmueblesCausanteUVT||6500) / N);
+    // Seguro de vida (art. 303-1) — por beneficiario, aparte
+    const exSeguro = Math.min(seguro, enPesos(cfg.seguroVidaUVT||3250));
+    // Base de la herencia (bienes) antes de la exención personal
+    const totalHerenciaBienes = vivienda + otrosInm + otrosBienes;
+    const baseBienes = Math.max(0, (vivienda - exViv) + (otrosInm - exOtrosInm) + otrosBienes);
+    // Exención personal: num 3 (legitimario/cónyuge) o num 4 (20%)
+    let exPersonal = 0;
+    if(esLeg){
+      exPersonal = Math.min(baseBienes, enPesos(cfg.porBeneficiarioUVT||3250));
+    } else {
+      exPersonal = Math.min(baseBienes, Math.round((cfg.noLegitimarioPct||0.20)*totalHerenciaBienes), enPesos(cfg.noLegitimarioTopeUVT||1625));
+    }
+    const baseHerencia = Math.max(0, baseBienes - exPersonal);
+    const baseSeguro = Math.max(0, seguro - exSeguro);
+    const baseGravable = baseHerencia + baseSeguro;
+    const impuesto = Math.round(baseGravable * tarifa);
+    const totalExento = exViv + exOtrosInm + exSeguro + exPersonal;
+    return { totalRecibido, exViv, exOtrosInm, exSeguro, exPersonal, esLeg, baseGravable, impuesto, totalExento, tarifa, tieneDatos: totalRecibido>0 };
+  }
+  function pfHerenciaResumen(){
+    const r = pfHerenciaEstimado();
+    if(!r.tieneDatos) return '<div class="pf-note" style="margin:0">Escribe los valores que recibes y calculamos tu impuesto con las exenciones que te aplican.</div>';
+    let h = '';
+    h += '<div class="pf-diag-row"><span>Total que recibes</span><b>'+fmt(r.totalRecibido)+'</b></div>';
+    if(r.exViv>0) h += '<div class="pf-diag-row"><span>− Exención vivienda del causante <span class="pf-mut">(13.000 UVT ÷ herederos)</span></span><b>−'+fmt(r.exViv)+'</b></div>';
+    if(r.exOtrosInm>0) h += '<div class="pf-diag-row"><span>− Exención otros inmuebles <span class="pf-mut">(6.500 UVT ÷ herederos)</span></span><b>−'+fmt(r.exOtrosInm)+'</b></div>';
+    if(r.exSeguro>0) h += '<div class="pf-diag-row"><span>− Exención por seguro de vida <span class="pf-mut">(3.250 UVT)</span></span><b>−'+fmt(r.exSeguro)+'</b></div>';
+    if(r.exPersonal>0) h += '<div class="pf-diag-row"><span>− Exención personal <span class="pf-mut">('+(r.esLeg?'3.250 UVT por ser familiar directo':'20%, tope 1.625 UVT')+')</span></span><b>−'+fmt(r.exPersonal)+'</b></div>';
+    h += '<div class="pf-diag-row pf-diag-strong"><span>= Sobre esto se paga impuesto</span><b>'+fmt(r.baseGravable)+'</b></div>';
+    h += '<div class="pf-diag-out"><span>Impuesto de ganancia ocasional <span class="pf-mut">('+Math.round(r.tarifa*100)+'%)</span></span><b>'+fmt(r.impuesto)+'</b></div>';
+    if(r.impuesto===0) h += '<div class="pf-note" style="margin-top:8px;color:var(--pos,#0e7c4a)">Con las exenciones que te aplican, esta herencia <strong>no pagaría impuesto</strong> de ganancia ocasional.</div>';
+    return h;
+  }
+  function pfHerenciaHtml(){
+    const h = state.fiscal.herencia || {};
+    let html = '<div class="pf-diag-card"><div class="pf-diag-t">¿Vas a recibir una herencia? Calcula el impuesto</div>';
+    html += '<p class="pf-note" style="margin-top:0">Recibir una herencia paga <strong>ganancia ocasional</strong> (15%), pero la ley exonera montos importantes. Escribe lo que te corresponde <strong>a ti</strong> y te decimos si pagarías algo. Si no esperas una herencia, deja todo en cero.</p>';
+    html += '<div class="pf-grid2" style="margin-top:6px">';
+    html += '<div class="pf-field"><label>Vivienda donde vivía la persona fallecida <span class="info-tip" data-def="her_vivienda" tabindex="0">i</span></label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="pf-her-viv" inputmode="numeric" placeholder="0"></div></div>';
+    html += '<div class="pf-field"><label>Otros inmuebles que heredas <span class="info-tip" data-def="her_otros_inm" tabindex="0">i</span></label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="pf-her-oinm" inputmode="numeric" placeholder="0"></div></div>';
+    html += '<div class="pf-field"><label>Otros bienes (dinero, carro, inversiones) <span class="info-tip" data-def="her_otros_bienes" tabindex="0">i</span></label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="pf-her-obien" inputmode="numeric" placeholder="0"></div></div>';
+    html += '<div class="pf-field"><label>Seguro de vida que recibes <span class="info-tip" data-def="her_seguro" tabindex="0">i</span></label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="pf-her-seg" inputmode="numeric" placeholder="0"></div></div>';
+    html += '</div>';
+    html += '<div class="pf-grid2" style="margin-top:6px">';
+    html += '<div class="pf-field"><label>¿Entre cuántos se reparten los inmuebles? <span class="info-tip" data-def="her_herederos" tabindex="0">i</span></label><div class="pf-inp"><input type="text" id="pf-her-num" inputmode="numeric" placeholder="1"></div></div>';
+    html += '<div class="pf-field"><label>¿Eres hijo/a, cónyuge o padre/madre? <span class="info-tip" data-def="her_legitimario" tabindex="0">i</span></label><div class="pf-inp"><select id="pf-her-leg"><option value="si"'+(h.esLegitimario!==false?' selected':'')+'>Sí</option><option value="no"'+(h.esLegitimario===false?' selected':'')+'>No</option></select></div></div>';
+    html += '</div>';
+    html += '<div id="pf-her-out" style="margin-top:10px">'+pfHerenciaResumen()+'</div>';
+    html += '<p class="pf-note">Estimación con las exenciones del art. 307 y 303-1 (Ley 2277/2022). La exención de la vivienda del causante se reparte entre los herederos que la reciben; la personal aplica a cada uno. Un consejo clave: si la sucesión vende la vivienda y reparte el dinero, se puede perder la exención de la vivienda; conviene adjudicar el bien primero. Confírmalo con tu contador.</p>';
+    html += '<button class="pf-cta-mini" data-cta-asesor style="margin-top:4px">Quiero asesoría para mi sucesión</button>';
+    html += '</div>';
+    return html;
+  }
+
+  function pfFechaLarga(iso){
+    if(!iso) return '';
+    const meses=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+    const p = String(iso).split('-'); return parseInt(p[2],10)+' de '+meses[parseInt(p[1],10)-1]+' de '+p[0];
+  }
+  function pfRentaVencimiento(){
+    const cal = (fiscalConfig().calendario)||(FISCAL_DEFAULT.calendario)||{};
+    const tabla = (cal.rentaPN && cal.rentaPN.length) ? cal.rentaPN : ((FISCAL_DEFAULT.calendario||{}).rentaPN||[]);
+    if(!tabla.length) return null;
+    const raw = ((state.fiscal&&state.fiscal.digitosCedula)||(state.fiscal&&state.fiscal.digitosNit)||'').replace(/\D/g,'');
+    if(raw.length<2) return { pendiente:true };
+    const dd = parseInt(raw.slice(-2),10);
+    const idx = (dd===0) ? 49 : Math.floor((dd-1)/2);
+    const iso = tabla[Math.min(idx, tabla.length-1)];
+    const hoy = new Date(); hoy.setHours(0,0,0,0);
+    const venc = new Date(iso+'T00:00:00');
+    const dias = Math.round((venc - hoy)/86400000);
+    return { iso, label: pfFechaLarga(iso), dias, dd: raw.slice(-2) };
+  }
+  function pfCalendarioResumen(){
+    const f = state.fiscal;
+    const debe = pfDebeDeclarar().debe;
+    let h = '';
+    // Renta
+    const v = pfRentaVencimiento();
+    if(!debe){
+      h += '<div class="pf-cal-item"><div class="pf-cal-ico">✓</div><div><div class="pf-cal-t">Declaración de renta</div><div class="pf-cal-d">Con tus datos, este año <strong>no estás obligado</strong> a declarar. Si te retuvieron impuestos, declarar te puede devolver dinero.</div></div></div>';
+    } else if(v && v.pendiente){
+      h += '<div class="pf-cal-item"><div class="pf-cal-ico">📅</div><div><div class="pf-cal-t">Declaración de renta</div><div class="pf-cal-d">Para ver tu fecha exacta, completa los <strong>dos últimos dígitos de tu cédula</strong> en tu Perfil fiscal. En general, la declaración va entre el 12 de agosto y el 26 de octubre de 2026.</div></div></div>';
+    } else if(v){
+      const urg = v.dias<0 ? 'venc' : (v.dias<=30 ? 'alta' : 'ok');
+      const cuando = v.dias<0 ? ('Venció hace '+Math.abs(v.dias)+' días') : (v.dias===0 ? '¡Es hoy!' : ('Faltan '+v.dias+' días'));
+      h += '<div class="pf-cal-item pf-cal-'+urg+'"><div class="pf-cal-ico">📅</div><div><div class="pf-cal-t">Declaración de renta · <strong>'+v.label+'</strong></div><div class="pf-cal-d">'+cuando+'. Es tu fecha máxima para presentar (dígitos '+v.dd+'). Puedes hacerlo antes.</div></div></div>';
+    }
+    // IVA
+    if(f.resp && f.resp.iva){
+      const bimestral = pfIngresoAnualBruto() >= enPesos(92000);
+      h += '<div class="pf-cal-item"><div class="pf-cal-ico">🧾</div><div><div class="pf-cal-t">IVA</div><div class="pf-cal-d">Declaras IVA de forma <strong>'+(bimestral?'bimestral (cada 2 meses)':'cuatrimestral (cada 4 meses)')+'</strong>, según el último dígito de tu cédula. Confirma el día exacto en la DIAN.</div></div></div>';
+    }
+    // Exógena
+    const exo = pfExogenaObligado();
+    const exVentana = ((fiscalConfig().calendario||{}).exogenaVentana) || ((fiscalConfig().exogena||{}).ventana) || 'mayo–junio 2026';
+    if(exo.obligado===true){
+      let porque = exo.motivo==='retencion' ? 'porque practicas retención en la fuente' : (exo.motivo==='simple' ? 'por tus ingresos en el Régimen Simple' : 'según tu perfil');
+      h += '<div class="pf-cal-item"><div class="pf-cal-ico">📄</div><div><div class="pf-cal-t">Información exógena <span class="info-tip" data-def="resp_exogena" tabindex="0">i</span></div><div class="pf-cal-d">Debes reportarla '+porque+'. Se presenta en <strong>'+exVentana+'</strong>, según los dos últimos dígitos del NIT. Confirma el día exacto en la DIAN.</div></div></div>';
+    } else if(exo.obligado==='revisar'){
+      h += '<div class="pf-cal-item"><div class="pf-cal-ico">📄</div><div><div class="pf-cal-t">Información exógena <span class="info-tip" data-def="resp_exogena" tabindex="0">i</span></div><div class="pf-cal-d">Tus ingresos superan las 11.800 UVT: <strong>podrías estar obligado</strong> si además tus rentas de capital o no laborales pasan de 2.400 UVT. Revísalo con tu contador. Se presenta en '+exVentana+'.</div></div></div>';
+    }
+    // Simple
+    if(f.regimen==='simple'){
+      h += '<div class="pf-cal-item"><div class="pf-cal-ico">🧾</div><div><div class="pf-cal-t">Régimen Simple</div><div class="pf-cal-d">Pagas <strong>anticipos cada 2 meses</strong> y presentas una <strong>declaración anual</strong>. Las fechas van por el último dígito; confírmalas en la DIAN.</div></div></div>';
+    }
+    return h;
+  }
+  function pfObligacionesHtml(){
+    const f = state.fiscal;
+    const OBLICONS = {
+      renta:'<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h4"/></svg>',
+      iva:'<svg viewBox="0 0 24 24"><path d="M2 7h20M5 7v13a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V7M9 11h6"/></svg>',
+      ica:'<svg viewBox="0 0 24 24"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6"/></svg>',
+      ret:'<svg viewBox="0 0 24 24"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>',
+      exo:'<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4zM8 9h8M8 13h8M8 17h5"/></svg>',
+      ext:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/></svg>'
+    };
+    const items = [];
+    // 1. Renta
+    const dd = pfDebeDeclarar();
+    if(dd.debe){
+      const v = pfRentaVencimiento();
+      let st='soon', stL='Próxima', next='ago–oct 2026';
+      if(v && v.pendiente){ next='Completa tus dígitos'; }
+      else if(v && typeof v.dias==='number'){
+        next = v.label;
+        if(v.dias<0){ st='due'; stL='Vencida'; }
+        else if(v.dias<=30){ st='soon'; stL='Faltan '+v.dias+'d'; }
+        else { st='ok'; stL='Próxima'; }
+      }
+      items.push({ico:'renta', t:'Declaración de renta', m:'Anual · persona natural', st, stL, next});
+    } else {
+      items.push({ico:'renta', t:'Declaración de renta', m:'Con tus datos, no estás obligado este año', st:'na', stL:'No obligado', next:'—', dim:true});
+    }
+    // 2. IVA
+    if(f.resp && f.resp.iva){
+      const bimestral = pfIngresoAnualBruto() >= enPesos(92000);
+      items.push({ico:'iva', t:'IVA', m:'Responsable · '+(bimestral?'bimestral (cada 2 meses)':'cuatrimestral (cada 4 meses)'), st:'soon', stL:'Periódica', next:'Según NIT'});
+    }
+    // 3. ICA
+    if(f.resp && f.resp.ica){
+      const muni = ((fiscalConfig().ica||{}).medellin||{}).nombre || 'tu municipio';
+      items.push({ico:'ica', t:'ICA · '+muni, m:'Industria y comercio · anual', st:'ok', stL:'Anual', next:'Según municipio'});
+    }
+    // 4. Retención en la fuente
+    if(f.resp && f.resp.retencion){
+      items.push({ico:'ret', t:'Retención en la fuente', m:'Agente retenedor · mensual', st:'soon', stL:'Mensual', next:'Según NIT'});
+    }
+    // 5. Información exógena
+    const exo = pfExogenaObligado();
+    const exVentana = ((fiscalConfig().calendario||{}).exogenaVentana) || 'mayo–junio 2026';
+    if(exo.obligado===true){
+      items.push({ico:'exo', t:'Información exógena', m:'Reporte de operaciones con terceros · anual', st:'soon', stL:'Obligado', next:exVentana, tip:'resp_exogena'});
+    } else if(exo.obligado==='revisar'){
+      items.push({ico:'exo', t:'Información exógena', m:'Podrías estar obligado según tus rentas de capital', st:'na', stL:'Revisar', next:exVentana, tip:'resp_exogena'});
+    } else {
+      items.push({ico:'exo', t:'Información exógena', m:'No aplica con tu perfil actual', st:'na', stL:'No aplica', next:'—', tip:'resp_exogena', dim:true});
+    }
+    // 6. Activos en el exterior
+    const tieneExt = f.exterior && f.exterior.tiene && (f.exterior.valor||0) > enPesos(2000);
+    if(tieneExt){
+      items.push({ico:'ext', t:'Activos en el exterior', m:'Patrimonio fuera del país sobre 2.000 UVT · anual', st:'soon', stL:'Obligado', next:'Según NIT'});
+    } else {
+      items.push({ico:'ext', t:'Activos en el exterior', m:'Solo si tu patrimonio fuera del país supera 2.000 UVT', st:'na', stL:'No aplica', next:'—', dim:true});
+    }
+    let html = '<div class="pf-diag-card"><div class="pf-diag-t">Tus obligaciones de este año</div>';
+    html += '<p class="pf-note" style="margin-top:0">Según tu régimen y tus responsabilidades, esto es lo que te toca presentar ante la DIAN y el municipio.</p>';
+    items.forEach(it=>{
+      const tip = it.tip ? ' <span class="info-tip" data-def="'+it.tip+'" tabindex="0">i</span>' : '';
+      html += '<div class="pf-obl-item'+(it.dim?' dim':'')+'">'
+        + '<div class="pf-obl-ico">'+(OBLICONS[it.ico]||'')+'</div>'
+        + '<div class="pf-obl-body"><div class="pf-obl-t">'+it.t+tip+'</div><div class="pf-obl-m">'+it.m+'</div></div>'
+        + '<div class="pf-obl-r"><span class="pf-ost '+it.st+'">'+it.stL+'</span><div class="pf-obl-next">'+it.next+'</div></div>'
+        + '</div>';
+    });
+    html += '<p class="pf-note">El día exacto de renta depende de los dos últimos dígitos de tu cédula; los de IVA y exógena, del NIT. Complétalos en tu Perfil fiscal para ver las fechas precisas.</p>';
+    return html + '</div>';
+  }
+
+  function pfCalendarioHtml(){
+    const f = state.fiscal;
+    let html = '<div class="pf-diag-card"><div class="pf-diag-t">Tu calendario tributario 2026</div>';
+    html += '<p class="pf-note" style="margin-top:0">Tus fechas límite ante la DIAN este año, según los datos de tu perfil.</p>';
+    html += '<div id="pf-cal-out">'+pfCalendarioResumen()+'</div>';
+    html += '<p class="pf-note">Las fechas de renta son las oficiales del calendario DIAN 2026. Si el último día cae en festivo o fin de semana, ya está contemplado. Presentar tarde genera sanción (desde ~$524.000).</p>';
+    html += '</div>';
+    return html;
+  }
+
+  function renderDiagnostico(){
+    const cont = document.getElementById('pf-diagnostico'); if(!cont) return;
+    const dd = pfDebeDeclarar(), renta = pfRentaEstimada(), iva = pfIvaPeriodo(), ica = pfIcaEstimado();
+    const opt = ' <span style="font-weight:400;color:var(--ink-3,#6f6e6a);font-size:11px">estimación</span>';
+    let html = '<div class="pf-diag-head"><h3>Tu diagnóstico fiscal'+opt+'</h3><p>Calculado con lo que registraste aquí y en los demás módulos. Es una estimación de planeación, no la liquidación oficial.</p></div>';
+
+    html += '<div class="pf-diag-card '+(dd.debe?'is-warn':'is-ok')+'">';
+    html += '<div class="pf-diag-t">'+(dd.debe?'Debes declarar renta':'Por ahora no estarías obligado a declarar renta')+'</div>';
+    html += '<div class="pf-diag-s">'+(dd.debe
+      ? 'Basta con superar <strong>uno</strong> de estos criterios. Así estás en cada uno:'
+      : 'La ley revisa estos seis criterios; con tus datos no superas ninguno. Conviene revisarlo cada año.')+'</div>';
+    dd.criterios.forEach(c=>{
+      const val = (c.tope===null) ? (c.supera?'Sí':'No') : fmt(c.v);
+      const sub = (c.uvt===null) ? 'criterio independiente' : c.uvt.toLocaleString('es-CO')+' UVT · tope '+fmt(c.tope);
+      html += '<div class="pf-thr'+(c.supera?' over':'')+'">'
+        + '<div class="pf-thr-name">'+c.k+'<small>'+sub+'</small></div>'
+        + '<div class="pf-thr-val">'+val+'</div>'
+        + '<div class="pf-thr-flag '+(c.supera?'over':'ok')+'">'+(c.supera?'!':'✓')+'</div>'
+        + '</div>';
+    });
+    html += '<div class="pf-thr-uvt">Topes calculados con la UVT del año · UVT '+fmt(uvtValor())+'. Los consumos, compras y consignaciones los registras en tu Perfil fiscal.</div>';
+    html += '</div>';
+
+    const det = pfIngresoDetalle();
+    html += '<div class="pf-diag-card"><div class="pf-diag-t">Conciliación de ingresos'+opt+'</div>';
+    html += '<div class="pf-diag-s">Así se compone tu ingreso anual. Si una línea <strong>ya proviene de un activo</strong> del Mapa Patrimonial, márcala para no contarla dos veces (la renta del activo se cuenta por separado, abajo).</div>';
+    if(det.lineas.length){
+      html += '<div class="pf-concil">';
+      det.lineas.forEach(l=>{
+        html += '<label class="pf-concil-row'+(l.excluido?' is-excl':'')+'">'
+          + '<input type="checkbox" data-incl-key="'+encodeURIComponent(l.key)+'"'+(l.excluido?' checked':'')+'>'
+          + '<span class="pf-concil-nom">'+(l.nombre||'Ingreso')+' <em>'+l.fuente+'</em>'+(l.real?' <span class="pf-badge-real">Real</span>':'')+'</span>'
+          + '<span class="pf-concil-val">'+fmt(l.anual)+'</span></label>';
+      });
+      html += '</div><div class="pf-concil-hint">Marca = "ya viene de un activo" → no se cuenta aquí.</div>';
+    } else {
+      html += '<p class="pf-note">No hay ingresos manuales en los módulos 1, 5 ni variables.</p>';
+    }
+    if(det.fuenteReal){
+      html += '<div class="pf-note" style="margin-top:8px;color:var(--pos,#0e7c4a)">Tu ingreso de renta se está tomando de las cifras <strong>reales de tu presupuesto</strong> ('+det.mesesReales+'/12 meses registrados'+(det.mesesReales<12?'; los meses que faltan se estiman con tu cifra mensual':'')+'), en vez de anualizar un promedio. Como el ingreso fijo es tu única fuente, no hay riesgo de duplicar. Si agregas ingreso variable, de activos o no periódico, este puente se desactiva solo.</div>';
+    }
+    html += '<div class="pf-diag-row" style="margin-top:12px"><span>Ingresos manuales (no excluidos)</span><b>'+fmt(det.laboral+det.variable+det.noPeriodico)+'</b></div>';
+    html += '<div class="pf-diag-row"><span>Renta de activos (campo de ingreso del Mapa)</span><b>'+fmt(det.deActivos)+'</b></div>';
+    html += '<div class="pf-diag-out"><span>Ingreso anual total</span><b>'+fmt(det.total)+'</b></div></div>';
+
+    html += '<div class="pf-diag-card"><div class="pf-diag-t">Impuesto de renta'+opt+'</div>';
+    if(renta.esSimple){
+      const simpleR = pfSimpleEstimado(+state.fiscal.simpleGrupo||4);
+      html += '<div class="pf-diag-row"><span>Ingresos brutos del año</span><b>'+fmt(renta.ingresos)+'</b></div>';
+      if(simpleR){
+        html += '<div class="pf-diag-row"><span>Tarifa SIMPLE <span class="pf-mut">('+simpleR.grupo.nombre+')</span></span><b>'+(simpleR.tarifa*100).toFixed(1)+'%</b></div>';
+        if(simpleR.incConsumo>0) html += '<div class="pf-diag-row pf-diag-off"><span>+ Impoconsumo 8% <span class="pf-mut">(solo si vendes comidas y bebidas)</span></span><b>—</b></div>';
+        html += '<div class="pf-diag-out"><span>Impuesto SIMPLE estimado</span><b>'+fmt(simpleR.impuesto)+'</b></div>';
+      }
+      html += '<p class="pf-note">En <strong>Régimen Simple</strong> tu renta se liquida con una <strong>tarifa plana sobre los ingresos brutos</strong> que integra renta e ICA; no aplican deducciones ni el 25% exento. '+(simpleR&&simpleR.excedeTope?'<strong>⚠ Superas el tope de 100.000 UVT</strong>, revisa si aún puedes estar en el Simple. ':'')+'Puedes cambiar tu grupo de actividad en el comparador de abajo, que te muestra si te conviene frente al Ordinario.</p></div>';
+    } else {
+      const segLabel = renta.seg.origen==='registrado' ? 'registrado' : 'estimado';
+      html += '<div class="pf-diag-row"><span>Ingresos de trabajo <span class="pf-mut">(salarios, honorarios)</span></span><b>'+fmt(renta.ingresoTrabajo)+'</b></div>';
+      html += '<div class="pf-diag-row"><span>Ingresos no laborales <span class="pf-mut">(arriendos, rendimientos, otros)</span></span><b>'+fmt(renta.ingresoNoLaboral)+'</b></div>';
+      html += '<div class="pf-diag-row pf-diag-strong"><span>Total ingresos del año</span><b>'+fmt(renta.ingresos)+'</b></div>';
+      html += '<div class="pf-diag-row"><span>− Aportes obligatorios a salud y pensión <span class="pf-mut">('+segLabel+')</span></span><b>−'+fmt(renta.incrngo)+'</b></div>';
+      html += '<div class="pf-diag-row"><span>Renta líquida</span><b>'+fmt(renta.rentaLiquida)+'</b></div>';
+      // Deducciones y rentas exentas — cada una como línea de la cascada (las que están en "—" indican dónde registrarlas)
+      html += '<div class="pf-diag-sub">Deducciones y rentas exentas <span class="pf-mut">(máx 40% / 1.340 UVT)</span></div>';
+      // Razones dinámicas para dependientes (le dan retroalimentación al usuario cuando cambia el número en Metas)
+      const r387 = renta.dep>0 ? (!renta.hayTrabajo ? 'tienes '+renta.dep+' a cargo, pero requiere rentas de trabajo' : (!renta.esLaboral ? 'tienes '+renta.dep+' a cargo; el 10% solo aplica con relación laboral (empleado/mixto)' : '')) : 'sin personas a cargo · regístralas en Metas y proyección';
+      const r336 = renta.dep>0 ? (!renta.hayTrabajo ? 'tienes '+renta.dep+' a cargo, pero requiere rentas de trabajo' : '') : 'sin personas a cargo · regístralas en Metas y proyección';
+      const lim = [
+        ['25% exento de trabajo', renta.exenta25, 'sobre tus rentas de trabajo'],
+        ['Aportes voluntarios FPV / AFC', renta.aporteVolReg, 'Perfil fiscal → "Para cerrar tu renta"'],
+        ['Medicina prepagada', renta.dedSalud, 'de tus gastos de salud'],
+        ['Dependientes · 10% (art. 387)', renta.dep387, r387],
+        ['Intereses de vivienda'+(renta.viviendaEsAuto?' (de tus deudas)':''), renta.dedVivienda, 'de tu crédito hipotecario'],
+        ['4x1000 (GMF) · 50%', renta.dedGMF, 'Perfil fiscal → "Para cerrar tu renta"']
+      ];
+      lim.forEach(d=>{
+        if(d[1]>0) html += '<div class="pf-diag-row pf-diag-in"><span>− '+d[0]+'</span><b>−'+fmt(d[1])+'</b></div>';
+        else html += '<div class="pf-diag-row pf-diag-in pf-diag-off"><span>− '+d[0]+' <span class="pf-mut">· '+d[2]+'</span></span><b>—</b></div>';
+      });
+      const sumInside = renta.exenta25 + renta.aporteVolReg + renta.dedSalud + renta.dep387 + renta.dedVivienda + renta.dedGMF;
+      const exceso = sumInside - renta.beneficios;
+      if(exceso > 0) html += '<div class="pf-diag-row pf-diag-in"><span>+ Excedente no deducible <span class="pf-mut">(supera el tope 40% / 1.340 UVT)</span></span><b>+'+fmt(exceso)+'</b></div>';
+      html += '<div class="pf-diag-sub">Deducción adicional <span class="pf-mut">(no cuenta dentro del tope del 40% / 1.340 UVT)</span></div>';
+      if(renta.dep336>0) html += '<div class="pf-diag-row pf-diag-in"><span>− Dependientes · 72 UVT c/u (art. 336) <span class="pf-mut">('+renta.dep+' a cargo)</span></span><b>−'+fmt(renta.dep336)+'</b></div>';
+      else html += '<div class="pf-diag-row pf-diag-in pf-diag-off"><span>− Dependientes · 72 UVT (art. 336) <span class="pf-mut">· '+r336+'</span></span><b>—</b></div>';
+      html += '<div class="pf-diag-row pf-diag-strong"><span>Renta líquida gravable</span><b>'+fmt(renta.baseGravable)+'</b></div>';
+      html += '<div class="pf-diag-row"><span>Impuesto de renta</span><b>'+fmt(renta.impuesto)+'</b></div>';
+      if(renta.retencion>0) html += '<div class="pf-diag-row"><span>− Retención ya practicada'+(renta.retencionEsAuto?' <span class="pf-mut">(de tus ingresos variables)</span>':'')+'</span><b>−'+fmt(renta.retencion)+'</b></div>';
+      html += '<div class="pf-diag-out"><span>'+(renta.saldo>=0?'Saldo estimado a pagar':'Saldo a favor')+'</span><b>'+fmt(Math.abs(renta.saldo))+'</b></div>';
+      html += '<p class="pf-note">'
+        + (renta.seg.origen==='estimado' ? 'Seguridad social <strong>estimada</strong> ('+(renta.seg.tipo||'independiente')+'); regístrala en el Perfil fiscal para que sea exacta. ' : '')
+        + 'Las líneas en "—" te dicen dónde registrar el dato para activar esa deducción. El 25% exento y los dependientes solo aplican a rentas de trabajo.</p></div>';
+    }
+
+    if(iva){
+      html += '<div class="pf-diag-card"><div class="pf-diag-t">IVA del periodo</div>';
+      html += '<div class="pf-diag-row"><span>IVA generado (ventas × '+Math.round(iva.tarifa*100)+'%)</span><b>'+fmt(iva.generado)+'</b></div>';
+      html += '<div class="pf-diag-row"><span>− IVA descontable (compras)</span><b>'+fmt(iva.descontable)+'</b></div>';
+      html += '<div class="pf-diag-out"><span>'+(iva.saldo>=0?'IVA a pagar':'Saldo a favor')+'</span><b>'+fmt(Math.abs(iva.saldo))+'</b></div></div>';
+    }
+
+    if(ica){
+      html += '<div class="pf-diag-card"><div class="pf-diag-t">ICA estimado</div>';
+      if(ica.integradoSimple) html += '<p class="pf-note">Estás en Régimen Simple: el ICA va integrado en la tarifa SIMPLE, no se declara aparte.</p>';
+      else if(ica.sinTarifa) html += '<p class="pf-note">No hay tarifa de ICA configurada para tu municipio. Agrégala en la configuración fiscal para estimarlo.</p>';
+      else html += '<div class="pf-diag-row"><span>Ingresos × '+ica.porMil+' por mil ('+ica.municipio+')</span><b>'+fmt(ica.valor)+'</b></div><p class="pf-note">La tarifa real depende de tu actividad y municipio.</p>';
+      html += '</div>';
+    }
+
+    html += pfObligacionesHtml();
+    html += pfCalendarioHtml();
+    html += pfComparadorHtml();
+    html += pfOptimizadorHtml();
+    html += pfSasHtml();
+    html += pfHerenciaHtml();
+    html += pfPatrimonioHtml();
+
+    cont.innerHTML = html;
+    cont.querySelectorAll('[data-incl-key]').forEach(cb=>{
+      cb.addEventListener('change', function(){
+        const key = decodeURIComponent(this.getAttribute('data-incl-key'));
+        if(!state.fiscal.ingresosExcluidos) state.fiscal.ingresosExcluidos = {};
+        if(this.checked) state.fiscal.ingresosExcluidos[key] = true;
+        else delete state.fiscal.ingresosExcluidos[key];
+        scheduleSave('fiscal');
+        renderCentroFiscal();
+      });
+    });
+    const gsel = document.getElementById('pf-simple-grupo');
+    if(gsel) gsel.addEventListener('change', function(){ state.fiscal.simpleGrupo = +this.value; scheduleSave('fiscal'); renderCentroFiscal(); });
+    const slider = document.getElementById('pf-opt-slider');
+    if(slider){
+      slider.addEventListener('input', function(){
+        const val = +this.value;
+        const impSin = pfRentaEstimada({aporteVolOverride:0}).impuesto;
+        const impCon = pfRentaEstimada({aporteVolOverride:val}).impuesto;
+        const vEl=document.getElementById('pf-opt-val'), iEl=document.getElementById('pf-opt-imp'), aEl=document.getElementById('pf-opt-ahorro');
+        if(vEl) vEl.textContent = fmt(val);
+        if(iEl) iEl.textContent = fmt(impCon);
+        if(aEl) aEl.textContent = fmt(impSin-impCon);
+      });
+      slider.addEventListener('change', function(){ state.fiscal.aporteVoluntario = +this.value; scheduleSave('fiscal'); renderCentroFiscal(); });
+    }
+    // Simulador SAS
+    if(!state.fiscal.sas) state.fiscal.sas = { costosNegocio:0, salario:0, costosAnuales:null, repartoPct:100 };
+    function pfSasRefresh(){
+      const pn = pfRentaEstimada().impuesto;
+      const sas = pfSasEstimado();
+      const set=(id,v)=>{ const e=document.getElementById(id); if(e) e.textContent=v; };
+      set('pf-sas-ing', fmt(sas.ingresos));
+      set('pf-sas-cn', '−'+fmt(sas.costosNegocio));
+      set('pf-sas-salln', '−'+fmt(sas.salario));
+      set('pf-sas-util', fmt(sas.utilidad));
+      set('pf-sas-renta', '−'+fmt(sas.impuestoRenta));
+      set('pf-sas-reppct', sas.repartoPct);
+      set('pf-sas-divmonto', fmt(sas.dividendos));
+      set('pf-sas-div', '−'+fmt(sas.impuestoDividendos));
+      set('pf-sas-salln2', fmt(sas.salario));
+      set('pf-sas-aportes', fmt(sas.aportesSalario));
+      set('pf-sas-impsal', '−'+fmt(sas.impuestoSalario));
+      set('pf-sas-imptot', fmt(sas.totalImpuestos));
+      set('pf-sas-costoan', '+'+fmt(sas.costosAnuales));
+      set('pf-sas-total', fmt(sas.total));
+      set('pf-sas-totcol', fmt(sas.total));
+      const sasGana = sas.total < pn;
+      set('pf-sas-vered', sasGana?'Con una SAS ahorrarías':'Quedándote como estás ahorras');
+      set('pf-sas-dif', fmt(Math.abs(pn-sas.total)));
+      const pncol=document.getElementById('pf-sas-pncol'), sascol=document.getElementById('pf-sas-sascol');
+      if(pncol&&sascol){
+        pncol.classList.toggle('win', !sasGana); sascol.classList.toggle('win', sasGana);
+        const pnBadge = pncol.querySelector('.pf-vs-badge'), sasBadge = sascol.querySelector('.pf-vs-badge');
+        if(pnBadge) pnBadge.style.display = !sasGana?'':'none';
+        if(sasBadge) sasBadge.style.display = sasGana?'':'none';
+      }
+    }
+    const sasCostos=document.getElementById('pf-sas-costos');
+    if(sasCostos){
+      sasCostos.value = (+state.fiscal.sas.costosNegocio>0) ? fmtInput(state.fiscal.sas.costosNegocio) : '';
+      attachMoneyInput(sasCostos);
+      sasCostos.addEventListener('input', function(){ state.fiscal.sas.costosNegocio = n(this.value); pfSasRefresh(); });
+      sasCostos.addEventListener('blur', function(){ scheduleSave('fiscal'); });
+    }
+    const sasSalario=document.getElementById('pf-sas-salario');
+    if(sasSalario){
+      sasSalario.value = (+state.fiscal.sas.salario>0) ? fmtInput(state.fiscal.sas.salario) : '';
+      attachMoneyInput(sasSalario);
+      sasSalario.addEventListener('input', function(){ state.fiscal.sas.salario = n(this.value); pfSasRefresh(); });
+      sasSalario.addEventListener('blur', function(){ scheduleSave('fiscal'); });
+    }
+    const sasSlider=document.getElementById('pf-sas-reparto');
+    if(sasSlider){
+      sasSlider.addEventListener('input', function(){ state.fiscal.sas.repartoPct=+this.value; const e=document.getElementById('pf-sas-repval'); if(e) e.textContent=this.value+'%'; pfSasRefresh(); });
+      sasSlider.addEventListener('change', function(){ state.fiscal.sas.repartoPct=+this.value; scheduleSave('fiscal'); });
+    }
+    const sasMant=document.getElementById('pf-sas-mant');
+    if(sasMant){
+      const cfgSas=(fiscalConfig().sas)||{};
+      const cur = state.fiscal.sas.costosAnuales!=null ? state.fiscal.sas.costosAnuales : (cfgSas.costoAnualTipico||6000000);
+      sasMant.value = fmtInput(cur);
+      attachMoneyInput(sasMant);
+      sasMant.addEventListener('input', function(){ state.fiscal.sas.costosAnuales = n(this.value); pfSasRefresh(); });
+      sasMant.addEventListener('blur', function(){ scheduleSave('fiscal'); });
+    }
+    // === Herencia: cableado ===
+    (function(){
+      if(!state.fiscal.herencia) state.fiscal.herencia = { vivienda:0, otrosInmuebles:0, otrosBienes:0, seguroVida:0, numHerederos:1, esLegitimario:true };
+      const H = state.fiscal.herencia;
+      const refrescarHer = ()=>{ const out=document.getElementById('pf-her-out'); if(out) out.innerHTML = pfHerenciaResumen(); };
+      const money = (id, key)=>{
+        const el = document.getElementById(id); if(!el) return;
+        el.value = (+H[key]>0) ? fmtInput(H[key]) : '';
+        attachMoneyInput(el);
+        el.addEventListener('input', function(){ H[key] = n(this.value); refrescarHer(); });
+        el.addEventListener('blur', function(){ scheduleSave('fiscal'); });
+      };
+      money('pf-her-viv','vivienda'); money('pf-her-oinm','otrosInmuebles'); money('pf-her-obien','otrosBienes'); money('pf-her-seg','seguroVida');
+      const numEl = document.getElementById('pf-her-num');
+      if(numEl){
+        numEl.value = (+H.numHerederos>1) ? H.numHerederos : '';
+        numEl.addEventListener('input', function(){ this.value=this.value.replace(/\D/g,'').slice(0,2); H.numHerederos = Math.max(1, +this.value||1); refrescarHer(); });
+        numEl.addEventListener('blur', function(){ scheduleSave('fiscal'); });
+      }
+      const legEl = document.getElementById('pf-her-leg');
+      if(legEl){ legEl.addEventListener('change', function(){ H.esLegitimario = (this.value==='si'); refrescarHer(); scheduleSave('fiscal'); }); }
+    })();
+    // === Impuesto al patrimonio: cableado ===
+    (function(){
+      if(!state.fiscal.patrimonio) state.fiscal.patrimonio = { viviendaHabitacion:0 };
+      const P = state.fiscal.patrimonio;
+      const el = document.getElementById('pf-pat-viv'); if(!el) return;
+      el.value = (+P.viviendaHabitacion>0) ? fmtInput(P.viviendaHabitacion) : '';
+      attachMoneyInput(el);
+      el.addEventListener('input', function(){ P.viviendaHabitacion = n(this.value); const o=document.getElementById('pf-pat-out'); if(o) o.innerHTML = pfPatrimonioResumen(); });
+      el.addEventListener('blur', function(){ scheduleSave('fiscal'); });
+    })();
+    // === Presupuesto: ahora vive en su propio módulo (12) ===
+    cont.querySelectorAll('[data-cta-asesor]').forEach(b=> b.addEventListener('click', ()=>{ try{ navigateTo(9); }catch(e){} }));
+    cont.querySelectorAll('[data-cta-whatsapp]').forEach(b=> b.addEventListener('click', ()=> abrirWhatsAppAsesor(b.textContent)));
+  }
+
+  /* ═══ FASE 3 · DETECTOR DE VULNERABILIDADES Y OPORTUNIDADES ═══ */
+  function pfTarifaMarginal(){
+    const renta = pfRentaEstimada();
+    const bgUVT = (renta.baseGravable||0) / uvtValor();
+    const tabla = (fiscalConfig().renta||{}).tabla241 || [];
+    const r = tabla.find(x => bgUVT > x.desde && (x.hasta==null || bgUVT <= x.hasta));
+    return r ? r.tarifa : 0;
+  }
+
+  function renderVulnerabilidades(){
+    const cont = document.getElementById('pf-vulnerabilidades'); if(!cont) return;
+    const f = state.fiscal;
+    const ingreso = pfIngresoAnualBruto();
+    const patrimonio = pfPatrimonioBruto();
+    const marg = pfTarifaMarginal();
+    const dd = pfDebeDeclarar();
+
+    const vulns = [];
+    if(dd.debe) vulns.push({sev:'alta', t:'Estás obligado a declarar renta', d:'Cumples '+dd.razones.length+' de los criterios para declarar. Hacerlo tarde genera sanción mínima e intereses.'});
+    if(f.exterior && f.exterior.tiene && (f.exterior.valor||0) > enPesos(2000)) vulns.push({sev:'alta', t:'Activos en el exterior sin declarar', d:'Tus '+fmt(f.exterior.valor)+' superan las 2.000 UVT ('+fmt(enPesos(2000))+'): debes presentar la declaración anual de activos en el exterior, aparte de la renta.'});
+    if((f.consignaciones||0) > ingreso*1.5 && ingreso>0) vulns.push({sev:'media', t:'Consignaciones muy por encima de tus ingresos', d:'Registras '+fmt(f.consignaciones)+' en consignaciones frente a '+fmt(ingreso)+' de ingresos. La DIAN cruza esa diferencia; conviene poder justificar el origen.'});
+    if(f.resp && f.resp.iva && (f.iva.ventasGravadas||0)===0) vulns.push({sev:'media', t:'Eres responsable de IVA pero faltan tus ventas', d:'Sin las ventas gravadas no podemos estimar tu IVA a pagar ni avisarte de saldos. Complétalo en el Perfil fiscal.'});
+    if(patrimonio>0 && ingreso>0 && patrimonio > ingreso*12) vulns.push({sev:'info', t:'Patrimonio alto frente a tus ingresos', d:'Tu patrimonio ('+fmt(patrimonio)+') es muy superior a tu ingreso anual. Si creció sin ingresos que lo respalden, la DIAN puede tratarlo como renta por comparación patrimonial. Vale la pena documentar el origen.'});
+    const rDev = pfRentaEstimada();
+    if(!rDev.esSimple && rDev.saldo < 0){
+      const favor = Math.abs(rDev.saldo);
+      vulns.push({sev:'ok', t:'Tienes un saldo a favor estimado de '+fmt(favor), d:'Tu retención del año supera el impuesto, así que la DIAN te debería devolver esa diferencia. Puedes pedir <strong>devolución</strong> (a tu cuenta) o <strong>compensación</strong> (contra otros impuestos) dentro de los 2 años siguientes al vencimiento, con el RUT actualizado, una certificación bancaria y la relación de retenciones (formato 1220). Si tu declaración es sencilla (sin dividendos ni ganancias ocasionales, sin deudas con la DIAN y presentada a tiempo), podrías recibir la devolución de oficio automáticamente.'});
+    }
+
+    const opps = [];
+    const esSimple = f.regimen === 'simple';
+    if(!esSimple && marg>0){
+      const renta = pfRentaEstimada();
+      // Aporte voluntario: cupo restante = tope − lo que ya aporta
+      const cupoAporteTope = Math.min(0.30*ingreso, enPesos(3800));
+      const cupoAporte = Math.max(0, cupoAporteTope - (renta.aporteVolReg||0));
+      if(cupoAporte>0){
+        const yaApta = (renta.aporteVolReg||0)>0 ? ' Ya aportas '+fmt(renta.aporteVolReg)+'; te queda este cupo.' : '';
+        opps.push({t:'Aporte a pensión voluntaria / AFC', d:'Puedes aportar hasta '+fmt(cupoAporte)+' más (dentro del 30% de tu ingreso) y baja tu base de renta.'+yaApta, save:Math.round(cupoAporte*marg), cta:'Quiero aprovechar mi cupo', wa:true});
+      }
+      const dep = (state.profile && +state.profile.dependientes) || 0;
+      if(dep>0 && (renta.dep387||0)===0 && (renta.dep336||0)===0){ opps.push({t:'Deducción por dependientes', d:'Tienes '+dep+' a cargo, pero hoy no se aplica (requiere rentas de trabajo). Si registras ingresos laborales, podrías deducir 72 UVT por dependiente y el 10% adicional.', save:0}); }
+      // Medicina prepagada: cupo restante = tope − lo ya detectado/deducido
+      const dedSaludTope = enPesos(16*12);
+      const cupoSalud = Math.max(0, dedSaludTope - (renta.dedSalud||0));
+      if(cupoSalud > 0){
+        const yaSalud = (renta.dedSalud||0)>0 ? ' Ya deduces '+fmt(renta.dedSalud)+'; aún tienes este cupo.' : ' Si no tienes póliza, te conseguimos cotización: cobertura y menos impuesto.';
+        opps.push({t:'Medicina prepagada / póliza de salud', d:'Deducible hasta 16 UVT/mes ('+fmt(dedSaludTope)+'/año) para ti y tu familia.'+yaSalud, save:Math.round(cupoSalud*marg), cta:'Solicitar cotización', wa:true});
+      }
+      if((renta.dedVivienda||0)===0) opps.push({t:'Intereses de crédito de vivienda', d:'Si tienes crédito hipotecario, los intereses son deducibles hasta 1.200 UVT/año ('+fmt(enPesos(1200))+'). Sube el certificado del banco.', save:Math.round(enPesos(1200)*marg)});
+    }
+
+    let html = '';
+    html += '<div class="pf-diag-head"><h3>Vulnerabilidades y oportunidades</h3><p>Riesgos a cubrir y ahorros a tu alcance, detectados con tus datos. Cada uno lo puedes llevar a tu asesor.</p></div>';
+
+    if(vulns.length){
+      vulns.forEach(v=>{
+        html += '<div class="pf-vuln sev-'+v.sev+'"><div class="pf-vuln-ico">'+(v.sev==='alta'?'!':(v.sev==='media'?'!':(v.sev==='ok'?'✓':'i')))+'</div>'
+          + '<div class="pf-vuln-body"><div class="pf-vuln-t">'+v.t+'</div><div class="pf-vuln-d">'+v.d+'</div></div></div>';
+      });
+    } else {
+      html += '<div class="pf-vuln sev-ok"><div class="pf-vuln-ico">✓</div><div class="pf-vuln-body"><div class="pf-vuln-t">Sin alertas de riesgo con tus datos actuales</div><div class="pf-vuln-d">Igual conviene revisarlo cada año y al cambiar de patrimonio o ingresos.</div></div></div>';
+    }
+
+    if(esSimple){
+      html += '<div class="pf-note" style="margin-top:14px">Estás en Régimen Simple: las deducciones de renta (aportes, dependientes, salud, vivienda) no aplican, porque el Simple grava el ingreso bruto. Por eso no mostramos oportunidades de deducción.</div>';
+    } else if(marg<=0){
+      html += '<div class="pf-note" style="margin-top:14px">Con tu nivel de ingresos, tu renta aún no genera impuesto, así que las deducciones no producen ahorro hoy. Las recalculamos cuando suba tu ingreso.</div>';
+    } else if(opps.length){
+      html += '<div class="pf-opp-grid">';
+      opps.forEach(o=>{
+        html += '<div class="pf-opp"><div class="pf-opp-top"><div class="pf-opp-t">'+o.t+'</div><div class="pf-opp-save">'+fmt(o.save)+'<small>ahorro/año</small></div></div>'
+          + '<div class="pf-opp-d">'+o.d+'</div>'
+          + (o.cta?'<button class="pf-cta-mini" '+(o.wa?'data-cta-whatsapp':'data-cta-asesor')+'>'+o.cta+'</button>':'')
+          + '</div>';
+      });
+      html += '</div>';
+    }
+
+    html += '<div class="pf-cta-row"><button class="pf-cta primary" data-cta-asesor>Agendar con mi asesor</button><button class="pf-cta" data-cta-asesor>Generar resumen para mi contador</button></div>';
+    html += '<p class="pf-note" style="margin-top:14px">Los ahorros son estimaciones con tu tarifa marginal de renta; el beneficio real depende de tus soportes y de los límites combinados (40% / 1.340 UVT). Tu asesor lo valida y lo ejecuta antes del cierre del año.</p>';
+
+    cont.innerHTML = html;
+    cont.querySelectorAll('[data-cta-asesor]').forEach(b=>{
+      b.addEventListener('click', ()=>{ try{ navigateTo(9); }catch(e){} });
+    });
+    cont.querySelectorAll('[data-cta-whatsapp]').forEach(b=>{
+      b.addEventListener('click', ()=> abrirWhatsAppAsesor(b.textContent));
+    });
+  }
+
+  function renderCentroFiscal(){
+    renderDiagnostico();
+    renderVulnerabilidades();
+  }
+
+  let _pfWired = false;
+  function renderPerfilFiscal(){
+    const f = state.fiscal;
+    document.querySelectorAll('#pf-regimen button').forEach(b=> b.classList.toggle('active', (b.dataset.r||'')===(f.regimen||'')));
+    document.querySelectorAll('.pf-tgl[data-k]').forEach(t=>{ const k=t.dataset.k; t.classList.toggle('on', !!(f.resp && f.resp[k])); });
+    const setVal=(id,v)=>{ const el=document.getElementById(id); if(el) el.value = (v||v===0)?v:''; };
+    setVal('pf-ciiu', f.ciiu); setVal('pf-municipios', f.municipios);
+    setVal('pf-digCedula', f.digitosCedula); setVal('pf-digNit', f.digitosNit);
+    const setMoney=(id,v)=>{ const el=document.getElementById(id); if(el) el.value = v>0?fmtInput(v):''; };
+    setMoney('pf-consumos', f.consumosTarjeta); setMoney('pf-compras', f.comprasConsumos); setMoney('pf-consignaciones', f.consignaciones);
+    // Sugerencia editable y visible para "compras y consumos totales": estimado desde los gastos registrados.
+    (function(){
+      const el = document.getElementById('pf-compras'); const hint = document.getElementById('pf-compras-hint');
+      if(!el || !hint) return;
+      const est = pfGastoAnualEstimado();
+      if(est>0){
+        hint.style.display = 'block';
+        hint.innerHTML = 'Según tus gastos registrados, tus compras del año rondan <strong>'+fmt(est)+'</strong>. <span id="pf-compras-usar" style="color:var(--accent);cursor:pointer;text-decoration:underline">Usar este valor</span> y ajústalo con tu extracto.';
+        const usar = document.getElementById('pf-compras-usar');
+        if(usar) usar.addEventListener('click', function(){ f.comprasConsumos = est; el.value = fmtInput(est); scheduleSave('fiscal'); });
+      } else {
+        hint.style.display = 'none';
+      }
+    })();
+    setMoney('pf-ivaVentas', f.iva.ventasGravadas); setMoney('pf-ivaCompras', f.iva.comprasConIva);
+    setMoney('pf-segSalud', f.segSocial.salud); setMoney('pf-segPension', f.segSocial.pension);
+    setMoney('pf-intVivienda', f.interesesVivienda); setMoney('pf-retencion', f.retencion);
+    setMoney('pf-aporteVol', f.aporteVoluntario); setMoney('pf-gmf', f.gmf);
+    const viviendaAuto = pfInteresesViviendaAuto();
+    const intViv = document.getElementById('pf-intVivienda');
+    if(intViv && viviendaAuto>0 && !(f.interesesVivienda>0)) intViv.placeholder = fmt(viviendaAuto)+' (auto)';
+    const retDet = pfIngresoDetalle().retencionDetectada || 0;
+    const retEst = pfRetencionTrabajoEstimada();
+    const retEl = document.getElementById('pf-retencion');
+    if(retEl && !(f.retencion>0)){
+      if(retDet>0) retEl.placeholder = fmt(retDet)+' (de variables)';
+      else if(retEst>0) retEl.placeholder = '≈ '+fmt(retEst)+' (estimada)';
+    }
+    const fpvHint = document.getElementById('pf-fpvHint');
+    if(fpvHint){
+      const prep = pfPrepagadaAnual();
+      let msg = '';
+      if(viviendaAuto>0) msg += 'Detectamos un <strong>crédito hipotecario</strong>: estimamos '+fmt(viviendaAuto)+' de intereses al año (saldo × tasa). ';
+      if(pfTieneFPV()) msg += 'Detectamos un <strong>FPV/AFC</strong> en tu patrimonio (registramos el saldo, no el aporte del año: escríbelo arriba). ';
+      if(prep>0) msg += 'Detectamos <strong>'+fmt(prep)+'/año</strong> en salud como medicina prepagada; verifica que no incluya tu EPS obligatoria. ';
+      if(retDet>0) msg += 'Tomamos <strong>'+fmt(retDet)+'</strong> de retención del año <strong>de tus ingresos variables</strong> (bruto × % de retención de cada contrato); ajústala con tus certificados si difiere.';
+      else if(retEst>0) msg += 'Tu retefuente del año sobre rentas de trabajo se estima en <strong>'+fmt(retEst)+'</strong> (tabla art. 383); reemplázala con el valor exacto de tus certificados para el saldo real.';
+      fpvHint.innerHTML = msg;
+      fpvHint.style.display = msg ? 'block' : 'none';
+    }
+    const tglExt=document.getElementById('pf-tglExt'); if(tglExt) tglExt.classList.toggle('on', !!f.exterior.tiene);
+    const extWrap=document.getElementById('pf-extWrap'); if(extWrap) extWrap.style.display = f.exterior.tiene?'grid':'none';
+    setMoney('pf-extValor', f.exterior.valor); setMoney('pf-extIngresos', f.exterior.ingresos);
+    pfActualizarExtNota();
+    renderPfActivos();
+    if(!_pfWired){ wirePerfilFiscal(); _pfWired = true; }
+    renderCentroFiscal();
+  }
+
+  function wirePerfilFiscal(){
+    const f = state.fiscal;
+    const redib = ()=>{ try{ renderCentroFiscal(); }catch(e){} };
+    document.querySelectorAll('#pf-regimen button').forEach(b=>{
+      b.addEventListener('click',()=>{ f.regimen=b.dataset.r||''; document.querySelectorAll('#pf-regimen button').forEach(x=>x.classList.remove('active')); b.classList.add('active'); scheduleSave('fiscal'); redib(); });
+    });
+    document.querySelectorAll('.pf-tgl[data-k]').forEach(t=>{
+      t.addEventListener('click',e=>{ if(e.target.closest('.info-tip'))return; const k=t.dataset.k; f.resp[k]=!f.resp[k]; t.classList.toggle('on', f.resp[k]); scheduleSave('fiscal'); redib(); });
+    });
+    const txt=(id,prop)=>{ const el=document.getElementById(id); if(el) el.addEventListener('input',function(){ f[prop]=this.value; scheduleSave('fiscal'); }); };
+    txt('pf-ciiu','ciiu'); txt('pf-municipios','municipios'); txt('pf-digCedula','digitosCedula'); txt('pf-digNit','digitosNit');
+    const money=(id,setter)=>{ const el=document.getElementById(id); if(el){ attachMoneyInput(el); el.addEventListener('input',function(){ setter(n(this.value)); scheduleSave('fiscal'); redib(); }); } };
+    money('pf-consumos', v=>f.consumosTarjeta=v);
+    money('pf-compras', v=>f.comprasConsumos=v);
+    money('pf-consignaciones', v=>f.consignaciones=v);
+    money('pf-ivaVentas', v=>f.iva.ventasGravadas=v);
+    money('pf-ivaCompras', v=>f.iva.comprasConIva=v);
+    money('pf-segSalud', v=>{ f.segSocial.salud=v; redib(); });
+    money('pf-segPension', v=>{ f.segSocial.pension=v; redib(); });
+    money('pf-intVivienda', v=>{ f.interesesVivienda=v; redib(); });
+    money('pf-retencion', v=>{ f.retencion=v; redib(); });
+    money('pf-aporteVol', v=>{ f.aporteVoluntario=v; redib(); });
+    money('pf-gmf', v=>{ f.gmf=v; redib(); });
+    if(!f.simpleCheck) f.simpleCheck = {};
+    [['pf-sc-residente','residente'],['pf-sc-actividad','actividad'],['pf-sc-realidad','realidad'],['pf-sc-aldia','aldia'],['pf-sc-factura','factura'],['pf-sc-socio','socio']].forEach(function(par){
+      const el = document.getElementById(par[0]);
+      if(el){
+        el.value = f.simpleCheck[par[1]] || '';
+        el.addEventListener('change', function(){ f.simpleCheck[par[1]] = this.value; scheduleSave('fiscal'); });
+      }
+    });
+    const tglExt=document.getElementById('pf-tglExt');
+    if(tglExt) tglExt.addEventListener('click',e=>{ if(e.target.closest('.info-tip'))return; f.exterior.tiene=!f.exterior.tiene; tglExt.classList.toggle('on', f.exterior.tiene); document.getElementById('pf-extWrap').style.display=f.exterior.tiene?'grid':'none'; pfActualizarExtNota(); scheduleSave('fiscal'); redib(); });
+    money('pf-extValor', v=>{ f.exterior.valor=v; pfActualizarExtNota(); redib(); });
+    money('pf-extIngresos', v=>f.exterior.ingresos=v);
+    const goCentro = document.querySelector('[data-goto="11"]');
+    if(goCentro) goCentro.addEventListener('click', ()=>{ try{ navigateTo(11); }catch(e){} });
+  }
+
   const DEFINITIONS = {
+    regimen_fiscal: { title:'Régimen tributario', text:'Define cómo pagas tus impuestos. En el <strong>Ordinario</strong> declaras renta por el sistema cedular. En el <strong>Simple (RST)</strong> pagas una sola tarifa sobre tus ingresos brutos que integra renta e ICA, en anticipos bimestrales. Si no sabes cuál tienes, lo leemos de tu RUT.' },
+    resp_iva: { title:'Responsable de IVA', text:'Significa que debes cobrar el IVA en tus ventas y declararlo a la DIAN. Aplica, en general, si superas ~3.500 UVT de ingresos o tienes varios establecimientos. Si lo eres y no facturas IVA, hay sanción.' },
+    resp_retencion: { title:'Agente de retención', text:'Eres tú quien <strong>retiene</strong> impuesto a quienes les pagas y lo declara mensualmente. La mayoría de personas naturales no lo son, salvo que cumplan topes de patrimonio o ingresos. Marca esto solo si aparece en tu RUT.' },
+    resp_ica: { title:'ICA · Industria y Comercio', text:'Impuesto municipal sobre los ingresos de tu actividad. La tarifa y el calendario los fija cada municipio (por mil). Además te pueden practicar ReteICA, que luego descuentas.' },
+    resp_exogena: { title:'Información exógena', text:'Es un reporte detallado de tus operaciones con terceros (a quién le pagaste, quién te pagó, retenciones) que la DIAN usa para cruzar información. Una persona natural queda obligada si tuvo ingresos brutos sobre 11.800 UVT (~$620 millones) y rentas de capital o no laborales sobre 2.400 UVT; o si practicó retención en la fuente, sin importar cuánto ganó. Se presenta entre mayo y junio según el NIT. Presentarla tarde o con errores tiene sanción (mínima 10 UVT).' },
+    fiscal_consumos: { title:'Consumos con tarjeta', text:'El total que gastaste con tarjeta de crédito en el año. Lo encuentras en el <strong>extracto o certificado anual de tu tarjeta de crédito</strong> (tu banco lo emite para la declaración). Si supera 1.400 UVT (~$73 millones), quedas obligado a declarar renta aunque tus ingresos sean bajos.' },
+    fiscal_consignaciones: { title:'Consignaciones y depósitos', text:'Todo lo que entró a tus cuentas bancarias en el año. Lo encuentras en el <strong>certificado anual que emite tu banco</strong> (suma todas tus cuentas). Ojo: incluye traslados entre tus propias cuentas, que pueden inflar la cifra pero se explican ante la DIAN. Si supera 1.400 UVT te obliga a declarar; y si es muy superior a tus ingresos, es una señal que la DIAN revisa.' },
+    fiscal_compras: { title:'Compras y consumos totales', text:'El valor total de todo lo que compraste y consumiste en el año, por cualquier medio (efectivo, transferencias, débito, no solo tarjeta de crédito). Si supera 1.400 UVT (~$73 millones), te obliga a declarar renta, aunque tus ingresos sean bajos. Es un criterio distinto al de la tarjeta de crédito. Como referencia, tus gastos registrados en la app te dan un punto de partida; ajústalo con tus extractos.' },
+    costo_fiscal: { title:'Costo fiscal', text:'No es lo que vale hoy tu activo: es el valor <strong>con el que la DIAN reconoce que lo adquiriste</strong>. Cuando vendes, el impuesto se calcula sobre la diferencia entre el precio de venta y el costo fiscal. Entre más alto sea, <strong>menos impuesto pagas</strong>. Por eso lo calculamos por ti.' },
+    avaluo_catastral: { title:'Avalúo catastral', text:'El valor que el municipio le asigna a tu inmueble; aparece en el recibo del predial. La ley (art. 72) permite usarlo como costo fiscal, lo que muchas veces conviene más que el precio de compra.' },
+    aporte_voluntario_fiscal: { title:'Aportes voluntarios a FPV / AFC', text:'Lo que aportas en el año a un fondo de pensiones voluntarias (FPV) o a una cuenta AFC es <strong>renta exenta</strong>, hasta el 30% de tu ingreso sin pasar de 3.800 UVT (y dentro del límite global del 40% / 1.340 UVT). La app conoce el saldo de tu FPV/AFC, pero no cuánto aportaste este año: por eso lo registras aquí.' },
+    gmf_fiscal: { title:'4x1000 (GMF)', text:'El gravamen a los movimientos financieros (4 por mil) que pagas en el año es <strong>deducible en un 50%</strong> (art. 115 ET), sin necesidad de que tenga relación con tu actividad. Registra aquí el total de 4x1000 que figura en tus certificados bancarios; la app deduce la mitad.' },
+    simple_residente: { title:'Vivir en Colombia', text:'El Régimen Simple es solo para quienes <strong>viven en Colombia la mayor parte del año</strong>. Si pasas más de la mitad del año fuera del país, no puedes usarlo.' },
+    simple_actividad: { title:'Actividades que no pueden usar el Simple', text:'El Simple <strong>no</strong> lo pueden usar quienes se dedican principalmente a: asesorar en inversiones o créditos, comprar y vender inversiones o activos, prestar plata (como factoring o microcrédito), generar o vender energía eléctrica, vender carros, vender combustibles, o fabricar o vender armas. Si tu trabajo principal es uno de estos, no aplica.' },
+    simple_realidad: { title:'¿Independiente o empleado disfrazado?', text:'Si facturas como independiente pero en la práctica le trabajas a <strong>una sola empresa</strong>, cumpliendo horario y recibiendo órdenes como un empleado, la ley te considera empleado y no te deja usar el Simple. Si tienes varios clientes y manejas tu tiempo, no es tu caso.' },
+    simple_aldia: { title:'Estar al día', text:'Para entrar al Simple no puedes tener <strong>deudas vencidas</strong> de impuestos con la DIAN ni de tus aportes a salud y pensión. Si estás al día, cumples este requisito.' },
+    simple_factura: { title:'RUT y factura electrónica', text:'Para estar en el Simple necesitas estar inscrito en el <strong>RUT</strong> (tu registro ante la DIAN) y emitir <strong>factura electrónica</strong>. Si aún no los tienes, puedes sacarlos antes de inscribirte; no es un impedimento definitivo.' },
+    simple_socio: { title:'Socio de otras empresas', text:'Si eres socio o dueño de otras empresas, tus ingresos <strong>se suman</strong> con los de ellas para revisar el límite del Simple, y en algunos casos eso te deja por fuera. Conviene revisarlo con calma.' },
+    sas_costos_negocio: { title:'Costos de tu negocio', text:'Son los gastos reales para producir tus ingresos (materiales, arriendo del local, empleados, etc.). La empresa los descuenta antes de calcular el impuesto. Si prestas servicios y casi no tienes gastos, déjalo en cero.' },
+    her_vivienda: { title:'Vivienda del causante', text:'La casa o apartamento donde <strong>vivía</strong> la persona fallecida. La ley exonera las primeras 13.000 UVT (~$680 millones) de su valor. Escribe la parte que te corresponde a ti. Ese beneficio se reparte entre los herederos que reciben la vivienda.' },
+    her_otros_inm: { title:'Otros inmuebles', text:'Inmuebles distintos a la vivienda donde vivía la persona fallecida (locales, lotes, apartamentos de renta, etc.). La ley exonera las primeras 6.500 UVT (~$340 millones), repartidas entre los herederos que los reciben. No incluye fincas de recreo.' },
+    her_otros_bienes: { title:'Otros bienes', text:'Dinero, vehículos, inversiones, acciones y demás bienes que recibes de la herencia. No tienen una exención propia por tipo de bien, pero sí entran en tu exención personal.' },
+    her_seguro: { title:'Seguro de vida', text:'Si eres beneficiario de un seguro de vida de la persona fallecida, lo que recibas está exento hasta 3.250 UVT (~$170 millones); solo el excedente paga el 15% (art. 303-1). Es una exención aparte de las de la herencia.' },
+    her_herederos: { title:'Número de herederos', text:'Entre cuántas personas se reparten los inmuebles de la herencia. Las exenciones de la vivienda (13.000 UVT) y de otros inmuebles (6.500 UVT) se dividen entre ellos. Si eres el único, deja 1.' },
+    her_legitimario: { title:'¿Eres familiar directo?', text:'Los <strong>hijos, el cónyuge y los padres</strong> (legitimarios y cónyuge) tienen una exención personal de 3.250 UVT (~$170 millones) sobre lo que reciben. Otras personas (sobrinos, amigos, etc.) tienen en cambio una exención del 20%, con tope de 1.625 UVT.' },
+    pat_vivienda: { title:'Vivienda de habitación', text:'El valor de la casa o apartamento donde vives la mayor parte del tiempo. Para el impuesto al patrimonio puedes restar de la base las primeras 12.000 UVT (~$628 millones) de ese inmueble. Solo aplica a tu vivienda principal, no a fincas de recreo ni segundas viviendas. Usa el valor patrimonial (avalúo o costo fiscal) que declaras.' },
+    pat_deudas: { title:'¿Qué deudas puedo restar?', text:'Solo las deudas reales, vigentes y con soporte. Un crédito bancario se prueba con el extracto y se acepta sin problema. Pero un préstamo con un particular o un familiar solo lo acepta la DIAN si está documentado con <strong>fecha cierta</strong> (un pagaré o contrato autenticado ante notario) o si la persona que te prestó declara esa cuenta por cobrar en su propia renta. Si es una deuda familiar informal sin soporte, la DIAN puede rechazarla: eso sube tu patrimonio gravable y, en el peor caso, el préstamo se trata como una donación que paga ganancia ocasional. Consérvalo documentado.' },
+    sas_costos_sas: { title:'Costo de tener la SAS', text:'Mantener una empresa cuesta al año: el <strong>contador</strong> (lo más caro), la renovación en la cámara de comercio, la factura electrónica y la firma digital. Pusimos un estimado de $6.000.000; ajústalo si conoces tus valores. No incluye revisor fiscal, que solo se necesita con ingresos muy altos.' },
+    sas_salario: { title:'El sueldo que te pagas', text:'Dentro de tu empresa puedes contratarte y pagarte un sueldo. La empresa lo <strong>descuenta</strong> (baja su utilidad y el impuesto del 35%), pero tú lo declaras como tu <strong>ingreso personal</strong>: sobre él calculamos automáticamente tus aportes a salud y pensión y tu impuesto de renta, usando <strong>tus mismas deducciones</strong> (dependientes, vivienda, etc.). La estrategia: repartir cuánto sacas como sueldo y cuánto dejas como utilidad de la empresa. Prueba distintos montos y observa el total.' },
+    sas_dividendos: { title:'Dividendos (sacar la utilidad de la empresa)', text:'La utilidad que queda en la empresa (después del sueldo, los costos y su impuesto del 35%) es de la empresa. Para llevártela a tu bolsillo, la repartes como <strong>dividendos</strong>: en <strong>100%</strong> te la pasas toda (pagas 15% sobre lo que exceda ~$57 millones al año); en <strong>0%</strong> la dejas invertida en la empresa y no pagas ese impuesto todavía.' },
+    costo_heredado: { title:'Costo fiscal de un bien heredado', text:'Un bien heredado o donado no tuvo precio de compra. Su costo fiscal es el <strong>valor de adjudicación en la sucesión</strong> —para inmuebles, el valor patrimonial según el art. 303/277, que suele ser el avalúo catastral—. Si es bien raíz o acciones, ese valor se puede ajustar por el art. 73 tomando como año de adquisición el de la sucesión. Recibir la herencia ya fue una ganancia ocasional aparte; esto es para cuando <strong>vendas</strong> el bien.' },
+    fiscal_exterior: { title:'Activos en el exterior', text:'Cuentas, inversiones o propiedades fuera de Colombia. Si su valor supera 2.000 UVT debes presentar una declaración anual especial. No reportarlos tiene sanciones altas.' },
+    fiscal_digitos: { title:'Dígitos del documento', text:'La DIAN asigna la fecha exacta de tus declaraciones según los <strong>dos últimos dígitos</strong> de tu cédula (renta) o de tu NIT (IVA, exógena). Con ellos podemos darte el día exacto, no solo el mes.' },
     fondo_estabilizacion: {
       title: 'Fondo de estabilización',
       text: 'Cuenta separada que suaviza los meses bajos de un ingreso variable para que puedas pagarte un salario estable. <strong>Distinto al fondo de emergencia</strong>: este amortigua la fluctuación normal mes a mes; la pérdida de un contrato la cubre el fondo de emergencia (meta aparte). Su tamaño se calcula con tu variabilidad real (≈ 1,65 × desviación estándar × √6): pequeño si tu ingreso es estable, grande si es volátil.'
