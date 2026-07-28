@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════
    FIREBASE — auth + firestore
    ═══════════════════════════════════════════════════════════ */
-   console.log('%cABBA · build fiscal 2026-06-29-v59 · diagnóstico + vulnerabilidades + deducciones (dep336/387, GMF, vivienda auto, prepagada, FPV)', 'color:#0e4d3a;font-weight:bold');
+   console.log('%cABBA · build fiscal 2026-06-29-v89 · diagnóstico + vulnerabilidades + deducciones (dep336/387, GMF, vivienda auto, prepagada, FPV)', 'color:#0e4d3a;font-weight:bold');
    const firebaseConfig = {
     apiKey: "AIzaSyBLNS_xLAoAsnf5XfajAmVf12f4_mpUMfY",
     authDomain: "evaluafinanzas.firebaseapp.com",
@@ -94,6 +94,7 @@
     activosExterior: { topeUVT:2000 },
     simple: {                                                // Art. 908 ET · post Sentencia C-540/23 · tarifa PLANA por rango (no marginal)
       topeIngresosUVT:100000,
+      topeProfesionalesUVT:12000,                            // tope para servicios profesionales / profesiones liberales (grupo 4)
       grupos:[
         { id:1, nombre:'Tiendas, minimercados, peluquería', incConsumo:0, rangos:[
           {desde:0,hasta:6000,tarifa:0.012},{desde:6000,hasta:15000,tarifa:0.028},{desde:15000,hasta:30000,tarifa:0.044},{desde:30000,hasta:100000,tarifa:0.056} ] },
@@ -449,6 +450,9 @@
     10:'Perfil fiscal',
     11:'Diagnóstico fiscal',
     12:'Presupuesto mensual',
+    13:'Estructura Legal',
+    14:'Planificación Sucesoral',
+    15:'Evaluación 4 Capas',
     'var':'Ingresos Variables'
   };
   
@@ -495,7 +499,25 @@
       herencia:{ vivienda:0, otrosInmuebles:0, otrosBienes:0, seguroVida:0, numHerederos:1, esLegitimario:true },   // calculador de ganancia ocasional por herencia
       patrimonio:{ viviendaHabitacion:0 },   // valor de la vivienda de habitación (para la exclusión del impuesto al patrimonio)
       ingresosExcluidos:{},               // { claveLinea: true } → ingresos que ya vienen de un activo (no contar)
-      costoFiscal:{}                     // { [assetId]: {metodo,anioCompra,valorCompra,avaluo,costoFiscal} }
+      costoFiscal:{},                    // { [assetId]: {metodo,anioCompra,valorCompra,avaluo,costoFiscal} }
+      legal:{                             // Módulo 13 · Estructura Legal Patrimonial
+        estadoCivil:'', regimenConyugal:'', anioMatrimonioUnion:'',
+        hijosMenores:0, hijosMayoresDependientes:0, otrosDependientes:0,
+        gastoMensualFamilia:0,             // Cuánto necesita la familia al mes si tú faltas
+        testamento:{ tiene:null, tipo:'', anioOtorgamiento:'', revisadoTrasCambios:null },
+        poderes:{ generalAdmin:false, directivaAnticipada:false },
+        segurosVida:[],
+        avalesTerceros:{ tiene:null, monto:0, detalle:'' },
+        pleitosVigentes:{ tieneComoDemandado:null, montoPretensiones:0, detalle:'' },
+        cumplimientoExterior:{ formulario160Presentado:null, tieneVehiculoECE:false, detalleECE:'' },
+        coberturas:{
+          rcProfesional:{ tiene:null, sumaAsegurada:0 },
+          dyo:{ tiene:null, quienContrata:'' }
+        },
+        planSucesoral:{                    // Checklist persistente de acciones a completar
+          acciones:{}                      // { 'testamento': true, 'seguro_vida': false, ... }
+        }
+      }
     },
     activos:[
       {nombre:'Dinero ahorrado en cuenta',valor:0,tipo:'LÍQUIDO'},
@@ -513,6 +535,7 @@
         ingMensual:0,ingAnual:0,deuMensual:0,deuAnual:0,
         ahoMensual:0,ahoAnual:0,gastosMensual:0,gastosAnual:0,saldo:0,
         fondoProvisiones:0},
+    cuposDisponibles:0,   // cupos de crédito/tarjetas sin usar: respaldo de emergencia (con costo)
     tablero:{
       meta_ingresos:0,meta_ahorro:0,meta_deudas:0,meta_gastos:0,
       meta_otros_ingresos:0,meta_otro_ahorro:0,meta_otros_deudas:0,meta_otros_gastos:0,
@@ -646,6 +669,11 @@
         _categoria: a.category,
         _subtipo: a.subtype,
         _liquidez: a.liquidity,
+        _horizonte: horizonteLiquidez(a),
+        _vigenciaCumplida: !!a.vigenciaCumplida,
+        _reparto: a.reparto || '',
+        _fpvInstitucional: !!a.fpvInstitucional,
+        _fpvPermanencia: !!a.fpvPermanencia,
         _moneda: a.currency || 'COP',
         _pais: a.location || 'Colombia',
         _sector: a.sector || '',
@@ -653,6 +681,8 @@
         _destinoIngreso: a.incomeRendimientos || '',
         _beneficioTributario: !!a.beneficioTributario,
         _estructuraLegal: a.legalStructure || '',
+        _esCompartido: !!a.esCompartido,
+        _porcentajePropio: (a.porcentajePropio != null ? a.porcentajePropio : 100),
         _deudaCOP: linkedDebtCOP(a),
         _netoCOP: (isFinite(v) ? v : 0) - linkedDebtCOP(a),
         _esProductivo: esActivoProductivo(a),
@@ -760,14 +790,14 @@ const CATEGORIAS = [
             { value: 'Efectivo en caja', label: 'Efectivo en caja / billetera', liquidez: 'Alta', comp: 'estable' },
             { value: 'Fondo de liquidez o Fiducia', label: 'Fondo de liquidez o fiducia', liquidez: 'Alta', comp: 'tasa' },
             { value: 'CDT', label: 'CDT (certificado a plazo fijo)', liquidez: 'Baja', comp: 'tasa' },
-            { value: 'Cuenta AFC', label: 'Cuenta AFC (ahorro para vivienda)', liquidez: 'Baja', comp: 'tasa' },
+            { value: 'Cuenta AFC', label: 'Cuenta AFC (ahorro para vivienda)', liquidez: 'Media', comp: 'tasa' },
             { value: 'Acciones en bolsa', label: 'Acciones que cotizan en bolsa', liquidez: 'Media', comp: 'volatil' },
             { value: 'ETF o fondo de inversión internacional', label: 'ETF o fondo de inversión internacional', liquidez: 'Media', comp: 'volatil' },
             { value: 'Fondo de inversión colectiva FIC', label: 'Fondo de inversión colectiva (FIC)', liquidez: 'Media', comp: 'volatil' },
             { value: 'Bonos o títulos de deuda', label: 'Bonos o títulos de deuda', liquidez: 'Media', comp: 'tasa' },
             { value: 'REIT', label: 'REIT (fondo inmobiliario que cotiza)', liquidez: 'Media', comp: 'volatil' },
-            { value: 'Fondo de pensiones voluntarias FPV', label: 'Fondo de pensiones voluntarias', liquidez: 'Baja', comp: 'aporte' },
-            { value: 'Seguro de pensión con ahorro', label: 'Seguro de pensión con ahorro', liquidez: 'Ilíquida', comp: 'aporte' },
+            { value: 'Fondo de pensiones voluntarias FPV', label: 'Fondo de pensiones voluntarias', liquidez: 'Media', comp: 'volatil' },
+            { value: 'Seguro de pensión con ahorro', label: 'Seguro de pensión con ahorro', liquidez: 'Baja', comp: 'tasa' },
             { value: 'Cartera gestionada por terceros', label: 'Cartera gestionada por un tercero (family office, wealth manager)', liquidez: 'Media', comp: 'volatil' },
             { value: 'Dinero que me deben', label: 'Dinero que me deben (cuentas por cobrar, préstamos a terceros)', liquidez: 'Baja', comp: 'estable' }
         ]
@@ -797,7 +827,6 @@ const CATEGORIAS = [
         icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="category-icon"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
         subtipos: [
             { value: 'Carro moto o vehículo personal', label: 'Carro, moto o vehículo personal', liquidez: 'Ilíquida', comp: 'deprecia' },
-            { value: 'Casa o apartamento donde vivo', label: 'Casa o apartamento donde vivo', liquidez: 'Ilíquida', comp: 'mercado' },
             { value: 'Joyas relojes u objetos de valor', label: 'Joyas, relojes u objetos de valor', liquidez: 'Ilíquida', comp: 'volatil' }
         ]
     }
@@ -981,13 +1010,18 @@ function hasOrphanDebt(asset) {
     return ids.some(id => !host.getDeudaById(id));
 }
 
+// Parte del activo que es del usuario (activos compartidos). 1 = 100% suyo.
+function shareFactor(asset) {
+    const p = (asset && asset.porcentajePropio != null && asset.porcentajePropio > 0 && asset.porcentajePropio <= 100)
+        ? asset.porcentajePropio : 100;
+    return p / 100;
+}
+
 function valueCOP(asset) {
     const total = convertirACOP(asset.value, asset.currency);
     if (isNaN(total)) return total;
     // Si el activo es compartido, solo cuenta la parte que es del usuario
-    const pct = (asset.porcentajePropio != null && asset.porcentajePropio > 0 && asset.porcentajePropio <= 100)
-        ? asset.porcentajePropio : 100;
-    return total * pct / 100;
+    return total * shareFactor(asset);
 }
 
 function netWorthCOP(asset) {
@@ -1058,7 +1092,6 @@ const SUBTIPOS_CON_SECTOR = [
     'Fondo de inversión colectiva FIC',
     'Bonos o títulos de deuda',
     'REIT',
-    'Fondo de pensiones voluntarias FPV',
     'Cartera gestionada por terceros',
     'Acciones en empresa privada',
 ];
@@ -1066,8 +1099,54 @@ const SUBTIPOS_CON_SECTOR = [
 const SECTOR_POR_DEFECTO = {
     'ETF o fondo de inversión internacional': 'Global / Diversificado',
     'REIT': 'Real Estate / Inmobiliario',
-    'Fondo de pensiones voluntarias FPV': 'Global / Diversificado',
 };
+
+// ── Naturaleza de cada subtipo, para mostrar solo las preguntas que aplican ──
+// Vehículos/pólizas de ahorro pensional: son individuales (a nombre de una sola persona),
+// inembargables por ley, no se dan en garantía, y al fallecer el titular se ENTREGA el
+// dinero a los beneficiarios (no se heredan "en marcha"). Requieren trato especial.
+const SUBTIPOS_PENSIONALES = [
+    'Fondo de pensiones voluntarias FPV',
+    'Seguro de pensión con ahorro',
+];
+function esPensional(sub){ return SUBTIPOS_PENSIONALES.indexOf(sub) !== -1; }
+
+// Subtipos donde NO aplica la pregunta de deuda/apalancamiento: dinero líquido o por cobrar.
+// No se dan en garantía ni se compran con crédito, así que preguntar "¿respalda una deuda?"
+// o "¿pediste prestado para invertir?" no tiene sentido (ej. efectivo, cuentas, CDT).
+const SUBTIPOS_SIN_DEUDA = [
+    'Cuenta bancaria corriente o ahorros',
+    'Cuenta de alto rendimiento',
+    'Efectivo en caja',
+    'Fondo de liquidez o Fiducia',
+    'CDT',
+    'Cuenta AFC',
+    'Dinero que me deben',
+];
+// ¿Aplica el paso de deuda para este subtipo? (los pensionales tampoco tienen deuda)
+function aplicaDeuda(sub){ return !esPensional(sub) && SUBTIPOS_SIN_DEUDA.indexOf(sub) === -1; }
+
+// Subtipos con un costo de adquisición real que se valorizan desde ahí: tiene sentido
+// preguntar "¿cuánto valía cuando lo obtuviste?" para calcular cuánto ha crecido.
+const SUBTIPOS_CON_VALOR_COMPRA = [
+    'Casa o apartamento donde vivo','Casa o apartamento arrendado','Local bodega u oficina comercial','Lote o terreno',
+    'Acciones en bolsa','ETF o fondo de inversión internacional','Fondo de inversión colectiva FIC','REIT','Cartera gestionada por terceros',
+    'Oro físico','Criptomonedas','Obras de arte joyas o coleccionables',
+    'Acciones en empresa privada','Joyas relojes u objetos de valor',
+];
+function tieneValorCompra(sub){ return SUBTIPOS_CON_VALOR_COMPRA.indexOf(sub) !== -1; }
+
+// Inversiones donde tiene sentido preguntar si están puestas en una sola empresa o repartidas
+// en muchas (para medir concentración). Se excluyen los productos de un solo emisor por
+// naturaleza: los bonos son deuda de un único emisor, y un REIT es una sola compañía.
+const SUBTIPOS_REPARTO = [
+    'Acciones en bolsa',
+    'ETF o fondo de inversión internacional',
+    'Fondo de inversión colectiva FIC',
+    'Cartera gestionada por terceros',
+    'Acciones en empresa privada',
+    'Criptomonedas',
+];
 
 // ¿Es un activo "productivo"? (puede financiar tu retiro bajo la regla del 4%)
 // Excluye liquidez pura, residencia principal, uso personal y pensiones cautivas.
@@ -1075,7 +1154,6 @@ const SUBTIPOS_NO_PRODUCTIVOS = [
     'Cuenta bancaria corriente o ahorros',
     'Efectivo en caja',
     'Fondo de liquidez o Fiducia',
-    'Seguro de pensión con ahorro',
 ];
 function esActivoProductivo(asset) {
     const cat = asset.category || '';
@@ -1093,6 +1171,38 @@ function esActivoProductivo(asset) {
 }
 
 // Devuelve el comportamiento de un activo a partir de su subtipo.
+// Horizonte real de salida por subtipo: en cuánto tiempo (y con qué costo) se vuelve efectivo.
+// 'inmediato' = hoy mismo · 'dias' = pocos días hábiles · 'penalidad' = accesible pero sacarlo antes cuesta
+// · 'meses' = requiere vender y suele tomar semanas o meses.
+const HORIZONTE_LIQUIDEZ = {
+    'Cuenta bancaria corriente o ahorros': 'inmediato',
+    'Cuenta de alto rendimiento': 'inmediato',
+    'Efectivo en caja': 'inmediato',
+    'Fondo de liquidez o Fiducia': 'inmediato',
+    'Acciones en bolsa': 'dias',
+    'ETF o fondo de inversión internacional': 'dias',
+    'Fondo de inversión colectiva FIC': 'dias',
+    'Bonos o títulos de deuda': 'dias',
+    'REIT': 'dias',
+    'Cartera gestionada por terceros': 'dias',
+    'Fondo de pensiones voluntarias FPV': 'dias',
+    'Cuenta AFC': 'penalidad',
+    'CDT': 'penalidad',
+    'Seguro de pensión con ahorro': 'penalidad',
+    'Criptomonedas': 'dias',
+    'Dinero que me deben': 'meses',
+    // Todo lo demás (inmuebles, negocios, vehículos, coleccionables) → 'meses' por defecto.
+};
+function horizonteLiquidez(asset) {
+    if (!asset) return 'meses';
+    const h = HORIZONTE_LIQUIDEZ[asset.subtype];
+    if (h) return h;
+    // Fallback por si el subtipo no está mapeado: usar la etiqueta de liquidez.
+    const s = findSubtype(asset.category, asset.subtype);
+    const liq = s ? s.liquidez : asset.liquidity;
+    return (liq === 'Alta') ? 'inmediato' : (liq === 'Media') ? 'dias' : (liq === 'Baja') ? 'penalidad' : 'meses';
+}
+
 function comportamientoActivo(asset) {
     const s = findSubtype(asset.category, asset.subtype);
     return (s && s.comp) ? s.comp : 'estable';
@@ -1130,8 +1240,10 @@ function aniosDesde(anio, mes) {
 // Valorización pasada: % anualizado (CAGR) y ganancia absoluta, en la moneda del activo.
 function calcValorizacion(asset) {
     if (!admiteValorizacion(asset)) return null;
-    const actual = asset.value || 0;
-    const compra = asset.valorAdquisicion || 0;
+    // Si el activo es compartido, la ganancia es solo la parte del usuario (el % anualizado no cambia).
+    const sh = shareFactor(asset);
+    const actual = (asset.value || 0) * sh;
+    const compra = (asset.valorAdquisicion || 0) * sh;
     if (compra <= 0 || actual <= 0) return null;
     const anios = aniosDesde(asset.anioAdquisicion, asset.mesAdquisicion);
     if (anios < 0.5) return null;
@@ -1144,7 +1256,8 @@ function calcValorizacion(asset) {
 function calcProyeccion(asset, anios) {
     if (!admiteProyeccion(asset)) return null;
     const comp = comportamientoActivo(asset);
-    const actual = asset.value || 0;
+    // Solo se proyecta la parte del activo que es del usuario.
+    const actual = (asset.value || 0) * shareFactor(asset);
     if (actual <= 0) return null;
     let tasa;
     if (comp === 'tasa')     tasa = asset.tasaRendimiento || 0;
@@ -1305,6 +1418,10 @@ function openAssetModal(editId) {
             anioAdquisicion: existing.anioAdquisicion || null,
             tasaDepreciacion: existing.tasaDepreciacion || 0,
             beneficioTributario: !!existing.beneficioTributario,
+            vigenciaCumplida: !!existing.vigenciaCumplida,
+            reparto: existing.reparto || '',
+            fpvInstitucional: !!existing.fpvInstitucional,
+            fpvPermanencia: !!existing.fpvPermanencia,
             esCompartido: !!existing.esCompartido,
             porcentajePropio: (existing.porcentajePropio != null ? existing.porcentajePropio : 100),
             restringidoLegal: !!existing.restringidoLegal,
@@ -1491,6 +1608,20 @@ function renderCamposProyeccion() {
         notaBox.style.display = 'flex';
         notaText.textContent = 'El dinero disponible no crece por sí solo, e incluso pierde poder de compra con la inflación. Lo mantenemos en su valor actual.';
     }
+
+    // Los productos pensionales (FPV, seguro de pensión con ahorro) no tienen un "precio de
+    // compra" que se valorice: se van formando con aportes y rendimiento en el tiempo. Por eso
+    // no preguntamos "¿cuánto valía cuando lo obtuviste?" ni una tasa fija.
+    if (esPensional(mp.draft.subtype)) {
+        tasaField.style.display = 'none';
+        compraBlock.style.display = 'none';
+        notaBox.style.display = 'flex';
+        notaText.textContent = 'Este producto se va formando con tus aportes y su rendimiento a lo largo del tiempo, así que no lo proyectamos con una fórmula. Lo dejamos en el valor que nos das hoy.';
+    } else if (compraBlock.style.display === 'block' && !tieneValorCompra(mp.draft.subtype)) {
+        // Salvaguarda: si algún subtipo sin costo de adquisición llegara a activar el bloque,
+        // lo ocultamos para no pedir un dato que no aplica.
+        compraBlock.style.display = 'none';
+    }
 }
 
 function updateCurrencyPrefix() {
@@ -1639,6 +1770,29 @@ function renderStep5() {
     legalOtroField.style.display = mp.draft.legalStructure === 'Otro' ? 'block' : 'none';
     document.getElementById('asset-legal-structure-otro').value = mp.draft.legalStructureOtro || '';
 
+    // ── Mostrar solo las preguntas que aplican a este tipo de activo ──
+    const pensional = esPensional(sub);
+    const esUsoPersonal = cat === 'Uso Personal';
+    // "¿A nombre de quién está?" no aplica a bienes de uso personal (carro, joyas), a
+    // productos pensionales (son individuales) ni al efectivo físico (no tiene titularidad).
+    const legalField = document.getElementById('legal-structure-field');
+    const ocultaLegal = esUsoPersonal || pensional || sub === 'Efectivo en caja';
+    if (legalField) legalField.style.display = ocultaLegal ? 'none' : 'block';
+    if (ocultaLegal) {
+        mp.draft.legalStructure = 'Propiedad Directa';
+        const legalSel = document.getElementById('asset-legal-structure');
+        if (legalSel) legalSel.value = 'Propiedad Directa';
+        if (legalOtroField) legalOtroField.style.display = 'none';
+    }
+    if (pensional) { mp.draft.esCompartido = false; mp.draft.porcentajePropio = 100; mp.draft.restringidoLegal = false; }
+    // "¿Es solo tuyo o lo compartes?" no aplica a productos pensionales (son individuales).
+    const compartidoField = document.getElementById('compartido-field');
+    if (compartidoField) compartidoField.style.display = pensional ? 'none' : 'block';
+    // "Restricción legal (embargo, sucesión…)" no aplica a productos pensionales: son
+    // inembargables por ley y no entran en sucesión (van directo a beneficiarios).
+    const restriccionField = document.getElementById('restriccion-field');
+    if (restriccionField) restriccionField.style.display = pensional ? 'none' : 'block';
+
     // Condiciones del activo: compartido y restricción legal
     renderCompartidoBlock();
     const restrChk = document.getElementById('asset-restringido-legal');
@@ -1672,6 +1826,31 @@ function renderStep5() {
         btField.style.display = muestraBT ? 'block' : 'none';
         if (muestraBT) {
             document.getElementById('asset-beneficio-tributario').checked = !!mp.draft.beneficioTributario;
+        }
+    }
+    const vcField = document.getElementById('vigencia-cumplida-field');
+    if (vcField) {
+        const muestraVC = (mp.draft.subtype === 'Seguro de pensión con ahorro');
+        vcField.style.display = muestraVC ? 'block' : 'none';
+        if (muestraVC) document.getElementById('asset-vigencia-cumplida').checked = !!mp.draft.vigenciaCumplida;
+    }
+    const repField = document.getElementById('reparto-field');
+    if (repField) {
+        const muestraRep = SUBTIPOS_REPARTO.includes(mp.draft.subtype);
+        repField.style.display = muestraRep ? 'block' : 'none';
+        if (muestraRep) {
+            const val = mp.draft.reparto || '';
+            repField.querySelectorAll('input[name="asset-reparto"]').forEach(r => { r.checked = (r.value === val); });
+            repField.querySelectorAll('.radio-option').forEach(o => o.classList.toggle('selected', o.dataset.reparto === val));
+        }
+    }
+    const fpvField = document.getElementById('fpv-detalle-field');
+    if (fpvField) {
+        const muestraFPV = (mp.draft.subtype === 'Fondo de pensiones voluntarias FPV');
+        fpvField.style.display = muestraFPV ? 'block' : 'none';
+        if (muestraFPV) {
+            document.getElementById('asset-fpv-institucional').checked = !!mp.draft.fpvInstitucional;
+            document.getElementById('asset-fpv-permanencia').checked = !!mp.draft.fpvPermanencia;
         }
     }
     if (isEmpresarial) {
@@ -1770,10 +1949,19 @@ function renderGenericIncomeBlock(cfg) {
     }
 }
 
+// Pasos visibles del asistente. El paso 4 (deuda) se omite cuando no aplica: en productos
+// pensionales (inembargables) y en dinero líquido o por cobrar (no se dan en garantía).
+function pasosVisibles() {
+    const deudaAplica = aplicaDeuda(mp.draft.subtype);
+    return [1, 2, 3, (deudaAplica ? 4 : null), 5].filter(function(x){ return x !== null; });
+}
+
 function renderWizardState() {
-    const totalSteps = 5;
-    document.getElementById('step-indicator').textContent = `Paso ${mp.currentStep} de ${totalSteps}`;
-    document.getElementById('progress-fill').style.width = (mp.currentStep / totalSteps * 100) + '%';
+    const pasos = pasosVisibles();
+    const totalSteps = pasos.length;
+    const idxActual = pasos.indexOf(mp.currentStep) + 1;
+    document.getElementById('step-indicator').textContent = `Paso ${idxActual} de ${totalSteps}`;
+    document.getElementById('progress-fill').style.width = (idxActual / totalSteps * 100) + '%';
     document.querySelectorAll('.modal-step').forEach(s => {
         s.classList.toggle('active', parseInt(s.dataset.step) === mp.currentStep);
     });
@@ -1944,6 +2132,33 @@ function validateCurrentStep() {
         } else {
             mp.draft.beneficioTributario = false;
         }
+
+        // Vigencia cumplida (solo seguro de pensión con ahorro)
+        if (mp.draft.subtype === 'Seguro de pensión con ahorro') {
+            const vc = document.getElementById('asset-vigencia-cumplida');
+            mp.draft.vigenciaCumplida = vc ? !!vc.checked : false;
+        } else {
+            mp.draft.vigenciaCumplida = false;
+        }
+
+        // Reparto: ¿en una sola empresa o en muchas? (solo inversiones que lo muestran)
+        if (SUBTIPOS_REPARTO.includes(mp.draft.subtype)) {
+            const repSel = document.querySelector('input[name="asset-reparto"]:checked');
+            mp.draft.reparto = repSel ? repSel.value : '';
+        } else {
+            mp.draft.reparto = '';
+        }
+
+        // FPV: plan institucional y pacto de permanencia (solo FPV)
+        if (mp.draft.subtype === 'Fondo de pensiones voluntarias FPV') {
+            const inst = document.getElementById('asset-fpv-institucional');
+            const perm = document.getElementById('asset-fpv-permanencia');
+            mp.draft.fpvInstitucional = inst ? !!inst.checked : false;
+            mp.draft.fpvPermanencia = perm ? !!perm.checked : false;
+        } else {
+            mp.draft.fpvInstitucional = false;
+            mp.draft.fpvPermanencia = false;
+        }
     }
     return true;
 }
@@ -1951,13 +2166,17 @@ function validateCurrentStep() {
 function goNext() {
     if (!validateCurrentStep()) return;
     if (mp.currentStep === 5) { saveDraft(); return; }
-    mp.currentStep++;
+    const pasos = pasosVisibles();
+    const i = pasos.indexOf(mp.currentStep);
+    mp.currentStep = pasos[Math.min(i + 1, pasos.length - 1)];
     renderWizardState();
     document.querySelector('.modal-body').scrollTop = 0;
 }
 function goBack() {
     if (mp.currentStep === 1) return;
-    mp.currentStep--;
+    const pasos = pasosVisibles();
+    const i = pasos.indexOf(mp.currentStep);
+    mp.currentStep = pasos[Math.max(i - 1, 0)];
     renderWizardState();
     clearErrors();
     document.querySelector('.modal-body').scrollTop = 0;
@@ -1965,6 +2184,8 @@ function goBack() {
 
 function saveDraft() {
     const d = mp.draft;
+    // Sin deuda vinculada cuando el paso de deuda no aplica (pensionales y dinero líquido/por cobrar).
+    if (!aplicaDeuda(d.subtype)) { d.hasDebt = 'no'; d.deudasVinculadas = []; }
     const subInfo = findSubtype(d.category, d.subtype);
     let monthlyIncomeFinal = 0;
     if (d.category === 'Empresarial') {
@@ -2001,6 +2222,10 @@ function saveDraft() {
         anioAdquisicion: d.anioAdquisicion || null,
         tasaDepreciacion: d.tasaDepreciacion || 0,
         beneficioTributario: !!d.beneficioTributario,
+        vigenciaCumplida: !!d.vigenciaCumplida,
+        reparto: d.reparto || '',
+        fpvInstitucional: !!d.fpvInstitucional,
+        fpvPermanencia: !!d.fpvPermanencia,
         esCompartido: !!d.esCompartido,
         porcentajePropio: (d.porcentajePropio != null ? d.porcentajePropio : 100),
         restringidoLegal: !!d.restringidoLegal,
@@ -2050,6 +2275,37 @@ function showToast(msg, type) {
   // Se ejecuta una vez al cargar; convierte cada liability>0 en una deuda del M2
   // y la enlaza al activo. Idempotente: marca el activo con _debtMigrated.
   // ════════════════════════════════════════════════════════════════════════════════
+  // ── Migración · Realinear la liquidez con el catálogo ──────────────────
+  // La liquidez de un activo NO la elige el usuario: se deriva del subtipo. Cuando el
+  // catálogo se corrige (p. ej. el fondo voluntario y la cuenta AFC pasaron a contar como
+  // líquidos, y el seguro de pensión dejó de tratarse como un inmueble), los activos ya
+  // guardados conservan la clasificación vieja. Esto los pone al día una sola vez.
+  // No toca ningún dato que el usuario haya escrito (sector, valores, nombres).
+  function migrarLiquidezCatalogo() {
+    const cambios = [];
+    // La vivienda propia ahora vive solo en la categoría Inmueble (antes estaba duplicada
+    // también en Uso Personal). Reasignamos los activos guardados con la categoría vieja.
+    mp.assets.forEach(a => {
+      if (a && a.category === 'Uso Personal' && a.subtype === 'Casa o apartamento donde vivo') {
+        a.category = 'Inmueble';
+      }
+    });
+    mp.assets.forEach(a => {
+      if (!a || a.linkedToFondo || a.linkedToProvisiones) return;   // filas sincronizadas del M4: no son del mapa
+      const s = findSubtype(a.category, a.subtype);
+      if (!s || !s.liquidez) return;                                // subtipo fuera del catálogo: no se toca
+      if (a.liquidity === s.liquidez) return;                       // ya está al día
+      cambios.push({ activo: a.description || a.subtype || a.category, de: a.liquidity || '(sin dato)', a: s.liquidez });
+      a.liquidity = s.liquidez;
+    });
+    if (cambios.length) {
+      mpSave();
+      try { console.log('ABBA · liquidez actualizada según el catálogo en ' + cambios.length + ' activo(s):', cambios); } catch(e) {}
+      try { showToast('Actualizamos la liquidez de ' + cambios.length + ' activo' + (cambios.length>1?'s':'') + ' con la clasificación más reciente.', 'info'); } catch(e) {}
+    }
+    return cambios.length;
+  }
+
   function migrateLegacyLiabilities() {
     let migrated = 0;
     mp.assets.forEach(a => {
@@ -2208,12 +2464,14 @@ function showToast(msg, type) {
     }
     bindListeners();
     migrateLegacyLiabilities();
+    migrarLiquidezCatalogo();
     renderInventory();
   }
 
   function setData(data) {
     mp.trm = (data && data.trm) || {};
     mp.assets = (data && Array.isArray(data.activos)) ? data.activos : [];
+    migrarLiquidezCatalogo();
     renderInventory();
   }
 
@@ -2366,6 +2624,9 @@ function showToast(msg, type) {
     if(id===10){renderPerfilFiscal();}
     if(id===11){renderCentroFiscal();}
     if(id===12){renderPresupuesto();}
+    if(id===13){renderEstructuraLegal();}
+    if(id===14){renderModulo14();}
+    if(id===15){renderCapasTablero();}
     if(id==='var'){renderMVar();}
     window.scrollTo({top:0,behavior:'smooth'});
   }
@@ -2582,6 +2843,16 @@ function showToast(msg, type) {
   }
   
   function calcM4(){
+    const cuposInp = document.getElementById('m4-cupos');
+    if(cuposInp && !cuposInp.dataset.wired){
+      cuposInp.dataset.wired = '1';
+      attachMoneyInput(cuposInp);
+      cuposInp.value = (state.cuposDisponibles||0) ? Number(state.cuposDisponibles).toLocaleString('es-CO') : '';
+      cuposInp.addEventListener('input', ()=>{
+        state.cuposDisponibles = +(cuposInp.value.replace(/\D/g,'')) || 0;
+        scheduleSave('ahorro');
+      });
+    }
     let totalAhorro=0;
     const linkedRows = state.ahorro.filter(a=>a.linkedToFondoAporte || a.linkedToProvisionesAporte);
     state.ahorro=[];
@@ -6385,7 +6656,7 @@ function showToast(msg, type) {
         if(md) return {trm:md.trm, activos:md.activos};
         return state.mapaPatrimonial || {trm:{}, activos:[]};
       }
-      case 'ahorro': return {objetivos_ahorro:state.ahorro};
+      case 'ahorro': return {objetivos_ahorro:state.ahorro, cupos_disponibles: state.cuposDisponibles||0};
       case 'presupuesto_anual': return state.p5;
       case 'tablero': return state.tablero;
       case 'simulador_deuda': return state.debtSim;
@@ -6530,7 +6801,7 @@ function showToast(msg, type) {
       }
       completedModules.add(3);
     } else { state.mapaPatrimonial = {trm:{}, activos:[]}; }
-    if(m4){if(m4.objetivos_ahorro) state.ahorro=m4.objetivos_ahorro;completedModules.add(4);}
+    if(m4){if(m4.objetivos_ahorro) state.ahorro=m4.objetivos_ahorro;if(m4.cupos_disponibles!=null) state.cuposDisponibles=+m4.cupos_disponibles||0;completedModules.add(4);}
     if(m5){state.p5={...state.p5,...m5};completedModules.add(5);}
     if(m6){Object.assign(state.tablero,m6);completedModules.add(6);}
     state.tablero.budgetRule = Object.assign({rule:'50/30/20',custom:{nec:50,des:30,aho:20},buckets:{}}, state.tablero.budgetRule||{});
@@ -6556,13 +6827,33 @@ function showToast(msg, type) {
     }
     const mFiscal = await loadModule('fiscal');
     if(mFiscal){
+      const legalBase = state.fiscal.legal || {};
+      const legalRemoto = mFiscal.legal || {};
       state.fiscal = {
         ...state.fiscal, ...mFiscal,
         resp:{ ...state.fiscal.resp, ...(mFiscal.resp||{}) },
         exterior:{ ...state.fiscal.exterior, ...(mFiscal.exterior||{}) },
         iva:{ ...state.fiscal.iva, ...(mFiscal.iva||{}) },
         segSocial:{ ...state.fiscal.segSocial, ...(mFiscal.segSocial||{}) },
-        costoFiscal:{ ...(mFiscal.costoFiscal||{}) }
+        costoFiscal:{ ...(mFiscal.costoFiscal||{}) },
+        legal:{                                // Módulo 13 · merge profundo
+          ...legalBase, ...legalRemoto,
+          testamento:{ ...(legalBase.testamento||{}), ...(legalRemoto.testamento||{}) },
+          poderes:{ ...(legalBase.poderes||{}), ...(legalRemoto.poderes||{}) },
+          segurosVida: Array.isArray(legalRemoto.segurosVida) ? legalRemoto.segurosVida.slice() : (legalBase.segurosVida || []),
+          avalesTerceros:{ ...(legalBase.avalesTerceros||{}), ...(legalRemoto.avalesTerceros||{}) },
+          pleitosVigentes:{ ...(legalBase.pleitosVigentes||{}), ...(legalRemoto.pleitosVigentes||{}) },
+          cumplimientoExterior:{ ...(legalBase.cumplimientoExterior||{}), ...(legalRemoto.cumplimientoExterior||{}) },
+          coberturas:{
+            ...(legalBase.coberturas||{}), ...(legalRemoto.coberturas||{}),
+            rcProfesional:{ ...((legalBase.coberturas||{}).rcProfesional||{}), ...((legalRemoto.coberturas||{}).rcProfesional||{}) },
+            dyo:{ ...((legalBase.coberturas||{}).dyo||{}), ...((legalRemoto.coberturas||{}).dyo||{}) }
+          },
+          planSucesoral:{
+            ...(legalBase.planSucesoral||{}), ...(legalRemoto.planSucesoral||{}),
+            acciones:{ ...((legalBase.planSucesoral||{}).acciones||{}), ...((legalRemoto.planSucesoral||{}).acciones||{}) }
+          }
+        }
       };
       completedModules.add(10);
     }
@@ -6773,7 +7064,7 @@ function showToast(msg, type) {
   }
   async function saveM4(){
     calcM4();
-    await saveModule('ahorro',{objetivos_ahorro:state.ahorro});
+    await saveModule('ahorro',{objetivos_ahorro:state.ahorro, cupos_disponibles: state.cuposDisponibles||0});
     completedModules.add(4);updateProgress();updateNavStatus();
     showModal('Módulo guardado','Tu ahorro se guardó correctamente.');showToast('Guardado','success');
   }
@@ -8442,6 +8733,8 @@ function showToast(msg, type) {
   // Subtipos financieros que SÍ generan ganancia ocasional al venderse (inversiones de capital).
   // Se excluyen efectivo, cuentas, CDT, bonos, AFC, FPV, fiducias y cuentas por cobrar (su rendimiento es interés = renta de capital, no ganancia ocasional).
   const PF_FIN_GANANCIA = ['Acciones en bolsa','ETF o fondo de inversión internacional','Fondo de inversión colectiva FIC','REIT','Cartera gestionada por terceros'];
+  // Parte del activo que le corresponde al usuario (activos compartidos). 1 = 100% suyo.
+  function mpShare(a){ const p=(a && a.porcentajePropio!=null && a.porcentajePropio>0 && a.porcentajePropio<=100) ? a.porcentajePropio : 100; return p/100; }
   function pfAssetsVendibles(){
     const acts = (state.mapaPatrimonial && state.mapaPatrimonial.activos) || [];
     return acts.filter(a=>{
@@ -8494,7 +8787,7 @@ function showToast(msg, type) {
       let opts=''; for(let y=anioActual; y>=1990; y--){ opts += '<option value="'+y+'"'+(String(cf.anioCompra)===String(y)?' selected':'')+'>'+y+'</option>'; }
       let optsSuc=''; for(let y=anioActual; y>=1990; y--){ optsSuc += '<option value="'+y+'"'+(String(cf.anioSucesion)===String(y)?' selected':'')+'>'+y+'</option>'; }
       card.innerHTML =
-        '<div class="pf-asset-top"><span class="pf-asset-name">'+(a.description||a.subtype||'Activo')+'</span><span class="pf-asset-val">Valor hoy: '+fmt(a.value||0)+'</span></div>'
+        '<div class="pf-asset-top"><span class="pf-asset-name">'+(a.description||a.subtype||'Activo')+'</span><span class="pf-asset-val">Valor hoy: '+fmt(Math.round((a.value||0)*mpShare(a)))+(mpShare(a)<1?' <span class="pf-mut">(tu '+a.porcentajePropio+'%)</span>':'')+'</span></div>'
         + '<div class="pf-seg pf-seg-sm" data-origen>'
         +   '<button data-o="comprado"'+(cf.origen!=='heredado'?' class="active"':'')+'>Comprado</button>'
         +   '<button data-o="heredado"'+(cf.origen==='heredado'?' class="active"':'')+'>Heredado o donado</button>'
@@ -9035,6 +9328,100 @@ function showToast(msg, type) {
     return { ingresos, costosNegocio, salario, utilidad, impuestoRenta, utilidadDespues, dividendos, impuestoDividendos, impuestoSalario, aportesSalario, repartoPct, totalImpuestos, costosAnuales, total, requiereRevisor };
   }
 
+  // Elegibilidad de una SAS (persona jurídica) para el Régimen Simple. El tope depende de la actividad (Art. 905/906/908).
+  function pfSasElegibleSimple(){
+    const cfgS = (fiscalConfig().simple) || (FISCAL_DEFAULT.simple) || {};
+    const det = pfIngresoDetalle(); const ingresos = det.total; const uvt = uvtValor();
+    const grupoId = +((state.fiscal && state.fiscal.simpleGrupo)) || 4;
+    const esProfesional = (grupoId === 4);                    // servicios profesionales / profesiones liberales → tope menor
+    const topeUVT = esProfesional ? (cfgS.topeProfesionalesUVT||12000) : (cfgS.topeIngresosUVT||100000);
+    const motivos = [];
+    if(ingresos>0 && ingresos/uvt >= topeUVT)
+      motivos.push('Los ingresos ('+fmt(ingresos)+') superan el tope del Simple para tu actividad: '+topeUVT.toLocaleString('es-CO')+' UVT ('+fmt(enPesos(topeUVT))+' al año). Por encima de eso, la SAS no puede acogerse al Simple.');
+    return { elegible: motivos.length===0, motivos, topeUVT, esProfesional };
+  }
+
+  // SAS en Régimen SIMPLE: tarifa plana sobre ingresos brutos (no resta costos) + dividendos GRAVADOS + sueldo.
+  function pfSasSimpleEstimado(opts){
+    opts = opts || {};
+    const cfg = (fiscalConfig().sas) || (FISCAL_DEFAULT.sas) || {};
+    const cfgS = (fiscalConfig().simple) || (FISCAL_DEFAULT.simple) || {};
+    const s = (state.fiscal && state.fiscal.sas) || {};
+    const det = pfIngresoDetalle();
+    const ingresos = det.total;
+    const costosNegocio = (opts.costosNegocio!=null) ? opts.costosNegocio : (+s.costosNegocio||0);
+    const salario = (opts.salario!=null) ? opts.salario : (+s.salario||0);
+    const costosAnuales = (opts.costosAnuales!=null) ? opts.costosAnuales : (s.costosAnuales!=null ? +s.costosAnuales : (cfg.costoAnualTipico||6000000));
+    const repartoPct = (opts.repartoPct!=null) ? opts.repartoPct : (s.repartoPct!=null ? +s.repartoPct : 100);
+    // Impuesto SIMPLE de la empresa: tarifa PLANA por rango sobre ingresos BRUTOS (no se restan costos). Art. 908.
+    const uvt = uvtValor(); const ingresosUVT = ingresos/uvt;
+    const grupoId = +((state.fiscal && state.fiscal.simpleGrupo)) || 4;
+    const grupos = (cfgS.grupos && cfgS.grupos.length) ? cfgS.grupos : ((FISCAL_DEFAULT.simple||{}).grupos||[]);
+    const grupo = grupos.find(g=>g.id===grupoId) || grupos[grupos.length-1];
+    const r = (grupo.rangos||[]).find(x=> ingresosUVT >= x.desde && ingresosUVT < x.hasta) || (grupo.rangos||[])[(grupo.rangos||[]).length-1];
+    const tarifa = r ? r.tarifa : 0;
+    const impuestoSimple = Math.round(ingresos * tarifa);
+    // Sueldo: gravado como persona natural, con las mismas deducciones (igual que en ordinario).
+    const salT = pfRentaSobreSalario(salario);
+    const impuestoSalario = salT.impuesto; const aportesSalario = salT.aportes;
+    // Base de caja para repartir (después del impuesto SIMPLE, costos y sueldo).
+    const utilidad = Math.max(0, ingresos - costosNegocio - salario - impuestoSimple);
+    const dividendos = Math.round(utilidad * (repartoPct/100));
+    // Dividendos GRAVADOS: en Simple las utilidades NO son depuradas (Art. 48/49 no aplican). Cascada Art. 242: tarifa de renta y luego tarifa de dividendo sobre el remanente.
+    const tarRenta = cfg.tarifaRenta||0.35; const exento = enPesos(cfg.dividendoExentoUVT||1090); const tarDiv = cfg.dividendoTarifa||0.15;
+    const divNivel1 = Math.round(tarRenta * dividendos);
+    const divNivel2 = Math.round(tarDiv * Math.max(0, (dividendos - divNivel1) - exento));
+    const impuestoDividendos = divNivel1 + divNivel2;
+    const totalImpuestos = impuestoSimple + impuestoDividendos + impuestoSalario;
+    const total = totalImpuestos + costosAnuales;
+    return { regimen:'simple', grupoId, grupoNombre:(grupo&&grupo.nombre)||'', tarifa, ingresos, ingresosUVT, costosNegocio, salario, utilidad, impuestoSimple, dividendos, impuestoDividendos, impuestoSalario, aportesSalario, repartoPct, totalImpuestos, costosAnuales, total };
+  }
+
+  // Parte DINÁMICA del simulador SAS: desglose Ordinario vs Simple + comparación a 3 (se re-renderiza al cambiar montos/reparto).
+  function pfSasCompHtml(){
+    const pn = pfRentaEstimada().impuesto;
+    const sas = pfSasEstimado();
+    const sasS = pfSasSimpleEstimado();
+    const eligS = pfSasElegibleSimple();
+    const exento = enPesos((fiscalConfig().sas||{}).dividendoExentoUVT||1090);
+    const pct = (x)=> Math.round((x||0)*1000)/10;
+    let h = '';
+    // ── SAS · ORDINARIO ──
+    h += '<div class="pf-diag-sub">SAS en régimen Ordinario <span class="pf-mut">(renta 35% · Art. 240)</span></div>';
+    h += '<div class="pf-diag-row"><span>Tus ingresos del año</span><b>'+fmt(sas.ingresos)+'</b></div>';
+    h += '<div class="pf-diag-row"><span>− Costos de tu negocio</span><b>−'+fmt(sas.costosNegocio)+'</b></div>';
+    h += '<div class="pf-diag-row"><span>− Sueldo que te pagas</span><b>−'+fmt(sas.salario)+'</b></div>';
+    h += '<div class="pf-diag-row pf-diag-strong"><span>= Utilidad de la empresa</span><b>'+fmt(sas.utilidad)+'</b></div>';
+    h += '<div class="pf-diag-row"><span>− Impuesto de renta de la SAS <span class="pf-mut">(35%)</span></span><b>−'+fmt(sas.impuestoRenta)+'</b></div>';
+    h += '<div class="pf-diag-row"><span>Dividendos que te pasas <span class="pf-mut">('+sas.repartoPct+'%)</span></span><b>'+fmt(sas.dividendos)+'</b></div>';
+    h += '<div class="pf-diag-row"><span>− Impuesto por dividendos <span class="pf-mut">(no gravados: 15% sobre lo que pasa de '+fmt(exento)+')</span></span><b>−'+fmt(sas.impuestoDividendos)+'</b></div>';
+    h += '<div class="pf-diag-row"><span>− Impuesto de renta sobre tu sueldo</span><b>−'+fmt(sas.impuestoSalario)+'</b></div>';
+    h += '<div class="pf-diag-out"><span>Total SAS Ordinario <span class="pf-mut">(impuestos + costos)</span></span><b>'+fmt(sas.total)+'</b></div>';
+    // ── SAS · SIMPLE ──
+    h += '<div class="pf-diag-sub" style="margin-top:14px">SAS en régimen Simple <span class="pf-mut">(tarifa plana sobre ingresos · Art. 908)</span></div>';
+    if(!eligS.elegible){
+      h += '<div class="pf-simple-adv" style="margin-top:2px"><strong>No aplicable:</strong> '+(eligS.motivos[0]||'')+'</div>';
+    } else {
+      h += '<div class="pf-diag-row"><span>Tus ingresos del año <span class="pf-mut">(sobre estos se calcula, sin restar costos)</span></span><b>'+fmt(sasS.ingresos)+'</b></div>';
+      h += '<div class="pf-diag-row"><span>− Impuesto SIMPLE de la empresa <span class="pf-mut">('+pct(sasS.tarifa)+'% · '+(sasS.grupoNombre||'')+')</span></span><b>−'+fmt(sasS.impuestoSimple)+'</b></div>';
+      h += '<div class="pf-diag-row"><span>Dividendos que te pasas <span class="pf-mut">('+sasS.repartoPct+'%)</span></span><b>'+fmt(sasS.dividendos)+'</b></div>';
+      h += '<div class="pf-diag-row"><span>− Impuesto por dividendos <span class="pf-mut">(GRAVADOS: en Simple no son depurados)</span></span><b>−'+fmt(sasS.impuestoDividendos)+'</b></div>';
+      h += '<div class="pf-diag-row"><span>− Impuesto de renta sobre tu sueldo</span><b>−'+fmt(sasS.impuestoSalario)+'</b></div>';
+      h += '<div class="pf-diag-out"><span>Total SAS Simple <span class="pf-mut">(impuestos + costos)</span></span><b>'+fmt(sasS.total)+'</b></div>';
+      h += '<p class="pf-note" style="margin-top:6px">En el Simple, las utilidades que te repartes <strong>no</strong> son dividendos depurados (Art. 48/49 no aplican), así que tributan como <strong>gravadas</strong> en tu cabeza. Si <strong>reinviertes</strong> (reparto 0%), el Simple suele ser mucho más barato; si te lo repartes todo, esa ventaja se reduce. La cifra del dividendo gravado es una estimación con las tarifas de tu config; <strong>valídala con tu contador</strong>.</p>';
+    }
+    // ── COMPARACIÓN a 3 ──
+    const ops = [{k:'pn',nombre:'Como estás hoy',sub:'Persona natural',total:pn},{k:'ord',nombre:'SAS · Ordinario',sub:'renta 35%',total:sas.total}];
+    if(eligS.elegible) ops.push({k:'simple',nombre:'SAS · Simple',sub:'tarifa plana',total:sasS.total});
+    const ganador = ops.reduce((a,b)=> b.total<a.total?b:a);
+    h += '<div class="pf-vs pf-vs-3" style="margin-top:14px">';
+    ops.forEach(o=>{ h += '<div class="pf-vs-col'+(o.k===ganador.k?' win':'')+'">'+(o.k===ganador.k?'<span class="pf-vs-badge">Más barato</span>':'')+'<div class="pf-vs-name">'+o.nombre+'</div><div class="pf-vs-sub">'+o.sub+'</div><div class="pf-vs-total">'+fmt(o.total)+'</div></div>'; });
+    h += '</div>';
+    const difHoy = pn - ganador.total;
+    h += '<div class="pf-diag-out"><span>'+(ganador.k==='pn' ? 'Quedándote como estás es lo más barato' : 'Lo más barato es '+ganador.nombre+'; frente a hoy ahorrarías')+'</span><b>'+(ganador.k==='pn'?'':fmt(Math.abs(difHoy)))+'</b></div>';
+    return h;
+  }
+
   function pfSasHtml(){
     const renta = pfRentaEstimada();
     if(renta.ingresos<=0) return '';
@@ -9045,14 +9432,10 @@ function showToast(msg, type) {
       h += '<p class="pf-note">Este simulador aplica a quienes trabajan por su cuenta o tienen un negocio (honorarios, ventas, servicios). Si además del sueldo tienes ingresos por tu cuenta, ajústalo en tu perfil y te mostramos la comparación.</p></div>';
       return h;
     }
-    const pn = renta.impuesto;                 // impuesto de renta hoy como persona natural
     const sas = pfSasEstimado();
-    const sasGana = sas.total < pn;
-    const dif = Math.abs(pn - sas.total);
-    const exento = enPesos(1090);
     let html = '<div class="pf-diag-card"><div class="pf-diag-t">¿Te conviene crear una empresa (SAS)?</div>';
     if(tipo === 'mixto') html += '<div class="pf-simple-adv" style="margin-top:0;margin-bottom:10px"><strong>Ojo:</strong> tienes sueldo como empleado y también ingresos por tu cuenta. Solo la parte que ganas <strong>por tu cuenta</strong> podría pasar por una SAS; el sueldo de tu empleo no. Toma esta simulación como una referencia sobre tu actividad independiente.</div>';
-    html += '<p class="pf-note" style="margin-top:0">Simulación: si tus ingresos entraran por una empresa (SAS). Puedes pagarte una parte como <strong>sueldo</strong> y dejar el resto como <strong>utilidad</strong> (para repartir como dividendos o reinvertir). El impuesto de tu sueldo se calcula con tus mismas deducciones.</p>';
+    html += '<p class="pf-note" style="margin-top:0">Simulación: si tus ingresos entraran por una empresa (SAS). Puedes pagarte una parte como <strong>sueldo</strong> y dejar el resto como <strong>utilidad</strong> (para repartir como dividendos o reinvertir). Comparamos los <strong>dos regímenes</strong> de la SAS: Ordinario (renta 35%) y Simple (tarifa plana). El régimen del Simple usa tu actividad elegida en "¿Ordinario o Simple?".</p>';
     html += '<div class="pf-grid2" style="margin-top:6px">';
     html += '<div class="pf-field"><label>Costos de tu negocio al año <span class="info-tip" data-def="sas_costos_negocio" tabindex="0">i</span></label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="pf-sas-costos" inputmode="numeric" placeholder="0"></div></div>';
     html += '<div class="pf-field"><label>Sueldo que te pagas al año <span class="info-tip" data-def="sas_salario" tabindex="0">i</span></label><div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="pf-sas-salario" inputmode="numeric" placeholder="0"></div></div>';
@@ -9060,29 +9443,7 @@ function showToast(msg, type) {
     html += '</div>';
     html += '<div class="pf-opt-top" style="margin-top:10px"><span>¿Cuánto de la utilidad te pasas como dividendos? <span class="info-tip" data-def="sas_dividendos" tabindex="0">i</span></span><span class="pf-opt-val" id="pf-sas-repval">'+sas.repartoPct+'%</span></div>';
     html += '<input type="range" id="pf-sas-reparto" min="0" max="100" step="10" value="'+sas.repartoPct+'" class="pf-range">';
-
-    html += '<div class="pf-diag-sub">Por el lado de la empresa</div>';
-    html += '<div class="pf-diag-row"><span>Tus ingresos del año</span><b id="pf-sas-ing">'+fmt(sas.ingresos)+'</b></div>';
-    html += '<div class="pf-diag-row"><span>− Costos de tu negocio</span><b id="pf-sas-cn">−'+fmt(sas.costosNegocio)+'</b></div>';
-    html += '<div class="pf-diag-row"><span>− Sueldo que te pagas</span><b id="pf-sas-salln">−'+fmt(sas.salario)+'</b></div>';
-    html += '<div class="pf-diag-row pf-diag-strong"><span>= Utilidad de la empresa</span><b id="pf-sas-util">'+fmt(sas.utilidad)+'</b></div>';
-    html += '<div class="pf-diag-row"><span>− Impuesto de renta de la SAS <span class="pf-mut">(35%)</span></span><b id="pf-sas-renta">−'+fmt(sas.impuestoRenta)+'</b></div>';
-    html += '<div class="pf-diag-row"><span>Dividendos que te pasas <span class="pf-mut">(<span id="pf-sas-reppct">'+sas.repartoPct+'</span>%)</span></span><b id="pf-sas-divmonto">'+fmt(sas.dividendos)+'</b></div>';
-    html += '<div class="pf-diag-row"><span>− Impuesto por dividendos <span class="pf-mut">(15% sobre lo que pasa de '+fmt(exento)+')</span></span><b id="pf-sas-div">−'+fmt(sas.impuestoDividendos)+'</b></div>';
-    html += '<div class="pf-diag-sub">Por el lado de tu sueldo</div>';
-    html += '<div class="pf-diag-row"><span>Tu sueldo del año</span><b id="pf-sas-salln2">'+fmt(sas.salario)+'</b></div>';
-    html += '<div class="pf-diag-row pf-diag-off"><span>Aportes a salud y pensión <span class="pf-mut">(automáticos, van a tu salud y pensión)</span></span><b id="pf-sas-aportes">'+fmt(sas.aportesSalario)+'</b></div>';
-    html += '<div class="pf-diag-row"><span>− Impuesto de renta sobre tu sueldo <span class="pf-mut">(con tus deducciones)</span></span><b id="pf-sas-impsal">−'+fmt(sas.impuestoSalario)+'</b></div>';
-    html += '<div class="pf-diag-sub">En total</div>';
-    html += '<div class="pf-diag-row"><span>Impuestos (empresa + dividendos + sueldo)</span><b id="pf-sas-imptot">'+fmt(sas.totalImpuestos)+'</b></div>';
-    html += '<div class="pf-diag-row"><span>+ Costo de mantener la SAS</span><b id="pf-sas-costoan">+'+fmt(sas.costosAnuales)+'</b></div>';
-    html += '<div class="pf-diag-out"><span>Total con SAS <span class="pf-mut">(impuestos + costos)</span></span><b id="pf-sas-total">'+fmt(sas.total)+'</b></div>';
-
-    html += '<div class="pf-vs" style="margin-top:12px">';
-    html += '<div class="pf-vs-col'+(!sasGana?' win':'')+'" id="pf-sas-pncol">'+(!sasGana?'<span class="pf-vs-badge">Te conviene</span>':'')+'<div class="pf-vs-name">Como estás hoy</div><div class="pf-vs-total">'+fmt(pn)+'</div></div>';
-    html += '<div class="pf-vs-col'+(sasGana?' win':'')+'" id="pf-sas-sascol">'+(sasGana?'<span class="pf-vs-badge">Te conviene</span>':'')+'<div class="pf-vs-name">Con una SAS</div><div class="pf-vs-total" id="pf-sas-totcol">'+fmt(sas.total)+'</div></div>';
-    html += '</div>';
-    html += '<div class="pf-diag-out"><span id="pf-sas-vered">'+(sasGana?'Con una SAS ahorrarías':'Quedándote como estás ahorras')+'</span><b id="pf-sas-dif">'+fmt(dif)+'</b></div>';
+    html += '<div id="pf-sas-dyn">'+pfSasCompHtml()+'</div>';
     html += '<p class="pf-note">El sueldo baja el impuesto de la empresa, pero paga su propio impuesto y aportes; dejar utilidad paga 35% y, si la repartes, dividendos. Prueba distintos montos de sueldo y reparto. No incluye los aportes que paga la empresa sobre el sueldo'+(sas.requiereRevisor?' ni el revisor fiscal que necesitarías':'')+'; confírmalo con un contador.</p>';
     html += '<button class="pf-cta-mini" data-cta-asesor style="margin-top:4px">Quiero que me asesoren si crear una SAS</button>';
     html += '</div>';
@@ -9904,34 +10265,10 @@ function showToast(msg, type) {
     // Simulador SAS
     if(!state.fiscal.sas) state.fiscal.sas = { costosNegocio:0, salario:0, costosAnuales:null, repartoPct:100 };
     function pfSasRefresh(){
-      const pn = pfRentaEstimada().impuesto;
-      const sas = pfSasEstimado();
-      const set=(id,v)=>{ const e=document.getElementById(id); if(e) e.textContent=v; };
-      set('pf-sas-ing', fmt(sas.ingresos));
-      set('pf-sas-cn', '−'+fmt(sas.costosNegocio));
-      set('pf-sas-salln', '−'+fmt(sas.salario));
-      set('pf-sas-util', fmt(sas.utilidad));
-      set('pf-sas-renta', '−'+fmt(sas.impuestoRenta));
-      set('pf-sas-reppct', sas.repartoPct);
-      set('pf-sas-divmonto', fmt(sas.dividendos));
-      set('pf-sas-div', '−'+fmt(sas.impuestoDividendos));
-      set('pf-sas-salln2', fmt(sas.salario));
-      set('pf-sas-aportes', fmt(sas.aportesSalario));
-      set('pf-sas-impsal', '−'+fmt(sas.impuestoSalario));
-      set('pf-sas-imptot', fmt(sas.totalImpuestos));
-      set('pf-sas-costoan', '+'+fmt(sas.costosAnuales));
-      set('pf-sas-total', fmt(sas.total));
-      set('pf-sas-totcol', fmt(sas.total));
-      const sasGana = sas.total < pn;
-      set('pf-sas-vered', sasGana?'Con una SAS ahorrarías':'Quedándote como estás ahorras');
-      set('pf-sas-dif', fmt(Math.abs(pn-sas.total)));
-      const pncol=document.getElementById('pf-sas-pncol'), sascol=document.getElementById('pf-sas-sascol');
-      if(pncol&&sascol){
-        pncol.classList.toggle('win', !sasGana); sascol.classList.toggle('win', sasGana);
-        const pnBadge = pncol.querySelector('.pf-vs-badge'), sasBadge = sascol.querySelector('.pf-vs-badge');
-        if(pnBadge) pnBadge.style.display = !sasGana?'':'none';
-        if(sasBadge) sasBadge.style.display = sasGana?'':'none';
-      }
+      const rep = document.getElementById('pf-sas-repval');
+      if(rep) rep.textContent = (((state.fiscal.sas&&state.fiscal.sas.repartoPct)!=null)?state.fiscal.sas.repartoPct:100)+'%';
+      const dyn = document.getElementById('pf-sas-dyn');
+      if(dyn) dyn.innerHTML = pfSasCompHtml();
     }
     const sasCostos=document.getElementById('pf-sas-costos');
     if(sasCostos){
@@ -10192,6 +10529,2585 @@ function showToast(msg, type) {
     if(goCentro) goCentro.addEventListener('click', ()=>{ try{ navigateTo(11); }catch(e){} });
   }
 
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     MÓDULO 13 · ESTRUCTURA LEGAL PATRIMONIAL
+     Motor de reglas, formulario, diagnóstico y definiciones.
+     ═══════════════════════════════════════════════════════════════════════════ */
+
+  const LEGAL_UMBRALES = {
+    exteriorUVT: 2000,                    // Formulario 160 (art. 607 ET)
+    herVivUVT: 13000,                     // Art. 307 num. 1 ET
+    herOtrosInmUVT: 6500,                 // Art. 307 num. 2 ET
+    herLegitimarioUVT: 3250,              // Art. 307 num. 3 ET
+    seguroVidaExentoUVT: 3250,            // Art. 303-1 ET
+    negocioValorSMMLV: 200,
+    negocioIngresoAnualUVT: 500,
+    ingresoPasivoRelevanteUVT: 40,        // mensuales (se anualiza en R2)
+    concentracionDirectaPct: 0.85,
+    concentracionVehiculoPct: 0.60,
+    copropiedadValorSMMLV: 100,
+    testamentoAntiguedadAnios: 5,
+    patrimonioSinTestamentoSMMLV: 500,
+    iliquidezCriticaPct: 0.60,
+    umhPresuncionAnios: 2,                // Ley 54/1990 art. 2
+    avalRelevantePctPatrimonio: 0.30,
+  };
+
+  const SMMLV_2026 = 1750905;   // Decreto 1469 del 29 de diciembre de 2025
+  const getSMMLV = () => (typeof window !== 'undefined' && window.SMMLV_ACTUAL) || SMMLV_2026;
+
+  // CIIUs de actividades con exposición profesional alta
+  const CIIU_RIESGO_PROFESIONAL = [
+    { prefijo:'71', desc:'arquitectura, ingeniería y consultoría técnica' },
+    { prefijo:'69', desc:'jurídicas y contables' },
+    { prefijo:'70', desc:'consultoría de gestión' },
+    { prefijo:'86', desc:'salud humana' },
+    { prefijo:'87', desc:'atención en instituciones' },
+    { prefijo:'85', desc:'educación' },
+    { prefijo:'88', desc:'servicios sociales sin alojamiento' },
+    { prefijo:'41', desc:'construcción de edificios' },
+    { prefijo:'42', desc:'obras de ingeniería civil' },
+    { prefijo:'43', desc:'actividades especializadas de construcción' }
+  ];
+
+  // ════════════════════════════════════════════════════════════════════════
+  // EVALUACIÓN PATRIMONIAL EN 4 CAPAS · Motor (Fase 1)
+  // Protección · Liquidez · Crecimiento · Sucesoral
+  // Las capas se calculan en orden: LIQUIDEZ alimenta a SUCESORAL.
+  // Todo umbral es configurable y validable. Nada se asume: lo que no está
+  // capturado se reporta en `datosFaltantes`, no se inventa.
+  // ════════════════════════════════════════════════════════════════════════
+  const CAPAS_UMBRALES = {
+    proteccion: {
+      exposicionDirectaBien: 0.40, exposicionDirectaRiesgo: 0.75,
+      coberturaRCMinPctPatrimonio: 0.25,      // suma asegurada mínima vs patrimonio expuesto
+      avalRelevantePct: 0.30,
+      umhPresuncionAnios: 2,                  // Ley 54/1990 art. 2
+    },
+    liquidez: {
+      runwayBienMeses: 6, runwayRiesgoMeses: 3,
+      runwayIngresoVariableExtra: 3,          // ingreso volátil exige más colchón
+      ratioLiquidoMinimo: 0.10,
+      concentracionIliquidaPct: 0.60,
+    },
+    crecimiento: {
+      productivoBien: 0.50, productivoRiesgo: 0.25,
+      inflacionAnual: 0.05,
+    },
+    diversificacion: {
+      claseMayorConcentrada: 0.70,
+      activoMayorConcentrado: 0.40,
+      monedaUnicaConcentrada: 0.90,
+      sectorMayorConcentrado: 0.50,
+      apuestasEfectivasMin: 3,                // 1/HHI mínimo deseable
+    },
+    sucesoral: {
+      coberturaBien: 1.0, coberturaRiesgo: 0.5,
+      mesesProcesoSucesion: 18,               // duración típica del trámite
+      costoProcesoPct: 0.02,                  // notarial/judicial sobre el acervo
+      accesoBancarioSinSucesionUVT: 1750,     // liberación parcial sin sucesión
+      testamentoAntiguedadAnios: 5,
+    },
+    pesos: { proteccion:35, liquidez:25, diversificacion:20, crecimiento:20 },
+  };
+
+  const capaEstado = (score) => score >= 70 ? 'bien' : (score >= 40 ? 'atencion' : 'riesgo');
+  // Índice Herfindahl: 1 = todo concentrado en uno. 1/HHI = "apuestas efectivas".
+  function capasHHI(pesos){
+    const tot = pesos.reduce((s,v)=>s+v,0);
+    if(tot <= 0) return { hhi:0, efectivas:0 };
+    const hhi = pesos.reduce((s,v)=>s+Math.pow(v/tot,2),0);
+    return { hhi, efectivas: hhi>0 ? 1/hhi : 0 };
+  }
+  function capasAgrupar(items, keyFn){
+    const m = {};
+    items.forEach(a => { const k = keyFn(a) || '(sin dato)'; m[k] = (m[k]||0) + (a.valor||0); });
+    return m;
+  }
+  // Un fondo/ETF amplio NO es una apuesta única: por dentro ya está diversificado.
+  function capasEsDiversificado(a){
+    if(a._reparto === 'muchas') return true;    // lo dijo el usuario: manda sobre cualquier suposición
+    if(a._reparto === 'una') return false;
+    const s = ((a._subtipo||'') + ' ' + (a.nombre||'')).toLowerCase();
+    return /etf|fondo|fic|indice|índice|colectiv|portafolio|diversific/.test(s);
+  }
+
+  function capasDatosMapa(){
+    try{
+      if(window.MapaPatrimonial && window.MapaPatrimonial.getData){
+        const d = window.MapaPatrimonial.getData();
+        return { acts: d.activosNormalizados||[], resumen: d.resumen||{}, raw: d.activos||[] };
+      }
+    }catch(e){}
+    return { acts:[], resumen:{}, raw:[] };
+  }
+
+  // ── CAPA 1 · PROTECCIÓN ────────────────────────────────────────────────
+  function capaProteccion(ctx){
+    const { acts, bruto, neto } = ctx;
+    const L = (state.fiscal && state.fiscal.legal) || {};
+    const brechas = [], faltantes = [];
+    const directos = acts.filter(a => !a._estructuraLegal || a._estructuraLegal === 'Propiedad Directa');
+    const valDirecto = directos.reduce((s,a)=>s+(a.valor||0),0);
+    const expo = bruto > 0 ? valDirecto/bruto : 0;
+    const U = CAPAS_UMBRALES.proteccion;
+    let score = 100;
+    if(expo > U.exposicionDirectaRiesgo){ score -= 45; const t = expo >= 0.995 ? 'Todo tu patrimonio está a tu nombre' : 'Casi todo tu patrimonio está a tu nombre';
+      brechas.push({sev:'alta', titulo:t, detalle:'El '+Math.round(expo*100)+'% ('+fmt(valDirecto)+') está a tu nombre, sin ninguna sociedad o fiducia de por medio. Si te demandan, si te embargan o si hay un divorcio, se puede ir todo junto.'}); }
+    else if(expo > U.exposicionDirectaBien){ score -= 20; brechas.push({sev:'media', titulo:'Buena parte del patrimonio sin vehículo de protección', detalle:'El '+Math.round(expo*100)+'% está a tu nombre directamente.'}); }
+    // Cobertura de responsabilidad: se mide contra la exposición, no como sí/no.
+    const rc = (L.coberturas && L.coberturas.rcProfesional) || {};
+    const ciiu = ciiuTieneRiesgoProfesional(state.fiscal && state.fiscal.ciiu);
+    if(ciiu){
+      if(rc.tiene === false || rc.tiene == null){ score -= 20; brechas.push({sev:'alta', titulo:'Actividad de riesgo sin póliza de responsabilidad civil', detalle:'Tu actividad ('+ciiu.desc+') expone tu patrimonio personal a reclamaciones. No hay RC registrada.'}); }
+      else if((rc.sumaAsegurada||0) > 0 && (rc.sumaAsegurada||0) < valDirecto*U.coberturaRCMinPctPatrimonio){ score -= 10; brechas.push({sev:'media', titulo:'La póliza de RC puede quedarse corta', detalle:'Cubre '+fmt(rc.sumaAsegurada)+' frente a '+fmt(valDirecto)+' expuestos.'}); }
+    }
+    // El ingreso es el motor del patrimonio: si se detiene, todo lo demás se erosiona.
+    const inv = (L.coberturas && L.coberturas.invalidez) || {};
+    if(inv.tiene === false){ score -= 12; brechas.push({sev:'alta', titulo:'Si no pudieras trabajar, no hay nada que reemplace tu ingreso', detalle:'No tienes un seguro que te siga pagando si una enfermedad o un accidente te dejan sin poder trabajar. Los gastos seguirían y tocaría vivir del patrimonio.'}); }
+    // Un aval personal borra la separación que da la sociedad.
+    if(L.avalSociedad === true){ score -= 18; brechas.push({sev:'alta', titulo:'Firmaste personalmente las deudas de tu empresa', detalle:'Tener la empresa en una sociedad separa tu patrimonio del de ella, pero al firmar como codeudor esa separación no aplica a esa deuda: tus bienes personales responden igual.'}); }
+    if(L.viviendaProtegida === false){ score -= 6; brechas.push({sev:'media', titulo:'Tu vivienda no tiene protección frente a embargos', detalle:'Existe una figura que se inscribe en la notaría y hace que tu casa no responda por deudas. Sin ella, tu vivienda queda expuesta como cualquier otro bien.'}); }
+    const dyo = (L.coberturas && L.coberturas.dyo) || {};
+    if(dyo.tiene === false) { score -= 8; brechas.push({sev:'media', titulo:'Administrador sin póliza D&O', detalle:'Como administrador respondes con tu patrimonio por decisiones de la sociedad.'}); }
+    // Avales y pleitos: comprometen patrimonio aunque no sean deuda propia.
+    const aval = L.avalesTerceros || {};
+    if(aval.tiene && (aval.monto||0) > 0 && neto > 0 && (aval.monto/neto) > U.avalRelevantePct){
+      score -= 15; brechas.push({sev:'alta', titulo:'Avales que comprometen tu patrimonio', detalle:'Respondes por '+fmt(aval.monto)+', el '+Math.round(aval.monto/neto*100)+'% de tu patrimonio neto.'});
+    }
+    const pl = L.pleitosVigentes || {};
+    if(pl.tieneComoDemandado && (pl.montoPretensiones||0) > 0){ score -= 12; brechas.push({sev:'alta', titulo:'Pleito vigente en tu contra', detalle:'Pretensiones por '+fmt(pl.montoPretensiones)+'.'}); }
+    // Régimen conyugal (incluye unión marital de hecho: sociedad patrimonial por presunción).
+    const anios = L.anioMatrimonioUnion ? (new Date().getFullYear() - (+L.anioMatrimonioUnion||0)) : null;
+    if(L.estadoCivil === 'union_libre' && anios != null && anios >= U.umhPresuncionAnios && !L.regimenConyugal){
+      score -= 8; brechas.push({sev:'media', titulo:'Unión marital sin claridad de régimen', detalle:'Tras '+anios+' años se presume sociedad patrimonial: la mitad de lo construido podría ser del compañero(a).'});
+    }
+    const restringidos = acts.filter(a=>a.restringido).reduce((s,a)=>s+(a.valor||0),0);
+    if(restringidos > 0) brechas.push({sev:'baja', titulo:'Activos con restricción legal', detalle:fmt(restringidos)+' están pignorados, embargados o con limitación: no son respaldo disponible.'});
+    // Lo que la app aún no captura (para no dar falsa tranquilidad).
+    // La sucesión es parte de proteger: protege el patrimonio del evento más seguro de todos.
+    const suc = subSucesion(ctx);
+    score -= Math.round(suc.penal * 0.5);              // pesa la mitad dentro de la capa
+    suc.brechas.forEach(b=>brechas.push(b));
+    suc.datosFaltantes.forEach(f=>faltantes.push(f));
+    score = Math.max(0, Math.min(100, score));
+    return { id:'proteccion', nombre:'Protección', estado:capaEstado(score), score,
+      metricas:{ exposicionDirectaPct:expo, valorExpuesto:valDirecto, valorRestringido:restringidos, sucesion:suc.metricas },
+      brechas, datosFaltantes:faltantes };
+  }
+
+  // ── CAPA 2 · LIQUIDEZ ──────────────────────────────────────────────────
+  function capaLiquidez(ctx){
+    const { acts, bruto } = ctx;
+    const U = CAPAS_UMBRALES.liquidez;
+    const brechas = [], faltantes = [];
+    const liquidosLibres = acts.filter(a => a.tipo === 'LÍQUIDO' && !a.restringido).reduce((s,a)=>s+(a.valor||0),0);
+    const totalLiquidos = acts.filter(a => a.tipo === 'LÍQUIDO').reduce((s,a)=>s+(a.valor||0),0);
+    // Fondo voluntario: el dinero sale en días, salvo dos casos que sí lo bloquean o lo demoran.
+    const fpvBloqueado = acts.filter(a => a._subtipo === 'Fondo de pensiones voluntarias FPV' && a._fpvInstitucional).reduce((s,a)=>s+(a.valor||0),0);
+    const fpvConPermanencia = acts.filter(a => a._subtipo === 'Fondo de pensiones voluntarias FPV' && !a._fpvInstitucional && a._fpvPermanencia).reduce((s,a)=>s+(a.valor||0),0);
+    // Seguro de pensión con ahorro: si ya cumplió el plazo, recuperas el valor completo → cuenta como disponible.
+    const segPensionListo = acts.filter(a => a._subtipo === 'Seguro de pensión con ahorro' && a._vigenciaCumplida && !a.restringido).reduce((s,a)=>s+(a.valor||0),0);
+    const segPensionConCosto = acts.filter(a => a._subtipo === 'Seguro de pensión con ahorro' && !a._vigenciaCumplida && !a.restringido).reduce((s,a)=>s+(a.valor||0),0);
+    const fondo = (state.p5 && state.p5.fondoProvisiones) || 0;
+    const gastoMes = gastoMensualTotal();
+    // Colchón por tramos de horizonte: la emergencia se cubre con lo que llega ya o en días.
+    const noRestr = acts.filter(a => !a.restringido);
+    const inmediato = noRestr.filter(a => a._horizonte === 'inmediato').reduce((s,a)=>s+(a.valor||0),0) + fondo;
+    const enDias = noRestr.filter(a => a._horizonte === 'dias' && a._subtipo !== 'Fondo de pensiones voluntarias FPV').reduce((s,a)=>s+(a.valor||0),0);
+    const fpvDisponible = Math.max(0, acts.filter(a => a._subtipo === 'Fondo de pensiones voluntarias FPV' && !a.restringido).reduce((s,a)=>s+(a.valor||0),0) - fpvBloqueado - fpvConPermanencia);
+    // Colchón de emergencia = lo inmediato + lo de pocos días (incluye FPV disponible y seguro de pensión ya cumplido).
+    const disponible = Math.max(0, inmediato + enDias + fpvDisponible + segPensionListo);
+    const runway = gastoMes > 0 ? disponible/gastoMes : null;
+    const runwayInmediato = gastoMes > 0 ? inmediato/gastoMes : null;
+    // Cupos de crédito sin usar: respaldo real, pero con costo. No es ahorro, así que
+    // NO entra al colchón; se muestra aparte como la salida de emergencia que es.
+    const cupos = (+state.cuposDisponibles) || 0;
+    const runwayConCupos = (gastoMes > 0 && cupos > 0) ? (disponible + cupos)/gastoMes : null;
+    const totalLiquidosH = inmediato - fondo + enDias + fpvDisponible;   // sin el fondo de provisiones, para el ratio
+    const ratio = bruto > 0 ? (inmediato - fondo + enDias + fpvDisponible + segPensionListo)/bruto : 0;
+    // El colchón exigido sube si el ingreso es volátil.
+    const hayVariable = !!(state.varIncome && (state.varIncome.activo || (state.varIncome.meses||[]).length));
+    const objetivoMeses = U.runwayBienMeses + (hayVariable ? U.runwayIngresoVariableExtra : 0);
+    let score = 100;
+    if(runway == null){ score -= 20; brechas.push({sev:'media', titulo:'Falta saber cuánto gastas al mes', detalle:'Sin tu gasto mensual no puedo calcular cuántos meses aguantarías. Regístralo en Ingresos y Gastos.'}); }
+    else if(runway < U.runwayRiesgoMeses){ score -= 45; brechas.push({sev:'alta', titulo:'Colchón por debajo de lo mínimo', detalle:'Cubres '+runway.toFixed(1)+' meses de gastos con dinero propio. Un imprevisto te obligaría a endeudarte o a vender con descuento.'+(cupos>0?' Con tus cupos de crédito llegarías a '+runwayConCupos.toFixed(1)+' meses, pero eso es deuda: sirve para salir del paso, no reemplaza el ahorro.':'')}); }
+    else if(runway < objetivoMeses){ score -= 20; brechas.push({sev:'media', titulo:'Colchón por debajo de tu objetivo', detalle:'Cubres '+runway.toFixed(1)+' meses; para tu perfil'+(hayVariable?' (ingreso variable)':'')+' conviene '+objetivoMeses+'.'}); }
+    if(ratio < U.ratioLiquidoMinimo && bruto > 0){ score -= 15; brechas.push({sev:'media', titulo:'Casi todo tu patrimonio está inmovilizado', detalle:'Solo el '+Math.round(ratio*100)+'% es líquido.'}); }
+    if(segPensionConCosto > 0){ brechas.push({sev:'baja', titulo:'Tienes un ahorro de pensión que aún no cumple su plazo', detalle:'Ese dinero ('+fmt(segPensionConCosto)+') es tuyo y puedes sacarlo, pero al hacerlo antes de tiempo te descuentan gastos de cancelación y el ahorro de impuestos, así que recibirías menos. Por eso no lo cuento como parte de tu colchón disponible.'}); }
+    if(fpvBloqueado > 0){ brechas.push({sev:'media', titulo:'Parte de tu fondo voluntario lo controla tu empresa', detalle:'Hay '+fmt(fpvBloqueado)+' en un fondo abierto por tu empleador. La parte que aporta la empresa suele tener condiciones para poder sacarla, así que no la cuento como dinero disponible para una emergencia. Confirma con tu área de gente o con la administradora cuánto podrías retirar hoy.'}); }
+    if(fpvConPermanencia > 0){ brechas.push({sev:'baja', titulo:'Tu fondo voluntario tiene un plazo mínimo acordado', detalle:'Hay '+fmt(fpvConPermanencia)+' donde acordaste dejar el dinero un tiempo. Sigue siendo tuyo, pero sacarlo antes puede costarte una comisión o tomar más días, así que no lo cuento como disponible inmediato.'}); }
+    const conPenalidad = noRestr.filter(a => a._horizonte === 'penalidad' && a._subtipo !== 'Seguro de pensión con ahorro').reduce((s,a)=>s+(a.valor||0),0);
+    if(conPenalidad > 0){ brechas.push({sev:'baja', titulo:'Parte de tu dinero está en productos a plazo', detalle:'Tienes '+fmt(conPenalidad)+' en productos como CDT o cuenta AFC. Puedes acceder a ese dinero, pero sacarlo antes de tiempo suele costar intereses o penalidad, así que no lo cuento como colchón inmediato.'}); }
+        const iliquidos = acts.filter(a => a.tipo !== 'LÍQUIDO');
+    if(iliquidos.length && bruto > 0){
+      const mayor = iliquidos.reduce((m,a)=> (a.valor||0)>(m.valor||0)?a:m, iliquidos[0]);
+      if((mayor.valor||0)/bruto > U.concentracionIliquidaPct){ score -= 12; brechas.push({sev:'media', titulo:'Un solo bien ilíquido domina tu patrimonio', detalle:'"'+mayor.nombre+'" es el '+Math.round(mayor.valor/bruto*100)+'%. Venderlo toma meses y suele exigir descuento.'}); }
+    }
+    score = Math.max(0, Math.min(100, score));
+    return { id:'liquidez', nombre:'Liquidez', estado:capaEstado(score), score,
+      metricas:{ runwayMeses:runway, objetivoMeses, ratioLiquido:ratio, disponibleInmediato:disponible, soloInmediato:inmediato, enDias, runwayInmediato, conPenalidad, liquidosLibres, cupos, runwayConCupos, fpvBloqueado, fpvConPermanencia },
+      brechas, datosFaltantes:faltantes };
+  }
+
+  // ── CAPA 3 · CRECIMIENTO (con diversificación en 7 dimensiones) ────────
+  function capaCrecimiento(ctx){
+    const { acts, bruto, resumen } = ctx;
+    const U = CAPAS_UMBRALES.crecimiento;
+    const brechas = [], faltantes = [];
+    const productivos = acts.filter(a => a._esProductivo).reduce((s,a)=>s+(a.valor||0),0);
+    const pctProd = bruto > 0 ? productivos/bruto : 0;
+    // Distinto: los que HOY están dando renta registrada (no solo los que podrían).
+    const conRenta = acts.filter(a => (a._ingresoMensual||0) > 0).reduce((s,a)=>s+(a.valor||0),0);
+    const pctConRenta = bruto > 0 ? conRenta/bruto : 0;
+    let score = 100;
+    if(pctProd < U.productivoRiesgo){ score -= 35; brechas.push({sev:'alta', titulo:'Tu patrimonio casi no trabaja', detalle:'Solo el '+Math.round(pctProd*100)+'% genera renta o se aprecia; el resto son bienes de uso.'}); }
+    else if(pctProd < U.productivoBien){ score -= 15; brechas.push({sev:'media', titulo:'Parte importante del patrimonio no produce', detalle:'El '+Math.round(pctProd*100)+'% es productivo.'}); }
+    // ── Rendimiento TOTAL: lo que rinde = renta que te paga + cuánto se valoriza ──
+    // Medir solo el valor final mezcla lo que ahorras con lo que producen los bienes.
+    // Por eso separamos: rendimiento de los bienes, y aparte cuánto aportas tú ahorrando.
+    const rentaAnual = acts.reduce((s,a)=>s+(a._ingresoMensual||0)*12,0);
+    const rendRenta = bruto > 0 ? rentaAnual/bruto : 0;                 // flujo (arriendos, dividendos)
+    // Valorización anualizada ponderada por valor (solo activos con precio de compra y fecha).
+    let pesoVal = 0, sumaVal = 0;
+    acts.forEach(a=>{ const v = a._valorizacionPct; if(v != null && isFinite(v) && (a.valor||0) > 0){ pesoVal += a.valor; sumaVal += v * a.valor; } });
+    const rendValorizacion = pesoVal > 0 ? sumaVal/pesoVal : null;      // precio (se aprecia o se deprecia)
+    const rendTotal = rendRenta + (rendValorizacion || 0);
+    const rendReal = rendTotal - U.inflacionAnual;                      // descontando inflación
+    const rendImplicito = rendTotal;
+    // Cuánto crece tu patrimonio porque TÚ le metes plata (ahorro), no porque rinda.
+    const ingMes = (typeof pgIngresoMensualGeneral === 'function') ? pgIngresoMensualGeneral() : 0;
+    const gasMes = gastoMensualTotal();
+    const cuotasMes = (typeof deudaServicioMensual === 'function') ? deudaServicioMensual() : 0;
+    const ahorroMes = (ingMes > 0) ? Math.max(0, ingMes - gasMes - cuotasMes) : null;
+    const tasaAhorro = (ingMes > 0) ? (ingMes - gasMes - cuotasMes)/ingMes : null;
+    const aporteAnual = ahorroMes != null ? ahorroMes*12 : null;
+    const crecPorAhorro = (aporteAnual != null && bruto > 0) ? aporteAnual/bruto : null;
+    if(rendReal < 0){ score -= 20; brechas.push({sev:'alta', titulo:'Tu patrimonio no le gana a la inflación', detalle:'Sumando lo que te renta ('+(rendRenta*100).toFixed(1)+'%) y lo que se valoriza ('+(rendValorizacion==null?'sin datos de compra':(rendValorizacion*100).toFixed(1)+'%')+'), da '+(rendTotal*100).toFixed(1)+'% al año, por debajo de la inflación ('+(U.inflacionAnual*100).toFixed(1)+'%). En términos reales tu patrimonio se está reduciendo.'}); }
+    else if(rendReal < 0.02){ score -= 10; brechas.push({sev:'media', titulo:'Tu patrimonio apenas le gana a la inflación', detalle:'Rinde '+(rendTotal*100).toFixed(1)+'% al año contra una inflación de '+(U.inflacionAnual*100).toFixed(1)+'%: ganas apenas '+(rendReal*100).toFixed(1)+'% de poder de compra.'}); }
+    if(tasaAhorro != null && tasaAhorro <= 0){ score -= 15; brechas.push({sev:'alta', titulo:'No estás sumando ahorro nuevo', detalle:'Hoy gastas todo lo que te entra, así que tu patrimonio solo puede crecer por lo que rindan tus bienes. Ahorrar es la palanca más rápida cuando el patrimonio aún es pequeño.'}); }
+    else if(tasaAhorro != null && tasaAhorro < 0.10){ score -= 8; brechas.push({sev:'media', titulo:'Ahorras muy poco de lo que ganas', detalle:'Estás guardando el '+Math.round(tasaAhorro*100)+'% de tus ingresos. Subirlo mueve tu patrimonio más rápido que buscar mejores rendimientos.'}); }
+    if(rendValorizacion == null) brechas.push({sev:'baja', titulo:'Falta saber con cuánto entró cada bien a tu patrimonio', detalle:'Sin ese punto de partida no puedo medir cuánto se han valorizado. Si lo compraste, es el precio que pagaste. Si lo heredaste o te lo donaron, es el valor que tenía cuando lo recibiste (el del avalúo o la escritura). Complétalo en cada activo del Mapa Patrimonial.'});
+    if(pctProd > 0.5 && pctConRenta < 0.2){ brechas.push({sev:'media', titulo:'Tienes bienes que podrían producir y no lo están haciendo', detalle:'El '+Math.round(pctProd*100)+'% de tu patrimonio es del tipo que puede generar renta, pero solo el '+Math.round(pctConRenta*100)+'% tiene una renta registrada en la app. Si alguno sí te renta (por ejemplo un arriendo que anotaste como ingreso no periódico), regístralo en el activo para que la medición sea exacta.'}); }
+    score = Math.max(0, Math.min(100, score));
+    return { id:'crecimiento', nombre:'Crecimiento', estado:capaEstado(score), score,
+      metricas:{ pctProductivo:pctProd, pctConRenta, rendimientoImplicito:rendImplicito, rentaAnual, brutoRef:bruto, rendRenta, rendValorizacion, rendTotal, rendReal, tasaAhorro, aporteAnual, crecPorAhorro, ingMes, gasMes, cuotasMes, inflacion:U.inflacionAnual, proyeccion:(resumen&&resumen.patrimonioProyectado)||null },
+      brechas, datosFaltantes:faltantes };
+  }
+
+  // ── CAPA 4 · DIVERSIFICACIÓN (7 dimensiones) ───────────────────────────
+  // No es lo mismo tener mucho que tenerlo repartido: mide de cuántas cosas
+  // distintas depende tu patrimonio, para que un solo golpe no se lo lleve todo.
+  function capaDiversificacion(ctx){
+    const { acts, bruto } = ctx;
+    const U = CAPAS_UMBRALES.diversificacion;
+    const brechas = [], faltantes = [];
+    let score = 100;
+    const div = {};
+    // 1) Por clase de activo
+    const porClase = capasAgrupar(acts, a=>a._categoria);
+    const hClase = capasHHI(Object.values(porClase));
+    const claseMayor = Object.entries(porClase).sort((a,b)=>b[1]-a[1])[0] || ['—',0];
+    div.clase = { grupos:porClase, hhi:hClase.hhi, efectivas:hClase.efectivas, mayorNombre:claseMayor[0], mayorPct: bruto>0?claseMayor[1]/bruto:0 };
+    if(div.clase.mayorPct > U.claseMayorConcentrada){ score -= 12; brechas.push({sev:'media', titulo:'Concentración por tipo de activo', detalle:'El '+Math.round(div.clase.mayorPct*100)+'% está en "'+claseMayor[0]+'".'}); }
+    // 2) Por activo individual (look-through: un ETF amplio no es una sola apuesta)
+    const apuestas = acts.map(a => ({ nombre:a.nombre, valor:a.valor||0, diversificado:capasEsDiversificado(a) }));
+    const mayorAct = apuestas.filter(x=>!x.diversificado).sort((a,b)=>b.valor-a.valor)[0] || null;
+    div.activo = { mayorNombre: mayorAct?mayorAct.nombre:'—', mayorPct: (mayorAct&&bruto>0)?mayorAct.valor/bruto:0,
+      top3Pct: bruto>0 ? apuestas.slice().sort((a,b)=>b.valor-a.valor).slice(0,3).reduce((s,x)=>s+x.valor,0)/bruto : 0 };
+    if(div.activo.mayorPct > U.activoMayorConcentrado){ score -= 12; brechas.push({sev:'alta', titulo:'Un solo bien pesa demasiado', detalle:'"'+div.activo.mayorNombre+'" es el '+Math.round(div.activo.mayorPct*100)+'% de tu patrimonio.'}); }
+    // 3) Por moneda
+    const porMoneda = capasAgrupar(acts, a=>a._moneda||'COP');
+    const dura = Object.entries(porMoneda).filter(([m])=>m!=='COP').reduce((s,[,v])=>s+v,0);
+    const hMon = capasHHI(Object.values(porMoneda));
+    div.moneda = { grupos:porMoneda, pctMonedaDura: bruto>0?dura/bruto:0, efectivas:hMon.efectivas };
+    if(bruto > 0 && div.moneda.pctMonedaDura === 0){ score -= 8; brechas.push({sev:'media', titulo:'Todo tu patrimonio está en pesos', detalle:'Sin activos en moneda dura, una devaluación reduce tu poder de compra global.'}); }
+    // 4) Geográfica / jurisdiccional
+    const porPais = capasAgrupar(acts, a=>a._pais||'Colombia');
+    const fuera = Object.entries(porPais).filter(([p])=>!/colombia/i.test(p)).reduce((s,[,v])=>s+v,0);
+    div.geografica = { grupos:porPais, jurisdicciones:Object.keys(porPais).length, pctExterior: bruto>0?fuera/bruto:0 };
+    if(bruto > 0 && div.geografica.pctExterior === 0) brechas.push({sev:'baja', titulo:'Todo concentrado en una sola jurisdicción', detalle:'Todo está en Colombia: quedas expuesto al riesgo país.'});
+    // 5) Por sector / emisor (dentro de lo financiero)
+    const fin = acts.filter(a => a._categoria === 'Financiero');
+    const finTot = fin.reduce((s,a)=>s+(a.valor||0),0);
+    const porSector = capasAgrupar(fin, a=>a._sector);
+    const hSec = capasHHI(Object.values(porSector));
+    const secMayor = Object.entries(porSector).sort((a,b)=>b[1]-a[1])[0] || ['—',0];
+    div.sector = { grupos:porSector, hhi:hSec.hhi, efectivas:hSec.efectivas, mayorNombre:secMayor[0], mayorPct: finTot>0?secMayor[1]/finTot:0 };
+    if(finTot > 0 && div.sector.mayorPct > U.sectorMayorConcentrado && secMayor[0] !== '(sin dato)'){ score -= 8; brechas.push({sev:'media', titulo:'Tu portafolio financiero depende de un sector', detalle:'El '+Math.round(div.sector.mayorPct*100)+'% está en "'+secMayor[0]+'".'}); }
+    // 6) Por horizonte (cruce con liquidez)
+    div.horizonte = { pctLiquido: ctx.capaLiquidez ? ctx.capaLiquidez.metricas.ratioLiquido : null };
+    // 7) Correlación ingreso ↔ patrimonio (el riesgo doble)
+    const ciiu = ciiuTieneRiesgoProfesional(state.fiscal && state.fiscal.ciiu);
+    const sectorIngreso = (ciiu && ciiu.desc) || '';
+    const inmueblePct = bruto>0 ? (porClase['Inmueble']||0)/bruto : 0;
+    const correl = (/construcci|inmobiliar/i.test(sectorIngreso) && inmueblePct > 0.5);
+    div.correlacionIngreso = { sectorIngreso, correlacionado: correl };
+    if(correl){ score -= 10; brechas.push({sev:'alta', titulo:'Tu ingreso y tu patrimonio dependen de lo mismo', detalle:'Trabajas en '+sectorIngreso+' y el '+Math.round(inmueblePct*100)+'% de tu patrimonio es inmobiliario: una crisis del sector te golpea por los dos lados.'}); }
+    const apEf = capasHHI(acts.map(a=>a.valor||0)).efectivas;
+    if(apEf > 0 && apEf < U.apuestasEfectivasMin){ score -= 10; brechas.push({sev:'media', titulo:'Tu patrimonio depende de muy pocas cosas', detalle:'Aunque tengas varios bienes, el peso está tan concentrado que es como si tuvieras solo '+apEf.toFixed(1)+'. Es decir: si a una sola cosa le va mal, se ve casi todo tu patrimonio. Lo sano es que el peso esté repartido en al menos '+U.apuestasEfectivasMin+'.'}); }
+    div.apuestasEfectivas = apEf;
+    score = Math.max(0, Math.min(100, score));
+    return { id:'diversificacion', nombre:'Diversificación', estado:capaEstado(score), score,
+      metricas:{ diversificacion:div }, brechas, datosFaltantes:faltantes };
+  }
+
+  // ── SUB-BLOQUE · SUCESIÓN (vive dentro de PROTECCIÓN; consume la capa de liquidez) ──
+  // Proteger el patrimonio incluye protegerlo del evento más seguro de todos: la muerte.
+  function subSucesion(ctx){
+    const { acts, bruto, neto, capaLiquidez } = ctx;
+    const U = CAPAS_UMBRALES.sucesoral;
+    const L = (state.fiscal && state.fiscal.legal) || {};
+    const brechas = [], faltantes = [];
+    const dependientes = (+L.hijosMenores||0) + (+L.hijosMayoresDependientes||0) + (+L.otrosDependientes||0);
+    // NECESIDAD de caja: impuesto + proceso + vida de los dependientes + deudas.
+    // Con sociedad conyugal, la mitad de lo construido en el matrimonio ya es del cónyuge:
+    // esa parte no se hereda, así que la base del impuesto es menor.
+    const gananciales = (L.regimenConyugal === 'sociedad_conyugal') ? 0.5 : 1;
+    const acervoHeredable = bruto * gananciales;
+    const impuestoHerencia = pfImpuestoHerenciaEstimado(acervoHeredable);
+    const costoProceso = Math.round(acervoHeredable * U.costoProcesoPct);
+    const gastoFamilia = (+L.gastoMensualFamilia||0) || gastoMensualTotal();
+    const vidaDependientes = dependientes > 0 ? gastoFamilia * U.mesesProcesoSucesion : 0;
+    const deudas = Math.max(0, bruto - neto);
+    const necesidad = impuestoHerencia + costoProceso + vidaDependientes + deudas;
+    // DISPONIBLE: lo que llega rápido y NO se congela en la sucesión.
+    const seguros = (L.segurosVida||[]).reduce((s,x)=>s+(+x.sumaAsegurada||0),0);
+    const segurosDirectos = (L.segurosVida||[]).filter(x=>x.beneficiarios && x.beneficiarios !== 'legales').reduce((s,x)=>s+(+x.sumaAsegurada||0),0);
+    const accesoBancario = Math.min(enPesos(U.accesoBancarioSinSucesionUVT), (capaLiquidez&&capaLiquidez.metricas.liquidosLibres)||0);
+    const enVehiculo = acts.filter(a => /fideicomiso|holding/i.test(a._estructuraLegal||'')).reduce((s,a)=>s+(a.valor||0),0);
+    // El seguro de pensión con ahorro (ej. Crea Patrimonio) entrega a los beneficiarios sin pasar por la sucesión.
+    const seguroPension = acts.filter(a => a._subtipo === 'Seguro de pensión con ahorro').reduce((s,a)=>s+(a.valor||0),0);
+    const fueraDeSucesion = enVehiculo + seguroPension;
+    const disponible = segurosDirectos + accesoBancario + fueraDeSucesion;
+    const cobertura = necesidad > 0 ? disponible/necesidad : (disponible>0?2:1);
+    let score = 100;
+    if(cobertura < U.coberturaRiesgo){ score -= 45; brechas.push({sev:'alta', titulo:'Tus herederos no tendrían con qué pagar', detalle:'Se necesitarían '+fmt(necesidad)+' (impuesto, proceso, deudas y sostenimiento) y solo hay '+fmt(disponible)+' de acceso rápido: faltan '+fmt(Math.max(0,necesidad-disponible))+'. Tendrían que vender bienes con descuento.'}); }
+    else if(cobertura < U.coberturaBien){ score -= 20; brechas.push({sev:'media', titulo:'La caja para la sucesión queda justa', detalle:'Cubre el '+Math.round(cobertura*100)+'% de los '+fmt(necesidad)+' que se necesitarían.'}); }
+    // Instrumentos
+    const t = L.testamento || {};
+    if(t.tiene === false || t.tiene == null){
+      if(dependientes > 0 || bruto > getSMMLV()*LEGAL_UMBRALES.patrimonioSinTestamentoSMMLV){
+        score -= 20; brechas.push({sev:'alta', titulo:'Sin testamento', detalle:(dependientes>0? dependientes+' persona(s) dependen de ti y ':'')+'tu patrimonio se repartiría según la ley, no según tu voluntad.'});
+      }
+    } else if(t.anioOtorgamiento && (new Date().getFullYear() - (+t.anioOtorgamiento||0)) > U.testamentoAntiguedadAnios && t.revisadoTrasCambios !== true){
+      score -= 10; brechas.push({sev:'media', titulo:'Testamento desactualizado', detalle:'Tiene '+(new Date().getFullYear()-(+t.anioOtorgamiento))+' años y no se ha revisado tras los cambios de tu patrimonio.'});
+    }
+    if((+L.hijosMenores||0) > 0 && L.guardaDesignada === false){ score -= 12; brechas.push({sev:'alta', titulo:'No está definido quién cuidaría a tus hijos ni quién manejaría lo que hereden', detalle:'Si ustedes faltaran, lo decidiría un juez. Dejarlo por escrito evita demoras y asegura que sea quien ustedes querrían.'}); }
+    const hayEmpresa = acts.some(a => a._categoria === 'Empresarial');
+    if(hayEmpresa && L.protocoloFamiliar === false){ score -= 10; brechas.push({sev:'media', titulo:'Tu empresa no tiene reglas escritas para cuando falte un socio', detalle:'La parte de quien fallece pasa a sus herederos, que pueden no conocer el negocio ni querer seguir. Sin un acuerdo previo, la empresa se traba o se vende barata.'}); }
+    if(dependientes > 0 && seguros <= 0){ score -= 20; brechas.push({sev:'alta', titulo:'Dependientes sin seguro de vida', detalle:dependientes+' persona(s) dependen de ti y no hay una suma que les dé liquidez inmediata.'}); }
+    else if(seguros > 0 && segurosDirectos < seguros){ score -= 8; brechas.push({sev:'media', titulo:'Seguros sin beneficiario designado', detalle:fmt(seguros-segurosDirectos)+' quedarían atrapados en la herencia en vez de llegar directo.'}); }
+    if(ctx.pctExterior > 0) brechas.push({sev:'media', titulo:'Activos en el exterior: sucesión transfronteriza', detalle:'Pueden requerir un trámite adicional en el otro país y generar impuesto sucesoral extranjero (por ejemplo, el estate tax de EE. UU. sobre activos allá).'});
+    const penal = Math.max(0, 100 - Math.max(0, Math.min(100, score)));   // cuánto castiga a Protección
+    return { penal, metricas:{ necesidadCaja:necesidad, disponibleRapido:disponible, cobertura, impuestoHerencia, costoProceso, vidaDependientes, dependientes,
+        segurosDirectos, accesoBancario, fueraDeSucesion, deudas, gananciales, acervoHeredable },
+      brechas, datosFaltantes:faltantes };
+  }
+
+  // Impuesto de la herencia (ganancia ocasional) con las exenciones del art. 307 ET.
+  function pfImpuestoHerenciaEstimado(acervo){
+    const cfg = fiscalConfig();
+    const tarifa = (cfg.gananciaOcasional && cfg.gananciaOcasional.tarifa) || 0.15;
+    const exento = enPesos(LEGAL_UMBRALES.herLegitimarioUVT);
+    return Math.max(0, Math.round((Math.max(0, acervo - exento)) * tarifa));
+  }
+
+  // ── MOTOR ──────────────────────────────────────────────────────────────
+  function evaluarPatrimonio(){
+    const { acts, resumen } = capasDatosMapa();
+    const bruto = resumen.patrimonioBrutoCOP || acts.reduce((s,a)=>s+(a.valor||0),0);
+    const neto = resumen.patrimonioNetoCOP != null ? resumen.patrimonioNetoCOP : bruto;
+    const pctExterior = bruto>0 ? acts.filter(a=>!/colombia/i.test(a._pais||'Colombia')).reduce((s,a)=>s+(a.valor||0),0)/bruto : 0;
+    const ctx = { acts, resumen, bruto, neto, pctExterior };
+    const liquidez = capaLiquidez(ctx);
+    ctx.capaLiquidez = liquidez;                       // la sucesión (dentro de protección) y el horizonte la consumen
+    const proteccion = capaProteccion(ctx);            // incluye la preparación de la sucesión
+    const crecimiento = capaCrecimiento(ctx);
+    const diversificacion = capaDiversificacion(ctx);
+    const capas = { proteccion, liquidez, crecimiento, diversificacion };
+    const P = CAPAS_UMBRALES.pesos;
+    const pesoTot = P.proteccion+P.liquidez+P.crecimiento+P.diversificacion;
+    const indice = Math.round((proteccion.score*P.proteccion + liquidez.score*P.liquidez + crecimiento.score*P.crecimiento + diversificacion.score*P.diversificacion)/pesoTot);
+    const lista = [proteccion, liquidez, crecimiento, diversificacion];
+    const eslabonDebil = lista.reduce((m,c)=> c.score < m.score ? c : m, lista[0]);
+    // Riesgos que se COMPONEN entre capas (no se ven mirando una sola).
+    const compounding = [];
+    acts.forEach(a=>{
+      const directo = !a._estructuraLegal || a._estructuraLegal==='Propiedad Directa';
+      const iliquido = a.tipo !== 'LÍQUIDO';
+      const exterior = !/colombia/i.test(a._pais||'Colombia');
+      if(directo && iliquido && bruto>0 && (a.valor||0)/bruto > 0.3)
+        compounding.push({ activo:a.nombre, detalle:'Pesa el '+Math.round(a.valor/bruto*100)+'%, está a tu nombre y es difícil de vender: golpea protección, liquidez y sucesión a la vez.' });
+      if(exterior && directo)
+        compounding.push({ activo:a.nombre, detalle:'Está en el exterior y a tu nombre: suma riesgo de cumplimiento y una posible sucesión en otra jurisdicción.' });
+    });
+    return { capas, orden:['proteccion','liquidez','crecimiento','diversificacion'], indice, eslabonDebil:eslabonDebil.id, compounding,
+      contexto:{ patrimonioBruto:bruto, patrimonioNeto:neto, cantidadActivos:acts.length } };
+  }
+
+  try{ window.evaluarPatrimonio = evaluarPatrimonio; window.CAPAS_UMBRALES = CAPAS_UMBRALES; }catch(e){}
+
+  // ── FASE 2 · Tablero visual de las 4 capas ─────────────────────────────
+  var capasAbiertas = {};   // UI transitoria: qué capas están expandidas
+  const CAPA_ICONO = {
+    proteccion:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8 4v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6z"/></svg>',
+    liquidez:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3s6 6.4 6 10a6 6 0 0 1-12 0c0-3.6 6-10 6-10z"/></svg>',
+    crecimiento:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="15 7 21 7 21 13"/></svg>',
+    diversificacion:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><line x1="8.5" y1="6" x2="15.5" y2="6"/><line x1="6" y1="8.5" x2="6" y2="15.5"/><line x1="18" y1="8.5" x2="18" y2="15.5"/><line x1="8.5" y1="18" x2="15.5" y2="18"/></svg>'
+  };
+  const CAPA_LEMA = {
+    proteccion:'Si te demandan o si faltas, ¿qué pasa con tus bienes?',
+    liquidez:'Si necesitas plata ya, ¿de dónde la sacas?',
+    diversificacion:'¿De cuántas cosas distintas depende tu patrimonio?',
+    crecimiento:'¿Tus bienes producen o solo están ahí?'
+  };
+  const capasPct = (x)=> Math.round((x||0)*100)+'%';
+  // Monto con el prefijo separado del número: así "COP $" queda alineado entre filas.
+  function capasMonto(v){
+    const t = fmt(v||0); const i = t.lastIndexOf(' ');
+    const pre = i>0 ? t.slice(0,i) : ''; const num = i>0 ? t.slice(i+1) : t;
+    return '<span class="capa-cur">'+pre+'</span><span class="capa-num">'+num+'</span>';
+  }
+
+  function capaMetricaClave(c){
+    const m = c.metricas || {};
+    if(c.id==='proteccion') return { valor: capasPct(m.exposicionDirectaPct), etq:'de tu patrimonio está a tu nombre' };
+    if(c.id==='liquidez')  return { valor: (m.runwayMeses==null?'—':m.runwayMeses.toFixed(1)+' meses'), etq:'de gastos cubiertos (objetivo '+m.objetivoMeses+')' };
+    if(c.id==='crecimiento') return { valor: capasPct(m.pctProductivo), etq:'de tus bienes son de los que pueden producir (no son de uso personal)' };
+    const d = m.diversificacion||{};
+    return { valor: (d.apuestasEfectivas||0).toFixed(1), etq:'cosas distintas entre las que se reparte de verdad tu patrimonio' };
+  }
+
+  function capasDivHtml(div){
+    if(!div) return '';
+    const fila = (etq, val, nota) => '<div class="capa-div-row"><span class="capa-div-l">'+etq+'</span><span class="capa-div-v">'+val+'</span>'+(nota?'<span class="capa-div-n">'+nota+'</span>':'')+'</div>';
+    let h = '<div class="capa-div"><div class="capa-div-t">Diversificación en detalle</div>';
+    h += fila('Por clase de activo', capasPct(div.clase.mayorPct)+' en '+escapeHtml(div.clase.mayorNombre), (div.clase.efectivas||0).toFixed(1)+' clases efectivas');
+    h += fila('Por bien individual', capasPct(div.activo.mayorPct)+(div.activo.mayorNombre!=='—'?' en '+escapeHtml(div.activo.mayorNombre):''), 'top 3: '+capasPct(div.activo.top3Pct));
+    h += fila('Por moneda', capasPct(div.moneda.pctMonedaDura)+' en moneda dura', (div.moneda.efectivas||0).toFixed(1)+' monedas efectivas');
+    h += fila('Por jurisdicción', capasPct(div.geografica.pctExterior)+' en el exterior', div.geografica.jurisdicciones+' país(es)');
+    if(Object.keys(div.sector.grupos||{}).length) h += fila('Por sector financiero', capasPct(div.sector.mayorPct)+' en '+escapeHtml(div.sector.mayorNombre), (div.sector.efectivas||0).toFixed(1)+' sectores efectivos');
+    h += fila('En cuántas cosas se reparte de verdad', (div.apuestasEfectivas||0).toFixed(1), 'si un bien pesa mucho más que el resto, cuenta casi como si fuera el único');
+    if(div.correlacionIngreso && div.correlacionIngreso.correlacionado) h += fila('Ingreso vs patrimonio', 'Correlacionados', 'tu trabajo y tus bienes dependen del mismo sector');
+    h += '</div>';
+    return h;
+  }
+
+  function capaCardHtml(c){
+    const mk = capaMetricaClave(c);
+    const abierta = !!capasAbiertas[c.id];
+    const top = (c.brechas||[]).slice(0, abierta ? 99 : 2);
+    let h = '<div class="capa-card '+c.estado+(abierta?' open':'')+'">';
+    h += '<button class="capa-head" data-capa="'+c.id+'">'
+       + '<span class="capa-ic">'+(CAPA_ICONO[c.id]||'')+'</span>'
+       + '<span class="capa-hd"><span class="capa-n">'+c.nombre+'</span><span class="capa-lema">'+CAPA_LEMA[c.id]+'</span></span>'
+       + '<span class="capa-badge">'+(c.estado==='bien'?'Bien':(c.estado==='atencion'?'Atención':'Riesgo'))+'</span>'
+       + '<span class="capa-ch">'+(abierta?'▴':'▾')+'</span></button>';
+    h += '<div class="capa-metrica"><span class="v">'+mk.valor+'</span><span class="l">'+mk.etq+'</span></div>';
+    h += '<div class="capa-bar" title="Puntaje de esta capa"><span style="width:'+c.score+'%"></span></div>';
+    h += '<div class="capa-score-l">Puntaje de esta capa: <strong>'+c.score+'</strong>/100 · baja con cada problema detectado</div>';
+    if(top.length){
+      h += '<ul class="capa-brechas">';
+      top.forEach(b=>{ h += '<li class="sev-'+b.sev+'"><strong>'+b.titulo+'</strong>'+(abierta?'<span>'+b.detalle+'</span>':'')+'</li>'; });
+      h += '</ul>';
+      const ocultas = Math.max(0, (c.brechas||[]).length - 2);
+      if(!abierta) h += '<button class="capa-mas" data-capa="'+c.id+'">'+(ocultas>0 ? '+'+ocultas+' más · ver el detalle' : 'Ver el detalle')+'</button>';
+    } else {
+      h += '<div class="capa-ok">Sin problemas detectados en esta capa.</div>';
+      if(!abierta) h += '<button class="capa-mas" data-capa="'+c.id+'">Ver el detalle</button>';
+    }
+    if(abierta){
+      if(c.id==='liquidez'){
+        const m=c.metricas;
+        h += '<div class="capa-div"><div class="capa-div-t">Con qué cuentas si algo pasa mañana</div>'
+          + '<div class="capa-div-row"><span class="capa-div-l">Hoy mismo <span class="capa-div-n2">cuentas, efectivo, fiducia y tu fondo de provisiones</span></span><span class="capa-div-v">'+capasMonto(m.soloInmediato)+'</span></div>'
+          + ((m.enDias||0)>0 ? '<div class="capa-div-row"><span class="capa-div-l">En pocos días <span class="capa-div-n2">acciones, ETF, fondos: se venden en 2-3 días hábiles</span></span><span class="capa-div-v">'+capasMonto(m.enDias)+'</span></div>' : '')
+          + '<div class="capa-div-row tot"><span class="capa-div-l">Colchón real de emergencia</span><span class="capa-div-v">'+capasMonto(m.disponibleInmediato)+'</span></div>'
+          + ((m.conPenalidad||0)>0 ? '<div class="capa-div-row"><span class="capa-div-l">Aparte: a plazo con penalidad <span class="capa-div-n2">CDT, AFC: sacarlo antes cuesta</span></span><span class="capa-div-v">'+capasMonto(m.conPenalidad)+'</span></div>' : '')
+          + '<div class="capa-div-row"><span class="capa-div-l">Te alcanza para <span class="capa-div-n2">objetivo para tu perfil: '+m.objetivoMeses+' meses</span></span><span class="capa-div-v">'+(m.runwayMeses==null?'sin datos':m.runwayMeses.toFixed(1)+' meses')+'</span></div>'
+          + ((m.cupos||0)>0 ? '<div class="capa-div-row"><span class="capa-div-l">Respaldo con tus cupos de crédito <span class="capa-div-n2">es deuda, no ahorro: llegarías a '+(m.runwayConCupos?m.runwayConCupos.toFixed(1):'—')+' meses, pero pagando intereses</span></span><span class="capa-div-v">'+capasMonto(m.cupos)+'</span></div>' : '')
+          + ((m.fpvBloqueado||0)>0 ? '<div class="capa-div-row"><span class="capa-div-l">No lo cuento: fondo de tu empresa <span class="capa-div-n2">tiene condiciones para retirarlo</span></span><span class="capa-div-v">'+capasMonto(m.fpvBloqueado)+'</span></div>' : '')
+          + ((m.fpvConPermanencia||0)>0 ? '<div class="capa-div-row"><span class="capa-div-l">No lo cuento: fondo con plazo acordado <span class="capa-div-n2">sacarlo antes cuesta o demora</span></span><span class="capa-div-v">'+capasMonto(m.fpvConPermanencia)+'</span></div>' : '')
+          + '</div>';
+      }
+      if(c.id==='diversificacion') h += capasDivHtml(c.metricas.diversificacion);
+      if(c.id==='crecimiento'){
+        const m=c.metricas; const pp=(x)=> x==null?'sin datos':((x*100).toFixed(1)+'%');
+        h += '<div class="capa-div"><div class="capa-div-t">De dónde viene (o no viene) tu crecimiento</div>'
+          + '<div class="capa-div-row"><span class="capa-div-l">Lo que te pagan tus bienes <span class="capa-div-n2">'+fmt(m.rentaAnual||0)+' al año en arriendos, dividendos e intereses, sobre un patrimonio de '+fmt(m.brutoRef||0)+'</span></span><span class="capa-div-v">'+pp(m.rendRenta)+'</span></div>'
+          + '<div class="capa-div-row"><span class="capa-div-l">Lo que se valorizan <span class="capa-div-n2">'+(m.rendValorizacion==null?'aún no puedo calcularlo: falta con cuánto entró cada bien':'promedio anual de cuánto más valen hoy frente a su valor de entrada')+'</span></span><span class="capa-div-v">'+pp(m.rendValorizacion)+'</span></div>'
+          + '<div class="capa-div-row tot"><span class="capa-div-l">Rendimiento total al año</span><span class="capa-div-v">'+pp(m.rendTotal)+'</span></div>'
+          + '<div class="capa-div-row"><span class="capa-div-l">Menos la inflación <span class="capa-div-n2">lo que sube la vida</span></span><span class="capa-div-v">−'+pp(m.inflacion)+'</span></div>'
+          + '<div class="capa-div-row tot"><span class="capa-div-l">Lo que de verdad ganas en poder de compra</span><span class="capa-div-v">'+pp(m.rendReal)+'</span></div>'
+          + (m.tasaAhorro!=null ? '<div class="capa-div-row"><span class="capa-div-l">Además, lo que le sumas de tu bolsillo <span class="capa-div-n2">de los '+fmt(m.ingMes||0)+' que te entran al mes le restamos '+fmt(m.gasMes||0)+' de gastos'+((m.cuotasMes||0)>0?' y '+fmt(m.cuotasMes)+' de cuotas de deuda':'')+': te quedan '+fmt(Math.round((m.aporteAnual||0)/12))+' al mes, o sea '+fmt(m.aporteAnual||0)+' al año</span></span><span class="capa-div-v">'+pp(m.crecPorAhorro)+'</span></div>' : '')
+          + '</div>';
+      }
+      if(c.id==='proteccion' && c.metricas.sucesion){
+        const m=c.metricas.sucesion;
+        h += '<div class="capa-div"><div class="capa-div-t">Si tú faltas: cuánto habría que pagar</div>'
+          + '<div class="capa-div-row"><span class="capa-div-l">Impuesto de la herencia</span><span class="capa-div-v">'+capasMonto(m.impuestoHerencia)+'</span></div>'
+          + '<div class="capa-div-row"><span class="capa-div-l">Costo del proceso</span><span class="capa-div-v">'+capasMonto(m.costoProceso)+'</span></div>'
+          + (m.vidaDependientes>0?'<div class="capa-div-row"><span class="capa-div-l">Sostenimiento de '+m.dependientes+' dependiente(s) durante el trámite</span><span class="capa-div-v">'+capasMonto(m.vidaDependientes)+'</span></div>':'')
+          + '<div class="capa-div-row tot"><span class="capa-div-l">Se necesitaría</span><span class="capa-div-v">'+capasMonto(m.necesidadCaja)+'</span></div>'
+          + '</div>';
+        h += '<div class="capa-div"><div class="capa-div-t">Con qué contarían de inmediato</div>'
+          + '<div class="capa-div-row"><span class="capa-div-l">Seguros de vida con beneficiario designado <span class="capa-div-n2">'+(m.segurosDirectos>0?'la aseguradora paga directo, sin esperar la sucesión':'no tienes ninguno registrado')+'</span></span><span class="capa-div-v">'+capasMonto(m.segurosDirectos)+'</span></div>'
+          + '<div class="capa-div-row"><span class="capa-div-l">Retiro bancario permitido sin sucesión <span class="capa-div-n2">'+(m.accesoBancario>0?'la ley deja sacar hasta cierto tope de tus cuentas':'no tienes saldo libre en cuentas')+'</span></span><span class="capa-div-v">'+capasMonto(m.accesoBancario)+'</span></div>'
+          + '<div class="capa-div-row"><span class="capa-div-l">Bienes fuera de la sucesión <span class="capa-div-n2">'+(m.fueraDeSucesion>0?'fiducia, holding o seguro de pensión: llegan directo a tus beneficiarios':'no tienes bienes en fiducia, holding ni seguros de pensión con beneficiario')+'</span></span><span class="capa-div-v">'+capasMonto(m.fueraDeSucesion)+'</span></div>'
+          + '<div class="capa-div-row tot"><span class="capa-div-l">Total disponible rápido</span><span class="capa-div-v">'+capasMonto(m.disponibleRapido)+'</span></div>'
+          + '</div>';
+      }
+
+    }
+    h += '</div>';
+    return h;
+  }
+
+  function renderCapasTablero(){
+    const cont = document.getElementById('capas-tablero');
+    if(!cont) return;
+    let ev;
+    try{ ev = evaluarPatrimonio(); }catch(e){ console.error('Evaluación patrimonial:', e); cont.innerHTML=''; return; }
+    if(!ev || !ev.contexto || ev.contexto.cantidadActivos === 0){
+      cont.innerHTML = '<div class="card"><div class="card-head"><div class="card-icon">'
+        + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polygon points="12 2 22 8 12 14 2 8 12 2"/><polyline points="2 13 12 19 22 13"/><polyline points="2 17.5 12 23.5 22 17.5"/></svg>'
+        + '</div><h3>Aún no hay nada que evaluar</h3></div>'
+        + '<p class="summary-note" style="margin-top:0">Para medir tus cuatro capas necesito conocer tu patrimonio. Registra tus bienes en el <strong>Mapa Patrimonial</strong> y vuelve: aquí verás qué tan protegido, líquido, productivo y preparado está.</p>'
+        + '<button class="btn btn-secondary" style="margin-top:12px" onclick="navigateTo(3)">Registrar mis activos</button></div>';
+      return;
+    }
+    const nombres = {proteccion:'Protección', liquidez:'Liquidez', crecimiento:'Crecimiento', diversificacion:'Diversificación'};
+    let h = '<div class="card capas-card">';
+    h += '<div class="capas-resumen"><div class="capas-idx"><span class="v">'+ev.indice+'</span><span class="l">de 100</span></div>'
+      + '<div class="capas-idx-txt">Tu punto más flojo es <strong>'+nombres[ev.eslabonDebil]+'</strong>: es lo primero que fallaría si algo sale mal, y por eso es donde más te conviene empezar.</div></div>';
+    h += '<div class="capas-grid">' + ev.orden.map(k=>capaCardHtml(ev.capas[k])).join('') + '</div>';
+    if((ev.compounding||[]).length){
+      h += '<div class="capa-comp"><div class="capa-div-t">Riesgos que se suman entre capas</div><ul>'
+        + ev.compounding.slice(0,4).map(x=>'<li><strong>'+escapeHtml(x.activo)+':</strong> '+x.detalle+'</li>').join('') + '</ul></div>';
+    }
+    h += '<p class="pf-note" style="margin-top:12px">Orientación educativa basada en lo que registraste. Los umbrales son configurables; valida las decisiones legales y tributarias con tu abogado y tu contador.</p>';
+    h += '</div>';
+    cont.innerHTML = h;
+    cont.querySelectorAll('[data-capa]').forEach(b=>{
+      b.addEventListener('click', ()=>{ const k=b.dataset.capa; if(capasAbiertas[k]) delete capasAbiertas[k]; else capasAbiertas[k]=true; renderCapasTablero(); });
+    });
+  }
+  try{ window.renderCapasTablero = renderCapasTablero; }catch(e){}
+
+  function ciiuTieneRiesgoProfesional(ciiuStr){
+    if(!ciiuStr) return null;
+    const digits = String(ciiuStr).replace(/[^0-9]/g,'').slice(0,4);
+    if(digits.length < 2) return null;
+    const p2 = digits.slice(0,2);
+    for(const c of CIIU_RIESGO_PROFESIONAL){
+      if(p2 === c.prefijo) return c;
+    }
+    return null;
+  }
+
+  // Fechas del Formulario 160 para PERSONAS NATURALES · 2026
+  // Fuente: Decreto 2229/2023 modificatorio del Decreto 1625/2016, art. 1.6.1.13.2.26.
+  // Personas naturales: 12 de agosto al 26 de octubre de 2026, según los dos últimos dígitos del NIT/cédula.
+  // Se distribuye en 10 grupos de aproximadamente 5 días hábiles cada uno.
+  function fechaFormulario160(digitos){
+    const d = parseInt(String(digitos||'').replace(/[^0-9]/g,''), 10);
+    if(!isFinite(d) || d < 0 || d > 99) return null;
+    // Cronograma aproximado para personas naturales 2026:
+    // Grupo 1 (01-10): 12-13 agosto  |  Grupo 2 (11-20): 14-19 agosto
+    // Grupo 3 (21-30): 20-25 agosto  |  Grupo 4 (31-40): 26-31 agosto
+    // Grupo 5 (41-50): 1-4 septiembre |  Grupo 6 (51-60): 5-10 septiembre
+    // Grupo 7 (61-70): 11-16 septiembre | Grupo 8 (71-80): 17-22 septiembre
+    // Grupo 9 (81-90): 23-28 septiembre | Grupo 10 (91-00): 29 sep - 26 oct
+    const grupo = Math.floor(d / 10);   // 0..9
+    // Ventana aproximada (día central del grupo)
+    const ventanas = [
+      { grupo:1, ini:'12 de agosto', fin:'13 de agosto' },
+      { grupo:2, ini:'14 de agosto', fin:'19 de agosto' },
+      { grupo:3, ini:'20 de agosto', fin:'25 de agosto' },
+      { grupo:4, ini:'26 de agosto', fin:'31 de agosto' },
+      { grupo:5, ini:'1 de septiembre', fin:'4 de septiembre' },
+      { grupo:6, ini:'5 de septiembre', fin:'10 de septiembre' },
+      { grupo:7, ini:'11 de septiembre', fin:'16 de septiembre' },
+      { grupo:8, ini:'17 de septiembre', fin:'22 de septiembre' },
+      { grupo:9, ini:'23 de septiembre', fin:'28 de septiembre' },
+      { grupo:10, ini:'29 de septiembre', fin:'26 de octubre' }
+    ];
+    return ventanas[grupo] || null;
+  }
+
+  function formatearNumeroLista(n){
+    const mapa = ['ninguno','uno','dos','tres','cuatro','cinco','seis','siete','ocho','nueve','diez'];
+    return (n>=0 && n<=10) ? mapa[n] : String(n);
+  }
+
+  function sumaPatrimonio(activosNorm, filtro){
+    return (activosNorm||[]).filter(filtro).reduce((s,a)=>s+(a.valor||0), 0);
+  }
+
+
+  /* ═════ MOTOR DE REGLAS ═════ */
+  function evaluarEstructuraLegal(){
+    const f = state.fiscal || {};
+    const L = f.legal || {};
+    const mapa = (typeof MapaPatrimonial !== 'undefined' && MapaPatrimonial.getData)
+      ? MapaPatrimonial.getData()
+      : { activosNormalizados:[], resumen:{ patrimonioBrutoCOP:0, patrimonioNetoCOP:0 }, activos:[], trm:{} };
+
+    const activosNorm = mapa.activosNormalizados || [];
+    const activosDetalle = mapa.activos || [];
+    // Índice compartido por todas las reglas: id del activo → activo normalizado (con valor en COP).
+    const normsById = new Map(activosNorm.map(a => [a._mapaId, a]));
+    const patrimonioBruto = mapa.resumen.patrimonioBrutoCOP || 0;
+    const smmlv = getSMMLV();
+    const ingresoAnual = (typeof pfIngresoAnualBruto === 'function') ? pfIngresoAnualBruto() : 0;
+
+    const activosFideicomiso = activosNorm.filter(a => a._estructuraLegal === 'Fideicomiso');
+
+    const hallazgos = [];
+    const palancas  = [];
+    const H = (h) => hallazgos.push(h);
+    const P = (p) => palancas.push(p);
+
+
+    /* ── PROTECCIÓN ── */
+
+    // R1 · Negocio productivo a nombre personal
+    const negociosDirectos = activosDetalle.filter(a =>
+      a.category === 'Empresarial' &&
+      (a.legalStructure === 'Propiedad Directa' || !a.legalStructure)
+    );
+    negociosDirectos.forEach(neg => {
+      const factorCOP = (neg.currency && neg.currency !== 'COP')
+        ? ((mapa.trm||{})[neg.currency] || 0) : 1;
+      const sh = mpShare(neg);
+      const ingresoAnualCOP = (neg.monthlyIncome || 0) * 12 * factorCOP;
+      const valorNegocioCOP = (neg.value || 0) * factorCOP * sh;
+      const cumpleIngreso = ingresoAnualCOP > enPesos(LEGAL_UMBRALES.negocioIngresoAnualUVT);
+      const cumpleValor   = valorNegocioCOP > (smmlv * LEGAL_UMBRALES.negocioValorSMMLV);
+      const sev = (cumpleIngreso || cumpleValor) ? 'alta' : 'media';
+      H({
+        id:'R1_negocio_directo_'+neg.id,
+        sev, categoria:'proteccion',
+        titulo:'Tu negocio está a nombre personal',
+        descripcion:'"'+(neg.description||neg.subtype||'Tu negocio')+'" está registrado a tu nombre, no como empresa. El problema: si el negocio recibe una demanda (un empleado que te demande, un cliente insatisfecho, la DIAN por impuestos, un proveedor por incumplimiento), pueden ir a cobrar contra tus bienes personales: tu casa, tu carro, tus cuentas de ahorro. Cuando el negocio es una SAS (Sociedad por Acciones Simplificada), tú como socio solo respondes hasta el monto que aportaste. Todo lo demás de tu patrimonio queda protegido.',
+        activosAfectados:[neg.id],
+        norma:'Ley 1258 de 2008, art. 1 (responsabilidad limitada de la SAS).',
+        accionConcreta:'Constituye una SAS. Puedes hacerla tú solo (SAS unipersonal), tú eres el único socio. Pasos: (1) redactas los estatutos (hay modelos gratis en Cámara de Comercio), (2) los registras en la Cámara de Comercio de tu ciudad, (3) te dan el NIT, (4) empiezas a facturar desde la SAS. Necesitarás un contador porque la SAS lleva contabilidad separada.',
+        profesionalRequerido:'abogado o directamente Cámara de Comercio',
+        estimacionCosto:'Constitución en Cámara de Comercio: entre $600.000 y $1.200.000 según el capital. Mantenimiento anual (contador + renovación): entre $3 y $7 millones.',
+        cta:'Ver cuánto ahorrarías tributariamente con una SAS',
+        ctaLink: 11
+      });
+    });
+
+    // R2 · Ingreso pasivo relevante a nombre personal
+    const rentasPasivasDirectas = activosDetalle.filter(a =>
+      (a.category === 'Inmueble' || a.category === 'Alternativo') &&
+      (a.legalStructure === 'Propiedad Directa' || !a.legalStructure) &&
+      (a.monthlyIncome || 0) > 0
+    );
+    rentasPasivasDirectas.forEach(act => {
+      const factorCOP = (act.currency && act.currency !== 'COP')
+        ? ((mapa.trm||{})[act.currency] || 0) : 1;
+      const ingresoAnualCOP = (act.monthlyIncome || 0) * 12 * factorCOP;
+      if(ingresoAnualCOP <= enPesos(LEGAL_UMBRALES.ingresoPasivoRelevanteUVT * 12)) return;
+      H({
+        id:'R2_renta_pasiva_'+act.id,
+        sev:'media', categoria:'vehiculo',
+        titulo:'Ingresos por arriendo altos a tu nombre',
+        descripcion:'"'+(act.description||act.subtype)+'" te genera '+fmt(ingresoAnualCOP)+' al año en arriendos u otros ingresos. Como está a tu nombre, esos ingresos suman a tu declaración de renta personal y pueden pagar hasta el 39% de impuesto según tu escala de ingresos. Si en cambio el bien fuera de una SAS, esa empresa pagaría 35% fijo y tú solo pagarías impuesto extra cuando decidas sacar el dinero como dividendos. Para ingresos altos y sostenidos, la SAS suele ahorrar impuestos.',
+        activosAfectados:[act.id],
+        norma:'Arts. 240 y 242 del Estatuto Tributario (tarifas de renta y dividendos).',
+        accionConcreta:'Antes de hacer nada, corre el simulador de SAS que está dentro del Perfil Fiscal con este ingreso específico. Ahí verás si te conviene o no: para arriendos muy altos suele ganar la SAS; para montos medianos depende de si necesitas retirar el dinero o dejarlo reinvertido en la empresa.',
+        profesionalRequerido:'contador',
+        estimacionCosto:'Crear la SAS y primer año: entre $5 y $8 millones. Años siguientes: entre $4 y $6 millones al año.',
+        cta:'Comparar en el simulador SAS',
+        ctaLink: 11
+      });
+    });
+
+    // R3 · Actividad de riesgo profesional sin estructura societaria
+    // Ya no habla de la póliza RC (eso lo cubre R23). Aquí el foco es la SAS como segunda capa.
+    const riesgoProf = ciiuTieneRiesgoProfesional(f.ciiu);
+    const todoADirecta = patrimonioBruto > 0 &&
+      sumaPatrimonio(activosNorm, a => a._estructuraLegal === 'Propiedad Directa' || !a._estructuraLegal) / patrimonioBruto > 0.90;
+    if(riesgoProf && todoADirecta && patrimonioBruto > smmlv * 100){
+      // Si ya tiene RC declarada, la severidad baja porque tiene una capa protectora
+      const yaTieneRC = L.coberturas && L.coberturas.rcProfesional && L.coberturas.rcProfesional.tiene === true;
+      const sev = yaTieneRC ? 'media' : 'alta';
+      H({
+        id:'R3_riesgo_profesional',
+        sev, categoria:'proteccion',
+        titulo:'Tu profesión te expone a demandas y todo lo tienes a nombre personal',
+        descripcion:'Trabajas en '+riesgoProf.desc+', un área donde los clientes pueden demandarte por errores profesionales: un tratamiento médico que salió mal, un diseño con fallas, un dictamen contable incorrecto, un edificio con problemas de construcción. Como más del 90% de tu patrimonio está a nombre personal, si te demandan y te condenan, el juez puede ordenar embargar tu casa, tus cuentas, tus carros — todo. '+(yaTieneRC ? 'Ya tienes póliza de responsabilidad civil profesional (bien hecho), pero esa cobertura tiene un tope, una vez agotado el resto lo pagas tú. Falta la segunda capa: separar la actividad profesional en una SAS.' : 'No tienes póliza de responsabilidad civil profesional ni estructura societaria — cero capas entre tu actividad y tu patrimonio familiar.'),
+        activosAfectados:[],
+        norma:'Código Civil arts. 2341 a 2360 (responsabilidad por daños) · Ley 1480 de 2011 (protección al consumidor).',
+        accionConcreta:'Blíndate en dos capas complementarias: (1) '+(yaTieneRC ? 'confirma que la suma asegurada de tu RC sea suficiente (referencia: 3 a 5 años de facturación)' : 'contrata una <strong>póliza de responsabilidad civil profesional</strong> — cotiza en Sura, Bolívar, Liberty; el costo depende de tu profesión y facturación')+'. (2) Factura a través de una SAS para separar la actividad profesional del patrimonio familiar. Nota importante: la SAS te protege de las deudas del negocio, pero si tú personalmente cometes un error profesional grave, la responsabilidad profesional te persigue a ti como persona — por eso las dos capas son complementarias.',
+        profesionalRequerido:'asesor de seguros + abogado',
+        estimacionCosto:'Póliza de responsabilidad civil profesional: entre 0,5% y 2% de tu ingreso anual. SAS: $5 millones para crearla + entre $4 y $6 millones al año de mantenimiento.'
+      });
+    }
+
+    // R4 · Aval a terceros
+    if(L.avalesTerceros && L.avalesTerceros.tiene && L.avalesTerceros.monto > 0){
+      const pctPat = patrimonioBruto > 0 ? L.avalesTerceros.monto / patrimonioBruto : 0;
+      const sev = pctPat > LEGAL_UMBRALES.avalRelevantePctPatrimonio ? 'alta' : 'media';
+      H({
+        id:'R4_aval_terceros',
+        sev, categoria:'proteccion',
+        titulo:'Firmaste como aval de una deuda de otra persona',
+        descripcion:'Registraste un aval por '+fmt(L.avalesTerceros.monto)+' ('+Math.round(pctPat*100)+'% de tu patrimonio bruto). Esto significa: si la persona o empresa a la que respaldaste deja de pagar, el banco te cobra <strong>directamente a ti</strong> todo el saldo. No tiene que buscar primero al deudor principal ni agotar sus bienes: te lo cobra a ti de una vez, incluso puede embargar tus bienes. En la mayoría de préstamos personales, pagarés y letras (que se llama "aval mercantil") funciona así, sin que puedas exigir que primero le cobren al deudor.',
+        activosAfectados:[],
+        norma:'Código de Comercio art. 636 · Código Civil arts. 2361 y ss.',
+        accionConcreta:'Toma tres acciones: (1) Pide al banco copia del documento que firmaste — lee si dice "aval" o "fianza"; con "fianza civil" puedes exigir que primero cobren al deudor. (2) Habla con la persona a la que respaldaste: pídele que en el próximo abono grande o al final del crédito solicite quitarte del papel. (3) Si el aval es muy grande, considera pedirle al deudor principal que ponga garantías reales (una hipoteca, una prenda) para no cargar tú con todo el riesgo. Y muy importante: nunca firmes avales sin leer el documento completo.',
+        profesionalRequerido:'abogado (si el aval es grande o complejo)'
+      });
+    }
+
+    // R5 · Pleito vigente como demandado
+    if(L.pleitosVigentes && L.pleitosVigentes.tieneComoDemandado){
+      H({
+        id:'R5_pleito_demandado',
+        sev:'alta', categoria:'proteccion',
+        titulo:'Tienes un proceso judicial abierto en tu contra',
+        descripcion:'Te están reclamando '+fmt(L.pleitosVigentes.montoPretensiones||0)+' en un proceso judicial. Mientras el proceso no termine, el juez puede ordenar embargar tus bienes como medida preventiva (embargar tu cuenta bancaria, tu apartamento, tu carro) para asegurar que si pierdes, haya con qué pagar. <strong>Advertencia importante:</strong> si ahora intentas traspasar bienes a familiares, venderlos a precio muy bajo o "esconderlos" en una empresa nueva, el juez puede anular esas operaciones porque la ley las considera fraude a acreedores. No hagas eso.',
+        activosAfectados:[],
+        norma:'Código Civil art. 2491 (acciones que se pueden anular por fraude) · Código General del Proceso arts. 590 y siguientes (embargos preventivos).',
+        accionConcreta:'Enfoca toda la energía en <strong>defender bien el proceso</strong>, no en mover bienes. Lo que sí puedes y debes hacer: (1) contratar un buen abogado especializado en el tipo de proceso; (2) tener liquidez disponible por si te obligan a consignar mientras se resuelve; (3) contratar seguros nuevos si aún no los tienes (esto sí es válido, siempre lo ha sido); (4) evitar hacer donaciones o traspasos gratuitos hasta que el proceso termine.',
+        profesionalRequerido:'abogado especialista en el tipo de proceso'
+      });
+    }
+
+
+    /* ── SUCESIÓN ── */
+
+    const totalDependientes = (L.hijosMenores||0) + (L.hijosMayoresDependientes||0) + (L.otrosDependientes||0);
+    const hayEmpresarialAlto = activosNorm.some(a =>
+      a._categoria === 'Empresarial' && a.valor > smmlv * 300
+    );
+
+    // R6 · Sin testamento
+    const necesitaTestamento =
+      (patrimonioBruto > smmlv * LEGAL_UMBRALES.patrimonioSinTestamentoSMMLV) ||
+      (totalDependientes > 0) ||
+      hayEmpresarialAlto;
+
+    if(necesitaTestamento && L.testamento && L.testamento.tiene === false){
+      const sev = hayEmpresarialAlto ? 'alta' : 'media';
+      const razones = [];
+      if(patrimonioBruto > smmlv * LEGAL_UMBRALES.patrimonioSinTestamentoSMMLV) razones.push('patrimonio de '+fmt(patrimonioBruto));
+      if(totalDependientes > 0) razones.push(formatearNumeroLista(totalDependientes)+' persona'+(totalDependientes>1?'s':'')+' dependiente'+(totalDependientes>1?'s':''));
+      if(hayEmpresarialAlto) razones.push('participación empresarial relevante');
+      H({
+        id:'R6_sin_testamento',
+        sev, categoria:'sucesion',
+        titulo:'No tienes testamento — la ley decidiría por ti',
+        descripcion:'Con '+razones.join(', ')+', si te faltas hoy sin testamento, la ley reparte tus bienes con reglas fijas que quizá no coinciden con lo que tú querrías: primero se dividen en partes iguales entre tus hijos (si un hijo faltó antes, sus hijos - tus nietos - reciben su parte). Si no tienes hijos, van a tus padres y cónyuge. Si tampoco, a tus hermanos. Aunque no puedes desheredar a hijos, padres o cónyuge (la ley les garantiza mínimo el 50% de tu herencia), sí puedes con el otro 50% decidir cosas importantes: dejarle algo específico a alguien (una amiga, una fundación), nombrar quién administra la herencia mientras se resuelve, elegir tutor para tus hijos menores, y darle instrucciones sobre tu negocio.',
+        activosAfectados:[],
+        norma:'Código Civil arts. 1045 y siguientes (herencia sin testamento) · arts. 1226 y siguientes (derechos protegidos de familiares).',
+        accionConcreta:'Ve a cualquier notaría en tu ciudad y pide una cita para hacer un <strong>testamento abierto</strong>, que es el más común y económico. Lleva tu cédula, una lista de tus bienes principales y a quiénes vas a dejar qué. El notario lo redacta ahí mismo, tú lo firmas con dos testigos, y en el mismo día queda protocolizado en la notaría. Puedes cambiarlo o revocarlo cuando quieras — el testamento más reciente es el que vale.',
+        profesionalRequerido:'notario (para casos simples) · abogado (si tienes empresa o patrimonio complejo)',
+        estimacionCosto:'Testamento abierto en notaría: entre $200.000 y $500.000, según la ciudad y complejidad. Para patrimonios altos o con empresa, sumar honorarios de abogado.'
+      });
+
+      P({
+        id:'P_testamento',
+        titulo:'Otorgar testamento',
+        descripcion:'La acción con mayor impacto en relación con su costo. Trámite corto en notaría, muy económico, y evita que la ley reparta tus bienes con reglas fijas que quizá no coinciden con lo que tú quieres. Además te da control sobre asignaciones específicas.',
+        estimacionCosto:'$200.000 a $500.000',
+        ctaLink:null
+      });
+    }
+
+    // R7 · Testamento desactualizado
+    if(L.testamento && L.testamento.tiene && L.testamento.anioOtorgamiento){
+      const anios = new Date().getFullYear() - parseInt(L.testamento.anioOtorgamiento, 10);
+      if(anios > LEGAL_UMBRALES.testamentoAntiguedadAnios || L.testamento.revisadoTrasCambios === false){
+        H({
+          id:'R7_testamento_viejo',
+          sev:'media', categoria:'sucesion',
+          titulo:'Tu testamento tiene '+anios+' años sin revisar',
+          descripcion:'El testamento que vale es el más reciente que hayas firmado. Pero si tu vida cambió en estos '+anios+' años (te casaste, tuviste hijos, compraste una casa, vendiste otra, montaste una empresa, se divorciaste), lo más probable es que el testamento actual ya no refleje lo que quieres. Puede tener asignaciones vacías (dejarle a alguien un carro que ya vendiste) o dejar bienes nuevos sin repartir. Cuando se abra tu sucesión, esos vacíos generan conflictos entre herederos.',
+          activosAfectados:[],
+          norma:'Código Civil art. 1055 (un testamento nuevo revoca los anteriores).',
+          accionConcreta:'Ve a cualquier notaría (no tiene que ser la misma donde hiciste el original) y otorga un testamento nuevo con la información actualizada. El nuevo automáticamente anula al anterior en lo que sea diferente. <strong>No basta con romper el papel viejo</strong>: si el notario tiene copia protocolizada, sigue teniendo valor mientras no otorgues uno nuevo.',
+          profesionalRequerido:'notario',
+          estimacionCosto:'Entre $200.000 y $500.000, similar al testamento original.'
+        });
+      }
+    }
+
+    // R8 · Sociedad conyugal con bienes altos "solo tuyos"
+    if(L.estadoCivil === 'casado' && L.regimenConyugal === 'sociedad_conyugal'){
+      const bienesAltos = activosDetalle.filter(a => {
+        if(a.esCompartido) return false;
+        const nrm = normsById.get(a.id);
+        const valCOP = nrm ? nrm.valor : 0;
+        return valCOP > smmlv * 100;
+      });
+      if(bienesAltos.length > 0){
+        const listaBienesConyugal = bienesAltos.map(a => {
+          const nrm = normsById.get(a.id);
+          const valCOP = nrm ? nrm.valor : 0;
+          const nombre = a.description || a.subtype || 'Bien sin nombre';
+          return '<li><strong>'+nombre+'</strong> — '+fmt(valCOP)+'</li>';
+        }).join('');
+        H({
+          id:'R8_sociedad_conyugal',
+          sev:'info', categoria:'sucesion',
+          titulo:'Estás casado y hay bienes que probablemente son de los dos',
+          descripcion:'Marcaste estos bienes de alto valor como "solo tuyos":<ul class="leg-hall-list">'+listaBienesConyugal+'</ul>Pero en tu régimen (sociedad conyugal, el estándar en Colombia), <strong>los bienes que se compraron durante el matrimonio son de los dos al 50%</strong>, aunque estén a nombre de uno solo. Las únicas excepciones: bienes que ya tenías antes de casarte, bienes que heredaste, o regalos que te hicieron directamente a ti. Cuando se liquide la sociedad (por divorcio o fallecimiento), tu pareja tiene derecho al 50% de esos bienes ANTES de que se reparta la herencia.',
+          activosAfectados: bienesAltos.map(b=>b.id),
+          norma:'Código Civil arts. 1781, 1795 y siguientes.',
+          accionConcreta:'Confirma cómo compraste cada bien de alto valor. Si fue con dinero anterior al matrimonio, con herencia o con donación directa a ti, es un bien propio (no compartido) — reúne los documentos que lo prueben (extractos bancarios, escrituras, testamentos, contratos de donación). Si te casaste después de comprarlo, mucho mejor. Si quieres separar bienes hacia adelante, se pueden firmar "capitulaciones" en notaría, pero solo aplican desde la fecha en que se firmen.',
+          profesionalRequerido:'notario (para capitulaciones)',
+          estimacionCosto:'Capitulaciones en notaría: $300.000 a $800.000. Solo con documentar el origen de los bienes: sin costo, solo tiempo.'
+        });
+      }
+    }
+
+    // R9 · Unión libre con más de 2 años
+    if(L.estadoCivil === 'union_marital' && L.anioMatrimonioUnion){
+      const anios = new Date().getFullYear() - parseInt(L.anioMatrimonioUnion, 10);
+      if(anios >= LEGAL_UMBRALES.umhPresuncionAnios){
+        H({
+          id:'R9_umh_presuncion',
+          sev:'media', categoria:'sucesion',
+          titulo:'Llevas '+anios+' años en unión libre — hay derechos patrimoniales',
+          descripcion:'La ley colombiana dice que después de dos años de convivencia estable, ustedes forman lo que se llama "sociedad patrimonial": los bienes que compraron en ese tiempo son de los dos al 50%, aunque estén a nombre de uno solo. La diferencia con estar casados: <strong>en unión libre, para hacer valer ese derecho hay que probarlo</strong>, ya sea con una declaración conjunta en notaría o con un proceso ante juez. Muchas parejas descubren esto solo cuando hay problemas (una separación, un fallecimiento) y ahí ya es tarde.',
+          activosAfectados:[],
+          norma:'Ley 54 de 1990, arts. 1 y 2 (modificada por Ley 979 de 2005).',
+          accionConcreta:'Si están de acuerdo, es mejor formalizar ahora: vayan juntos a una notaría y firmen una declaración de unión marital y sociedad patrimonial. Es un trámite corto (una tarde) y evita que en el futuro alguno tenga que hacer un proceso judicial largo. Si prefieren no formalizar, guarden pruebas de la convivencia y sus fechas (contratos de arriendo, cuentas conjuntas, testigos, fotos con fechas).',
+          profesionalRequerido:'notario',
+          estimacionCosto:'Declaración notarial: entre $100.000 y $300.000.'
+        });
+      }
+    }
+
+    // R10 · Seguros con beneficiarios "legales"
+    const seguros = L.segurosVida || [];
+    const segurosBenLegales = seguros.filter(s => s.beneficiarios === 'legales');
+    if(segurosBenLegales.length > 0){
+      const suma = segurosBenLegales.reduce((s,x)=>s+(x.sumaAsegurada||0),0);
+      H({
+        id:'R10_seguro_ben_legales',
+        sev:'info', categoria:'sucesion',
+        titulo:'Tus seguros no tienen personas específicas como beneficiarios',
+        descripcion:'Tienes '+fmt(suma)+' en seguros donde no elegiste tú quién recibe el dinero, sino que dejaste "beneficiarios de ley" — es decir, quien la ley determine según las reglas de la herencia. El problema: si tú faltas, ese dinero <strong>no llega directo a nadie</strong>; entra a la masa de la herencia, se pelea entre los herederos, se demora meses en repartirse, y puede terminar pagando deudas tuyas antes de llegar a tu familia. En cambio, si designas personas específicas (por ejemplo: 60% a tu esposa, 40% a tu hijo), el dinero les llega directo en pocas semanas, no entra a la herencia, y no responde por tus deudas.',
+        activosAfectados:[],
+        norma:'Código de Comercio arts. 1141 y 1142 · Art. 303-1 del Estatuto Tributario (exención tributaria hasta 3.250 UVT).',
+        accionConcreta:'Llama o escribe a cada aseguradora y pide el formato de "designación de beneficiarios". Es un trámite gratuito y toma minutos. Nombra personas específicas con nombre, cédula y porcentaje que recibe cada una. Puedes cambiarlo cuando quieras. <strong>Consejo importante:</strong> si algún beneficiario es menor de edad, considera dejar el dinero en un fideicomiso que lo administre hasta que cumpla cierta edad — así evitas que un tutor tenga control total del dinero.',
+        profesionalRequerido:null,
+        estimacionCosto:'Gratuito. Se hace directamente con la aseguradora, sin intermediarios.'
+      });
+    }
+
+    // R11 · Empresa relevante + dependientes
+    const activosEmpresarialAlto = activosNorm.filter(a => a._categoria === 'Empresarial' && a.valor > smmlv * 300);
+    if(activosEmpresarialAlto.length > 0 && totalDependientes > 0){
+      const totalEmpresarial = activosEmpresarialAlto.reduce((s,a) => s + a.valor, 0);
+      H({
+        id:'R11_empresa_familiar',
+        sev:'info', categoria:'sucesion',
+        titulo:'Tienes empresa relevante y dependientes: define quién la maneja si tú faltas',
+        descripcion:'Tu participación en empresas suma '+fmt(totalEmpresarial)+' y tienes '+totalDependientes+' persona'+(totalDependientes>1?'s':'')+' que dependen económicamente de ti. Sin reglas escritas sobre qué pasa con la empresa si tú faltas, típicamente ocurren tres problemas: (1) el negocio se paraliza mientras los herederos definen quién manda; (2) tus herederos y socios pueden no coincidir en visión del negocio (uno quiere vender, otro seguir); (3) hay disputas sobre cuánto vale la empresa a la hora de repartirla. Un acuerdo escrito con anticipación evita todo esto.',
+        activosAfectados: activosEmpresarialAlto.map(a=>a._mapaId),
+        norma:'Ley 1258 de 2008 (SAS) arts. 13 y 22 · Código de Comercio arts. 397 y siguientes.',
+        accionConcreta:'Tres acciones concretas: (1) Revisa los estatutos actuales de la empresa — busca si dicen algo sobre qué pasa cuando un socio fallece (derecho de preferencia para los demás socios, cómo se calcula el precio de sus acciones). (2) Si tienes socios, firmen un "acuerdo de accionistas" que defina las reglas por escrito: quién administra, cómo se valora la empresa, qué opciones tienen los herederos, si pueden vender a terceros. (3) Si eres 100% dueño, en tu testamento deja instrucciones específicas: quién administra mientras se reparte, en qué precio se valora la empresa, si prefieres que se venda o siga operando.',
+        profesionalRequerido:'abogado con experiencia en derecho societario y empresa familiar',
+        estimacionCosto:'Acuerdo de accionistas: $2 a $8 millones según complejidad. Reforma estatutaria: $1 a $3 millones.'
+      });
+    }
+
+
+    /* ── CUMPLIMIENTO ── */
+
+    // R12 · Formulario 160 · Activos en el exterior
+    const valorExterior = (f.exterior && f.exterior.tiene) ? (f.exterior.valor || 0) : 0;
+    const topeExterior = enPesos(LEGAL_UMBRALES.exteriorUVT);
+    if(valorExterior > topeExterior){
+      const cE = L.cumplimientoExterior || {};
+      const noPresentado = cE.formulario160Presentado === false;
+      const noSabe       = cE.formulario160Presentado === null || cE.formulario160Presentado === undefined;
+      const sev = noPresentado ? 'alta' : (noSabe ? 'media' : 'ok');
+      const fecha = fechaFormulario160(f.digitosCedula || f.digitosNit);
+      const fechaTxt = fecha
+        ? ('entre el '+fecha.ini+' y el '+fecha.fin+' de 2026 (grupo '+fecha.grupo+' según los dos últimos dígitos de tu cédula)')
+        : 'entre el 12 de agosto y el 26 de octubre de 2026, según los dos últimos dígitos de tu cédula';
+      H({
+        id:'R12_formulario_160',
+        sev, categoria:'cumplimiento',
+        titulo: noPresentado ? 'Formulario 160 no presentado' : (noSabe ? 'Verifica tu Formulario 160' : 'Formulario 160 al día'),
+        descripcion: sev === 'ok'
+          ? 'Confirmaste que presentaste la declaración anual de activos en el exterior del año pasado. Se presenta cada año, y toma como referencia lo que tenías fuera del país el 1 de enero, siempre que la suma supere '+fmt(topeExterior)+'.'
+          : 'Tienes '+fmt(valorExterior)+' fuera del país, más del tope legal de '+fmt(topeExterior)+'. Debes presentar el Formulario 160 (declaración de activos en el exterior) cada año, es diferente de tu declaración de renta. Si no lo presentas, la sanción es del 0,5% del valor de esos activos por cada mes de retraso, con tope del 10%. Además, la DIAN recibe información de tus cuentas del exterior automáticamente por convenios internacionales (CRS y FATCA), así que probablemente ya saben que las tienes.',
+        activosAfectados:[],
+        norma:'Art. 607 del Estatuto Tributario · Sanciones art. 641 ET.',
+        accionConcreta:'Entra al portal de la DIAN con tu firma electrónica y busca "Formulario 160". Reporta cada cuenta o inversión con su valor a 1 de enero. Fecha límite: '+fechaTxt+'. Si ya estás atrasado, preséntalo cuanto antes: la sanción crece cada mes.',
+        profesionalRequerido:'contador',
+        estimacionCosto:'La declaración es gratuita. Si contratas contador para armarla: $300.000–$1.000.000.'
+      });
+    }
+
+    // R13 · ECE
+    const negociosExterior = activosDetalle.filter(a => {
+      if(a.category !== 'Empresarial') return false;
+      if(!a.location || a.location === 'Colombia') return false;
+      if(a.rolEmpresarial === 'Propietario único') return true;
+      if(a.rolEmpresarial === 'Representante legal') return true;
+      if(a.rolEmpresarial === 'Socio y representante legal') return true;
+      if((a.rolEmpresarial === 'Socio' || a.rolEmpresarial === 'Accionista')
+         && (a.porcentajePropio || 100) > 50) return true;
+      if((L.cumplimientoExterior||{}).tieneVehiculoECE) return true;
+      return false;
+    });
+    negociosExterior.forEach(neg => {
+      H({
+        id:'R13_ece_'+neg.id,
+        sev:'alta', categoria:'cumplimiento',
+        titulo:'Eres dueño mayoritario de una empresa fuera de Colombia',
+        descripcion:'Tu participación en "'+(neg.description||neg.subtype)+'" ('+neg.location+') como '+(neg.rolEmpresarial||'controlante')+' te pone en un régimen especial de la DIAN. La regla dice: las <strong>ganancias pasivas</strong> de esa empresa extranjera (intereses ganados, dividendos que recibe, arriendos, regalías, ganancias por venta de sus inversiones) se consideran tuyas directamente en Colombia el mismo año en que la empresa las obtiene, aunque no te hayan pagado nada. Las ganancias de la operación normal del negocio (vender productos o servicios) sí escapan a esta regla. Muchos colombianos con empresas en Delaware, Panamá, Uruguay, España, Miami, están en esta situación y no lo saben.',
+        activosAfectados:[neg.id],
+        norma:'Arts. 882 a 893 del Estatuto Tributario.',
+        accionConcreta:'Con un contador que sepa de tributación internacional: (1) toma los estados financieros del último año de la sociedad extranjera y clasifica sus ingresos entre "operativos" (venta de bienes/servicios propios del negocio) y "pasivos" (inversiones, intereses, dividendos, arriendos, regalías). (2) Los pasivos, reportarlos como renta tuya en Colombia. (3) Si es tu primera vez y llevas años con la empresa, revisa años anteriores para hacer correcciones voluntarias antes de que la DIAN te lo detecte por convenios internacionales.',
+        profesionalRequerido:'contador con experiencia en tributación internacional',
+        estimacionCosto:'Análisis inicial y declaración: entre $2 y $5 millones según qué tan compleja sea la empresa.'
+      });
+    });
+
+    // R14 · Restricciones legales
+    const restringidosNorm = activosNorm.filter(a => a.restringido);
+    const restringidos = activosDetalle.filter(a => a.restringidoLegal);
+    if(restringidos.length > 0){
+      const sumaRestringida = restringidosNorm.reduce((s,a) => s + (a.valor||0), 0);
+      const pct = patrimonioBruto > 0 ? sumaRestringida / patrimonioBruto : 0;
+      const sev = pct > 0.20 ? 'alta' : 'media';
+      // Lista detallada de bienes con nombre y valor en COP (usa normsById global)
+      const listaBienes = restringidos.map(a => {
+        const nrm = normsById.get(a.id);
+        const valCOP = nrm ? nrm.valor : 0;
+        const nombre = a.description || a.subtype || 'Bien sin nombre';
+        return '<li><strong>'+nombre+'</strong> — '+fmt(valCOP)+'</li>';
+      }).join('');
+      H({
+        id:'R14_restricciones',
+        sev, categoria:'cumplimiento',
+        titulo:'Tienes bienes con problemas legales pendientes',
+        descripcion:formatearNumeroLista(restringidos.length)+' de tus bienes tiene'+(restringidos.length>1?'n':'')+' algún problema activo (embargo, pleito judicial, herencia sin repartir o hipoteca/prenda pendiente) — suman '+fmt(sumaRestringida)+' ('+Math.round(pct*100)+'% de tu patrimonio):<ul class="leg-hall-list">'+listaBienes+'</ul>Estos bienes siguen siendo tuyos y pagan impuestos como si los usaras normalmente, pero <strong>no puedes venderlos, hipotecarlos ni disponer libremente de ellos</strong> hasta resolver el problema. Si son una herencia sin repartir, además vas a pagar impuesto de ganancia ocasional cuando finalmente te los asignen.',
+        activosAfectados: restringidos.map(a=>a.id),
+        norma:'Código General del Proceso arts. 593 a 606 (embargos) · Código Civil arts. 1008 y siguientes (herencia).',
+        accionConcreta:'Para cada bien con problema: (1) Identifica qué proceso lo generó (juzgado, número de proceso, año) — puedes consultarlo en la Rama Judicial en línea con tu cédula. (2) Si es una herencia pendiente, revisa en qué etapa está y qué falta para la adjudicación. (3) Si el embargo es antiguo por una deuda que ya pagaste, ve al juzgado a solicitar el desembargo — muchas veces la orden nunca se cumplió aunque la deuda esté saldada. (4) Prioriza resolver esto: sin resolver, ese porcentaje de tu patrimonio está "congelado" y no puedes usarlo para nada.',
+        profesionalRequerido:'abogado (según el tipo de problema)'
+      });
+    }
+
+
+    /* ── CONCENTRACIÓN ── */
+
+    // R16 · Concentración en propiedad directa
+    if(patrimonioBruto > 0){
+      const sumaDirecta = sumaPatrimonio(activosNorm, a =>
+        a._estructuraLegal === 'Propiedad Directa' || !a._estructuraLegal);
+      const pctDirecta = sumaDirecta / patrimonioBruto;
+      if(pctDirecta > LEGAL_UMBRALES.concentracionDirectaPct && patrimonioBruto > smmlv * 200){
+        H({
+          id:'R16_concentracion_directa',
+          sev:'media', categoria:'concentracion',
+          titulo:'Casi todo tu patrimonio está a tu nombre personal ('+Math.round(pctDirecta*100)+'%)',
+          descripcion:'Tienes '+fmt(sumaDirecta)+' ('+Math.round(pctDirecta*100)+'%) directamente a tu nombre. El problema con esta concentración: <strong>todo el patrimonio queda expuesto al mismo tiempo</strong> ante cualquier problema personal — una demanda contra ti, un embargo por una deuda personal, la liquidación de la sociedad conyugal en un divorcio, o la sucesión completa el día que faltes. Estructuras como SAS, seguros de vida y fideicomisos permiten diversificar ese riesgo sin cambiar quién es el dueño económico real de los bienes.',
+          activosAfectados:[],
+          norma:null,
+          accionConcreta:'No hagas cambios grandes de una vez, cada estructura tiene costos fijos. Empieza por los 2 o 3 bienes más grandes y evalúa por separado: (1) si tienes un negocio → SAS operativa; (2) si tienes un inmueble que arriendas → SAS inmobiliaria; (3) si tienes inversiones financieras grandes → cartera colectiva o SAS holding. Corre los números primero: el ahorro tributario o la protección deben justificar el costo anual de mantener cada estructura.',
+          profesionalRequerido:'asesor patrimonial + contador',
+          estimacionCosto:'Cada estructura nueva: entre $4 y $8 millones al año de mantenimiento (contador, renovación, gastos de sociedad).'
+        });
+      }
+    }
+
+    // R17 · Concentración en un único vehículo societario
+    if(patrimonioBruto > 0){
+      const sumaEnSociedades = sumaPatrimonio(activosNorm, a =>
+        a._estructuraLegal === 'Sociedad Comercial' || a._estructuraLegal === 'LLC');
+      const pctSociedades = patrimonioBruto > 0 ? sumaEnSociedades / patrimonioBruto : 0;
+      if(pctSociedades > LEGAL_UMBRALES.concentracionVehiculoPct && sumaEnSociedades > smmlv * 500){
+        H({
+          id:'R17_concentracion_vehiculo',
+          sev:'info', categoria:'concentracion',
+          titulo:'Casi todo tu patrimonio está en una misma empresa',
+          descripcion:'El '+Math.round(pctSociedades*100)+'% de tu patrimonio ('+fmt(sumaEnSociedades)+') está en empresas. Si son la misma empresa, cualquier problema que le pase (demanda contra la sociedad, sanción DIAN, dificultad operativa) afecta al mismo tiempo todos los bienes que hay dentro. La práctica estándar en patrimonios grandes es separar la <strong>SAS operativa</strong> (la que factura, contrata empleados, hace el negocio del día a día) de una <strong>SAS holding</strong> (que solo es dueña de bienes: inmuebles, inversiones, participaciones). Así, si la operativa tiene problemas, la holding no se ve afectada.',
+          activosAfectados:[],
+          norma:'Art. 246-1 del Estatuto Tributario (los dividendos que la operativa le pasa a la holding no pagan impuesto extra).',
+          accionConcreta:'Si hoy tienes UNA sola SAS haciendo todo (operar + guardar activos), evalúa con tu contador: mantén la operativa como está, crea una SAS holding aparte, y transfiere a la holding los activos no operativos (inmuebles arrendados, inversiones). El costo tributario de trasladar los activos hay que evaluarlo antes: si el patrimonio va a crecer, el movimiento se justifica; si no crecerá mucho más, quizá no.',
+          profesionalRequerido:'abogado societario + contador tributarista',
+          estimacionCosto:'Reestructuración con aporte de bienes: entre $10 y $30 millones según patrimonio y complejidad del traslado.'
+        });
+      }
+    }
+
+    // R18 · Copropiedad de alto valor (usa normsById global)
+    const copropiedades = activosDetalle.filter(a => {
+      if(!a.esCompartido) return false;
+      const nrm = normsById.get(a.id);
+      return nrm && nrm.valor > smmlv * LEGAL_UMBRALES.copropiedadValorSMMLV;
+    });
+    if(copropiedades.length > 0){
+      const listaCoprop = copropiedades.map(a => {
+        const nrm = normsById.get(a.id);
+        const valCOP = nrm ? nrm.valor : 0;
+        const pctTuyo = a.porcentajePropio || 50;
+        const nombre = a.description || a.subtype || 'Bien sin nombre';
+        return '<li><strong>'+nombre+'</strong> — valor total '+fmt(valCOP)+' (tu parte: '+pctTuyo+'%, es decir '+fmt(valCOP * pctTuyo / 100)+')</li>';
+      }).join('');
+      H({
+        id:'R18_copropiedad',
+        sev:'info', categoria:'concentracion',
+        titulo:'Tienes bienes de alto valor compartidos con otras personas',
+        descripcion:'Estos son los bienes compartidos que detectamos:<ul class="leg-hall-list">'+listaCoprop+'</ul>Sin un acuerdo escrito, cada decisión sobre el bien (venderlo, arrendarlo, hipotecarlo, hacer mejoras) requiere el acuerdo de todos los dueños. Peor aún: <strong>cualquiera de los copropietarios puede pedir en cualquier momento que el bien se divida o se venda</strong>, y si no llegan a acuerdo, un juez ordena venderlo. Esto genera conflictos frecuentes en herencias entre hermanos, negocios entre socios y familias con propiedades compartidas.',
+        activosAfectados: copropiedades.map(c=>c.id),
+        norma:'Código Civil arts. 2334 a 2340 (bienes comunes).',
+        accionConcreta:'Reúnete con los demás dueños y firmen un acuerdo escrito (ante notaría o con firmas autenticadas) que defina mínimo 4 puntos: (1) quién administra el día a día y cómo se distribuyen las rentas; (2) cómo se toman las decisiones importantes; (3) qué pasa si uno quiere vender su parte (derecho de preferencia para los demás); (4) qué pasa si uno de ustedes fallece.',
+        profesionalRequerido:'abogado',
+        estimacionCosto:'Redacción del acuerdo: entre $500.000 y $2 millones según cuánta gente y qué tan complejo sea.'
+      });
+    }
+
+
+    /* ── PALANCAS Y OTRAS SUGERENCIAS ── */
+
+    // R21 · Iliquidez con dependientes → seguro de vida
+    const activosLiquidos = sumaPatrimonio(activosNorm, a => a.tipo === 'LÍQUIDO' && !a.restringido);
+    if(patrimonioBruto > 0 && totalDependientes > 0){
+      const pctIliquido = 1 - (activosLiquidos / patrimonioBruto);
+      const sumaSeguros = (L.segurosVida||[]).reduce((s,x)=>s+(x.sumaAsegurada||0),0);
+      const cubierto = ingresoAnual > 0 && sumaSeguros >= ingresoAnual * 5;
+      if(pctIliquido > LEGAL_UMBRALES.iliquidezCriticaPct && !cubierto){
+        H({
+          id:'R21_iliquidez_dependientes',
+          sev:'media', categoria:'sucesion',
+          titulo:'El '+Math.round(pctIliquido*100)+'% de tu patrimonio es difícil de vender rápido y tienes dependientes',
+          descripcion:'Tienes '+formatearNumeroLista(totalDependientes)+' persona'+(totalDependientes>1?'s a cargo':' a cargo')+', pero solo '+fmt(activosLiquidos)+' están en cosas que se pueden convertir rápido en efectivo (cuentas, CDTs, portafolios de inversión). El resto está en cosas que toman meses o años en vender (casas, empresas, terrenos). Si te faltas hoy, tu familia queda con dos problemas: (1) sostenerse mientras se vende algún bien — pueden ser 6 meses a 2 años para un inmueble; (2) pagar el impuesto de herencia y las obligaciones que dejaste. <strong>Un seguro de vida resuelve las dos cosas</strong>: entrega efectivo en menos de un mes, y en Colombia hasta 3.250 UVT ('+fmt(3250*52374)+') no paga impuesto (art. 303-1 ET).',
+          activosAfectados:[],
+          norma:'Art. 303-1 del Estatuto Tributario (seguros de vida exentos hasta 3.250 UVT).',
+          accionConcreta:'Como regla general, la suma asegurada se calcula así: <strong>ingresos anuales tuyos × 5 a 10 años</strong>, o el monto necesario para que tu familia pague el impuesto de herencia y viva bien 5 a 10 años sin ti. Contrata con <strong>beneficiarios específicos</strong> (nombres y cédulas), no con "beneficiarios de ley", para que el dinero llegue rápido y directo. Si los beneficiarios son menores, evalúa con la aseguradora dejar como beneficiario a un fideicomiso para que administre el dinero hasta que cumplan cierta edad.',
+          profesionalRequerido:'asesor de seguros (varias aseguradoras cotizan gratis)',
+          estimacionCosto:'Seguro de vida temporal (dura 20 años, luego termina): entre 0,3% y 1,5% del valor asegurado al año. Vitalicio (dura toda tu vida y acumula valor de rescate): 3 a 8 veces más caro pero es una inversión.'
+        });
+        P({
+          id:'P_seguro_vida',
+          titulo:'Contratar seguro de vida',
+          descripcion:'Resuelve dos problemas al tiempo: liquidez inmediata para tu familia si tú faltas + sustento familiar mientras se resuelve la herencia. Costo controlado y el pago está exento de impuestos hasta $170 millones aproximadamente.',
+          ctaLink:null
+        });
+      }
+    }
+
+    // R22 · Sin directiva médica anticipada
+    const edadUsuario = (state.profile && state.profile.edad) || null;
+    if(((edadUsuario && edadUsuario >= 55) || totalDependientes > 0) &&
+       (!L.poderes || !L.poderes.directivaAnticipada)){
+      H({
+        id:'R22_sin_directiva',
+        sev:'info', categoria:'sucesion',
+        titulo:'No has dejado instrucciones médicas por escrito',
+        descripcion:'La directiva médica anticipada (o "voluntad anticipada") es un documento donde escribes qué tratamientos médicos aceptas o rechazas si un día no puedes hablar por ti (por ejemplo, después de un accidente grave, coma, enfermedad muy avanzada). Sin este documento, esa decisión queda en manos de tus familiares — que pueden estar divididos, no saber qué querías, o entrar en conflicto entre ellos. Es especialmente importante si tienes personas que dependen de ti económicamente, porque evita procesos judiciales largos y costosos para autorizar decisiones sobre ti.',
+        activosAfectados:[],
+        norma:'Ley 1733 de 2014 · Resolución 1051 de 2016 del Ministerio de Salud.',
+        accionConcreta:'Puedes hacerlo de dos formas: en <strong>notaría</strong> (la opción más común, queda protocolizado) o directamente con tu <strong>médico tratante</strong> (queda en tu historia clínica). Ahí puedes definir: qué tratamientos aceptas o rechazas si estás en fase terminal, si autorizas donación de órganos, y quién queda designado para tomar decisiones médicas por ti. Es un documento revocable — puedes cambiarlo cuando quieras. Combínalo con un <strong>poder general de administración</strong> para que la misma persona pueda manejar tus bienes durante una incapacidad temporal.',
+        profesionalRequerido:'notario',
+        estimacionCosto:'Directiva anticipada notarial: entre $150.000 y $300.000. Poder general adicional: entre $200.000 y $400.000.'
+      });
+    }
+
+    // R23 · Actividad de riesgo profesional sin cobertura RC
+    // Se dispara si tiene actividad de riesgo (CIIU) O es autoempleado en profesión liberal,
+    // y NO tiene póliza de RC profesional, o la que tiene es baja.
+    const cobRC = (L.coberturas && L.coberturas.rcProfesional) || {};
+    const tieneRC = cobRC.tiene === true && (cobRC.sumaAsegurada || 0) > 0;
+    if(riesgoProf && !tieneRC){
+      const sev = cobRC.tiene === false ? 'alta' : 'media';   // 'null' = no respondió aún
+      H({
+        id:'R23_sin_rc_profesional',
+        sev, categoria:'proteccion',
+        titulo: cobRC.tiene === false ? 'No tienes póliza de responsabilidad civil profesional' : 'Verifica si tienes RC profesional',
+        descripcion:'Trabajas en '+riesgoProf.desc+', un área donde los clientes pueden demandarte personalmente por errores profesionales — un procedimiento médico que salió mal, un edificio con fallas de construcción, una asesoría contable errada, un dictamen legal que resultó mal. La <strong>póliza de Responsabilidad Civil Profesional (RC)</strong> cubre esas demandas: paga la defensa jurídica y las condenas hasta el monto asegurado. Sin esta cobertura, cualquier condena la pagas con tus bienes personales. Importante: la SAS te protege de las deudas del negocio, pero <strong>NO</strong> de la responsabilidad profesional que te sigue a ti como persona.',
+        activosAfectados:[],
+        norma:'Código Civil arts. 2341 a 2360 (responsabilidad por daños) · Ley 1480 de 2011 (protección al consumidor).',
+        accionConcreta:'Cotiza con al menos tres aseguradoras (Sura, Bolívar, Liberty, Chubb). Datos que te pedirán: profesión, años de experiencia, monto anual facturado, tipo de clientes, historial de reclamaciones. Como referencia, la suma asegurada suele calcularse como 3 a 5 años de facturación, con deducible ajustable. Muchos gremios profesionales (colegios de médicos, arquitectos, contadores) tienen convenios que dan tarifas preferenciales.',
+        profesionalRequerido:'corredor o asesor de seguros',
+        estimacionCosto:'Prima anual: entre 0,5% y 2% de tu facturación anual, dependiendo de la profesión y el historial. Ejemplo: un consultor que factura $200M/año paga entre $1 y $4 millones anuales.'
+      });
+    }
+
+    // R24 · Directivo empresarial sin cobertura D&O
+    // Se dispara si es representante legal / socio y RL / accionista con >20% en una empresa relevante,
+    // y NO tiene póliza D&O.
+    const rolesDirectivos = ['Propietario único','Representante legal','Socio y representante legal'];
+    const negociosConRolDirectivo = activosDetalle.filter(a => {
+      if(a.category !== 'Empresarial') return false;
+      const nrm = normsById.get(a.id);
+      const valCOP = nrm ? nrm.valor : 0;
+      // Solo empresas relevantes: valor > 100 SMMLV
+      if(valCOP <= smmlv * 100) return false;
+      if(rolesDirectivos.includes(a.rolEmpresarial)) return true;
+      // Accionista con participación relevante
+      if((a.rolEmpresarial === 'Accionista' || a.rolEmpresarial === 'Socio') && (a.porcentajePropio || 0) > 20) return true;
+      return false;
+    });
+    const cobDyo = (L.coberturas && L.coberturas.dyo) || {};
+    const tieneDyo = cobDyo.tiene === true;
+    if(negociosConRolDirectivo.length > 0 && !tieneDyo){
+      const sev = cobDyo.tiene === false ? 'alta' : 'media';
+      const listaEmpresas = negociosConRolDirectivo.map(a => {
+        const nombre = a.description || a.subtype || 'Empresa sin nombre';
+        return '<li><strong>'+nombre+'</strong> — rol: '+(a.rolEmpresarial || 'directivo')+'</li>';
+      }).join('');
+      H({
+        id:'R24_sin_dyo',
+        sev, categoria:'proteccion',
+        titulo: cobDyo.tiene === false ? 'Sin póliza D&O y tienes rol directivo en empresas' : 'Verifica si tienes póliza D&O',
+        descripcion:'Detectamos que tienes rol de administrador o directivo en:<ul class="leg-hall-list">'+listaEmpresas+'</ul>La póliza <strong>D&O (Directors & Officers, o de "administradores")</strong> protege tu patrimonio personal frente a demandas que puedas recibir por decisiones que tomes como administrador de la empresa. La ley colombiana es clara (Ley 222 de 1995, arts. 22 a 25): los administradores responden con su patrimonio personal por daños causados a la sociedad, socios o terceros cuando actúan con dolo o culpa grave. Ejemplos reales: una decisión que causó pérdidas grandes, no reportar información a socios, incumplir obligaciones fiscales. Sin D&O, esas demandas se pagan con tus bienes personales, y los honorarios de defensa jurídica los pones tú aunque al final ganes el caso.',
+        activosAfectados: negociosConRolDirectivo.map(a=>a.id),
+        norma:'Ley 222 de 1995 arts. 22 a 25 (deberes y responsabilidad de administradores) · Ley 1258 de 2008 arts. 27 y 43 (SAS · deber de diligencia y acción social de responsabilidad).',
+        accionConcreta:'Hay dos formas de contratar D&O: (1) que la empresa la contrate cubriéndote a ti y a otros administradores (más común, y en algunas empresas es parte del paquete de compensación); (2) que tú la contrates personalmente si la empresa no lo hace. Cotiza con Chubb, Zurich, AIG, Liberty, HDI (aseguradoras especializadas en este ramo). Datos que necesitas: tipo de empresa (sector, ingresos anuales, cantidad de socios, si es cotizada), tu rol específico, historial de reclamaciones. Cobertura típica: entre $500M y $5.000M según el tamaño de la empresa.',
+        profesionalRequerido:'corredor de seguros con experiencia en líneas financieras',
+        estimacionCosto:'Prima anual: entre $3 y $30 millones para PyMEs y empresas medianas, dependiendo de sector, ingresos y cobertura. Si la empresa la contrata, es deducible como gasto.'
+      });
+    }
+
+
+    const negociosSociales = activosDetalle.filter(a =>
+      a.category === 'Empresarial' &&
+      (a.legalStructure === 'Sociedad Comercial' || a.legalStructure === 'Holding')
+    );
+    const inmueblesProductivos = activosDetalle.filter(a =>
+      a.category === 'Inmueble' && (a.monthlyIncome||0) > 0
+    );
+    const yaTieneHolding = activosNorm.filter(a => a._estructuraLegal === 'Holding').length > 0;
+    if(negociosSociales.length >= 1 && inmueblesProductivos.length >= 1 &&
+       patrimonioBruto > smmlv * 2000 && !yaTieneHolding){
+      P({
+        id:'P_holding',
+        titulo:'Considera crear un holding',
+        descripcion:'Tienes un negocio operativo, un inmueble que produce arriendos y un patrimonio de '+fmt(patrimonioBruto)+'. Un holding (una SAS cuyo único trabajo es ser dueña de otras empresas y bienes) tiene tres ventajas concretas: (1) los dividendos que te pasa tu SAS operativa al holding no pagan impuesto de renta otra vez (art. 246-1 ET); (2) heredar se vuelve más simple, tus hijos reciben "acciones del holding" en vez de una lista larga de bienes; (3) si tu SAS operativa tiene problemas, el holding y los bienes que hay dentro quedan protegidos. Requiere análisis previo con contador porque trasladar bienes tiene costo tributario.',
+        estimacionCosto:'Constitución del holding y aporte de bienes: entre $5 y $20 millones según cuántos bienes se muevan. Mantenimiento anual: entre $5 y $10 millones.',
+        ctaLink:null
+      });
+    }
+
+    // R20 · Fideicomiso como palanca
+    const yaTieneFideicomiso = activosFideicomiso.length > 0;
+    if(patrimonioBruto > smmlv * 5000 &&
+       (L.hijosMenores||0) > 0 &&
+       hayEmpresarialAlto &&
+       !yaTieneFideicomiso){
+      P({
+        id:'P_fideicomiso_sucesoral',
+        titulo:'Considera un fideicomiso para administración sucesoral',
+        descripcion:'Con un patrimonio de '+fmt(patrimonioBruto)+', hijos menores y una empresa familiar relevante, un fideicomiso te permite: (1) que una empresa profesional (Alianza, Fiduagraria, Skandia, entre otras) administre los bienes mientras tus hijos son menores; (2) definir por adelantado cuándo tus hijos reciben qué (por edades, hitos, o para usos específicos como estudios); (3) mantener la continuidad de la administración del negocio sin interrupciones si tú faltas. Es un vehículo estándar en Colombia para patrimonios de este tamaño.',
+        estimacionCosto:'Constitución: entre $8 y $20 millones según el valor de los bienes que entregues. Comisión anual de la fiduciaria: entre 0,5% y 1,5% del valor administrado.',
+        ctaLink:null
+      });
+    }
+
+
+    /* ── CASO OK · Sin hallazgos ── */
+    if(hallazgos.length === 0){
+      H({
+        id:'OK_sin_hallazgos',
+        sev:'ok', categoria:'proteccion',
+        titulo:'Sin hallazgos legales con la información que registraste',
+        descripcion:'Con tus datos actuales, tu estructura patrimonial no dispara alertas de riesgo. Vale la pena revisar este módulo cada año o cuando cambien: tu estado civil, número de hijos/dependientes, adquisición de bienes importantes, o entrada/salida de sociedades.',
+        activosAfectados:[]
+      });
+    }
+
+    const resumen = {
+      totalHallazgos: hallazgos.filter(h=>h.sev !== 'ok').length,
+      porSeveridad: {
+        alta: hallazgos.filter(h=>h.sev==='alta').length,
+        media: hallazgos.filter(h=>h.sev==='media').length,
+        info: hallazgos.filter(h=>h.sev==='info').length
+      },
+      totalPalancas: palancas.length
+    };
+
+    return { hallazgos, palancas, resumen };
+  }
+
+
+  /* ═════ RENDER DEL FORMULARIO ═════ */
+  function renderEstructuraLegal(){
+    inicializarLegal();   // siempre defensivo — garantiza estructura completa
+    const L = state.fiscal.legal;
+
+    if(!renderEstructuraLegal._wired){
+      wireEstructuraLegal();
+      renderEstructuraLegal._wired = true;
+    }
+
+    setSelLeg('leg-estado-civil', L.estadoCivil);
+    setSelLeg('leg-regimen-conyugal', L.regimenConyugal);
+    setValLeg('leg-anio-union', L.anioMatrimonioUnion);
+    setValNumLeg('leg-hijos-menores', L.hijosMenores);
+    setValNumLeg('leg-hijos-mayores', L.hijosMayoresDependientes);
+    setValNumLeg('leg-otros-dep', L.otrosDependientes);
+    const totalDep = (L.hijosMenores||0) + (L.hijosMayoresDependientes||0) + (L.otrosDependientes||0);
+    toggleShowLeg('leg-gasto-familia-wrap', totalDep > 0);
+    setMoneyValLeg('leg-gasto-familia', L.gastoMensualFamilia);
+    toggleShowLeg('leg-regimen-wrap', L.estadoCivil === 'casado' || L.estadoCivil === 'union_marital');
+    toggleShowLeg('leg-anio-union-wrap', L.estadoCivil === 'union_marital');
+
+    setSelLeg('leg-testamento-tiene',
+      L.testamento.tiene === true ? 'si' :
+      L.testamento.tiene === false ? 'no' : '');
+    toggleShowLeg('leg-testamento-detalle', L.testamento.tiene === true);
+    setSelLeg('leg-testamento-tipo', L.testamento.tipo);
+    setValLeg('leg-testamento-anio', L.testamento.anioOtorgamiento);
+    setSelLeg('leg-testamento-revisado',
+      L.testamento.revisadoTrasCambios === true ? 'si' :
+      L.testamento.revisadoTrasCambios === false ? 'no' : '');
+    setChkLeg('leg-poder-admin', L.poderes.generalAdmin);
+    setChkLeg('leg-poder-directiva', L.poderes.directivaAnticipada);
+
+    renderSegurosVida();
+
+    const cob = L.coberturas || {};
+    const inv = cob.invalidez || {};
+    setSelLeg('leg-invalidez-tiene', inv.tiene === true ? 'si' : (inv.tiene === false ? 'no' : ''));
+    toggleShowLeg('leg-invalidez-monto-wrap', inv.tiene === true);
+    const invMi = document.getElementById('leg-invalidez-monto');
+    if(invMi && (inv.rentaMensual||0) > 0) invMi.value = Number(inv.rentaMensual).toLocaleString('es-CO');
+    setSelLeg('leg-vivienda-protegida', L.viviendaProtegida === true ? 'si' : (L.viviendaProtegida === false ? 'no' : ''));
+    setSelLeg('leg-aval-sociedad', L.avalSociedad === true ? 'si' : (L.avalSociedad === false ? 'no' : ''));
+    setSelLeg('leg-protocolo-familiar', L.protocoloFamiliar === true ? 'si' : (L.protocoloFamiliar === false ? 'no' : ''));
+    setSelLeg('leg-guarda-designada', L.guardaDesignada === true ? 'si' : (L.guardaDesignada === false ? 'no' : ''));
+    setSelLeg('leg-avales-tiene', L.avalesTerceros.tiene === true ? 'si' : (L.avalesTerceros.tiene === false ? 'no' : ''));
+    toggleShowLeg('leg-avales-detalle', L.avalesTerceros.tiene === true);
+    setMoneyValLeg('leg-avales-monto', L.avalesTerceros.monto);
+    setValLeg('leg-avales-descripcion', L.avalesTerceros.detalle);
+    setSelLeg('leg-pleitos-tiene', L.pleitosVigentes.tieneComoDemandado === true ? 'si' : (L.pleitosVigentes.tieneComoDemandado === false ? 'no' : ''));
+    toggleShowLeg('leg-pleitos-detalle', L.pleitosVigentes.tieneComoDemandado === true);
+    setMoneyValLeg('leg-pleitos-monto', L.pleitosVigentes.montoPretensiones);
+    setValLeg('leg-pleitos-descripcion', L.pleitosVigentes.detalle);
+
+    const tieneExterior = !!(state.fiscal.exterior && state.fiscal.exterior.tiene);
+    toggleShowLeg('leg-exterior-wrap', tieneExterior);
+    if(tieneExterior){
+      setSelLeg('leg-form160-presentado',
+        L.cumplimientoExterior.formulario160Presentado === true ? 'si' :
+        L.cumplimientoExterior.formulario160Presentado === false ? 'no' : '');
+      setChkLeg('leg-ece', L.cumplimientoExterior.tieneVehiculoECE);
+    }
+
+    // ─── Coberturas (RC profesional y D&O) — visibilidad según perfil ───
+    renderBloqueColberturas();
+
+    renderEstructuraDiagrama();
+    renderDiagnosticoLegal();
+  }
+
+
+  /* ═════ VISIBILIDAD Y RENDER DEL BLOQUE 5 · COBERTURAS ═════ */
+  // Decide qué preguntas mostrar según:
+  //   - RC profesional: si el CIIU es de riesgo (misma tabla que R3)
+  //   - D&O: si el usuario tiene rol directivo en al menos una empresa relevante
+  function renderBloqueColberturas(){
+    const L = state.fiscal.legal;
+    // Preguntas del bloque 7 que solo aplican en ciertos casos
+    try {
+      const md = (typeof MapaPatrimonial !== 'undefined' && MapaPatrimonial.getData) ? MapaPatrimonial.getData() : {activos:[]};
+      const tieneEmpresa = (md.activos||[]).some(a => a && a.category === 'Empresarial');
+      toggleShowLeg('leg-empresa-wrap', tieneEmpresa);
+      toggleShowLeg('leg-guarda-wrap', (+L.hijosMenores||0) > 0);
+    } catch(e){}
+    const mapa = (typeof MapaPatrimonial !== 'undefined' && MapaPatrimonial.getData)
+      ? MapaPatrimonial.getData() : { activos:[], activosNormalizados:[] };
+
+    // ¿Debe mostrarse la pregunta de RC?
+    const riesgoProf = ciiuTieneRiesgoProfesional(state.fiscal.ciiu);
+    const mostrarRC = !!riesgoProf;
+
+    // ¿Debe mostrarse la pregunta de D&O?
+    const rolesDirectivos = ['Propietario único','Representante legal','Socio y representante legal'];
+    const smmlv = getSMMLV();
+    const normsByIdLocal = new Map((mapa.activosNormalizados||[]).map(a => [a._mapaId, a]));
+    const negociosConRolDirectivo = (mapa.activos||[]).filter(a => {
+      if(a.category !== 'Empresarial') return false;
+      const nrm = normsByIdLocal.get(a.id);
+      const valCOP = nrm ? nrm.valor : 0;
+      if(valCOP <= smmlv * 100) return false;
+      if(rolesDirectivos.includes(a.rolEmpresarial)) return true;
+      if((a.rolEmpresarial === 'Accionista' || a.rolEmpresarial === 'Socio') && (a.porcentajePropio || 0) > 20) return true;
+      return false;
+    });
+    const mostrarDyo = negociosConRolDirectivo.length > 0;
+
+    // Mostrar el bloque solo si al menos una aplica
+    const mostrarBloque = mostrarRC || mostrarDyo;
+    toggleShowLeg('leg-coberturas-wrap', mostrarBloque);
+    toggleShowLeg('leg-rc-wrap', mostrarRC);
+    toggleShowLeg('leg-dyo-wrap', mostrarDyo);
+
+    if(!mostrarBloque) return;
+
+    // Ajustar el subtítulo según qué aplica
+    const sub = document.getElementById('leg-coberturas-sub');
+    if(sub){
+      const razones = [];
+      if(mostrarRC) razones.push('tu actividad ('+riesgoProf.desc+')');
+      if(mostrarDyo) razones.push('tu rol de administrador en '+negociosConRolDirectivo.length+' empresa'+(negociosConRolDirectivo.length>1?'s':''));
+      sub.textContent = 'Con ' + razones.join(' y ') + ', tu patrimonio personal puede quedar expuesto sin las coberturas adecuadas';
+    }
+
+    // Poblar valores actuales
+    if(mostrarRC){
+      const rc = L.coberturas.rcProfesional;
+      setSelLeg('leg-rc-tiene',
+        rc.tiene === true ? 'si' :
+        rc.tiene === false ? 'no' :
+        rc.tiene === 'no_se' ? 'no_se' : '');
+      toggleShowLeg('leg-rc-monto-wrap', rc.tiene === true);
+      setMoneyValLeg('leg-rc-monto', rc.sumaAsegurada);
+    }
+    if(mostrarDyo){
+      const dyo = L.coberturas.dyo;
+      setSelLeg('leg-dyo-tiene',
+        dyo.tiene === true ? 'si' :
+        dyo.tiene === false ? 'no' :
+        dyo.tiene === 'no_se' ? 'no_se' : '');
+      toggleShowLeg('leg-dyo-quien-wrap', dyo.tiene === true);
+      setSelLeg('leg-dyo-quien', dyo.quienContrata);
+    }
+  }
+
+  function inicializarLegal(){
+    if(!state.fiscal.legal) state.fiscal.legal = {};
+    const L = state.fiscal.legal;
+    // Defaults defensivos: garantizan que TODOS los sub-objetos existan, sin sobrescribir valores del usuario.
+    if(L.estadoCivil == null) L.estadoCivil = '';
+    if(L.regimenConyugal == null) L.regimenConyugal = '';
+    if(L.anioMatrimonioUnion == null) L.anioMatrimonioUnion = '';
+    if(L.hijosMenores == null) L.hijosMenores = 0;
+    if(L.hijosMayoresDependientes == null) L.hijosMayoresDependientes = 0;
+    if(L.otrosDependientes == null) L.otrosDependientes = 0;
+    if(L.gastoMensualFamilia == null) L.gastoMensualFamilia = 0;
+    if(!L.testamento || typeof L.testamento !== 'object') L.testamento = {};
+    if(L.testamento.tiene === undefined) L.testamento.tiene = null;
+    if(L.testamento.tipo == null) L.testamento.tipo = '';
+    if(L.testamento.anioOtorgamiento == null) L.testamento.anioOtorgamiento = '';
+    if(L.testamento.revisadoTrasCambios === undefined) L.testamento.revisadoTrasCambios = null;
+    if(!L.poderes || typeof L.poderes !== 'object') L.poderes = {};
+    if(L.poderes.generalAdmin == null) L.poderes.generalAdmin = false;
+    if(L.poderes.directivaAnticipada == null) L.poderes.directivaAnticipada = false;
+    if(!Array.isArray(L.segurosVida)) L.segurosVida = [];
+    if(!L.avalesTerceros || typeof L.avalesTerceros !== 'object') L.avalesTerceros = {};
+    if(L.avalesTerceros.tiene === undefined) L.avalesTerceros.tiene = null;
+    if(L.avalesTerceros.monto == null) L.avalesTerceros.monto = 0;
+    if(L.avalesTerceros.detalle == null) L.avalesTerceros.detalle = '';
+    if(!L.pleitosVigentes || typeof L.pleitosVigentes !== 'object') L.pleitosVigentes = {};
+    if(L.pleitosVigentes.tieneComoDemandado === undefined) L.pleitosVigentes.tieneComoDemandado = null;
+    if(L.pleitosVigentes.montoPretensiones == null) L.pleitosVigentes.montoPretensiones = 0;
+    if(L.pleitosVigentes.detalle == null) L.pleitosVigentes.detalle = '';
+    if(!L.cumplimientoExterior || typeof L.cumplimientoExterior !== 'object') L.cumplimientoExterior = {};
+    if(L.cumplimientoExterior.formulario160Presentado === undefined) L.cumplimientoExterior.formulario160Presentado = null;
+    if(L.cumplimientoExterior.tieneVehiculoECE == null) L.cumplimientoExterior.tieneVehiculoECE = false;
+    if(L.cumplimientoExterior.detalleECE == null) L.cumplimientoExterior.detalleECE = '';
+    if(!L.coberturas || typeof L.coberturas !== 'object') L.coberturas = {};
+    if(!L.coberturas.rcProfesional || typeof L.coberturas.rcProfesional !== 'object') L.coberturas.rcProfesional = {};
+    if(L.coberturas.rcProfesional.tiene === undefined) L.coberturas.rcProfesional.tiene = null;
+    if(L.coberturas.rcProfesional.sumaAsegurada == null) L.coberturas.rcProfesional.sumaAsegurada = 0;
+    if(!L.coberturas.dyo || typeof L.coberturas.dyo !== 'object') L.coberturas.dyo = {};
+    if(L.coberturas.dyo.tiene === undefined) L.coberturas.dyo.tiene = null;
+    if(L.coberturas.dyo.quienContrata == null) L.coberturas.dyo.quienContrata = '';
+    if(!L.planSucesoral || typeof L.planSucesoral !== 'object') L.planSucesoral = {};
+    if(!L.planSucesoral.acciones || typeof L.planSucesoral.acciones !== 'object') L.planSucesoral.acciones = {};
+  }
+
+  function setSelLeg(id, v){ const el=document.getElementById(id); if(el) el.value = v==null?'':v; }
+  function setValLeg(id, v){ const el=document.getElementById(id); if(el) el.value = v==null?'':v; }
+  function setValNumLeg(id, v){ const el=document.getElementById(id); if(el) el.value = (v>0)?v:''; }
+  function setChkLeg(id, v){ const el=document.getElementById(id); if(el){ el.classList.toggle('on', !!v); } }
+  function setMoneyValLeg(id, v){ const el=document.getElementById(id); if(el) el.value = v>0?fmtInput(v):''; }
+  function toggleShowLeg(id, v){ const el=document.getElementById(id); if(el) el.style.display = v ? '' : 'none'; }
+
+
+  /* ═════ SEGUROS DE VIDA (lista repetible) ═════ */
+  function renderSegurosVida(){
+    const cont = document.getElementById('leg-seguros-list'); if(!cont) return;
+    const L = state.fiscal.legal;
+    if(!L.segurosVida) L.segurosVida = [];
+
+    cont.innerHTML = L.segurosVida.map((s, idx) => `
+      <div class="leg-seguro-row" data-idx="${idx}">
+        <div class="pf-grid2">
+          <div class="pf-field">
+            <label>Aseguradora</label>
+            <div class="pf-inp"><input type="text" data-fld="aseguradora" value="${(s.aseguradora||'').replace(/"/g,'&quot;')}" placeholder="Sura, Bolívar, Allianz…"></div>
+          </div>
+          <div class="pf-field">
+            <label>Suma asegurada</label>
+            <div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" data-fld="sumaAsegurada" inputmode="numeric" value="${s.sumaAsegurada>0?fmtInput(s.sumaAsegurada):''}" placeholder="0"></div>
+          </div>
+        </div>
+        <div class="pf-field" style="margin-top:10px">
+          <label>¿A quién le paga la aseguradora si tú faltas? <span class="info-tip" data-def="leg_beneficiarios" tabindex="0">i</span></label>
+          <select class="pf-select" data-fld="beneficiarios">
+            <option value="">Selecciona</option>
+            <option value="legales" ${s.beneficiarios==='legales'?'selected':''}>A los beneficiarios "de ley" (los que determine la sucesión)</option>
+            <option value="especificos" ${s.beneficiarios==='especificos'?'selected':''}>A personas específicas que yo designé</option>
+            <option value="no_se" ${s.beneficiarios==='no_se'?'selected':''}>No estoy seguro</option>
+          </select>
+        </div>
+        <button class="leg-seguro-del" data-idx="${idx}" type="button">Eliminar</button>
+      </div>
+    `).join('');
+
+    cont.querySelectorAll('.leg-seguro-row').forEach(row => {
+      const idx = parseInt(row.dataset.idx, 10);
+      row.querySelectorAll('input[data-fld], select[data-fld]').forEach(inp => {
+        inp.addEventListener('input', function(){
+          const fld = this.dataset.fld;
+          if(fld === 'sumaAsegurada'){
+            L.segurosVida[idx][fld] = n(this.value);
+          } else {
+            L.segurosVida[idx][fld] = this.value;
+          }
+          scheduleSave('fiscal'); renderDiagnosticoLegal();
+        });
+        if(inp.dataset.fld === 'sumaAsegurada'){ attachMoneyInput(inp); }
+      });
+      row.querySelector('.leg-seguro-del').addEventListener('click', function(){
+        L.segurosVida.splice(idx, 1);
+        scheduleSave('fiscal'); renderSegurosVida(); renderDiagnosticoLegal();
+      });
+    });
+  }
+
+
+  /* ═════ RENDER DEL DIAGNÓSTICO ═════ */
+  // ── Diagrama de estructura legal · árbol calculado sin solapamientos ────
+  // Genera el diagrama de estructura legal como SVG con estilos EN LÍNEA (para el PDF,
+  // que no aplica clases CSS). Agrupa por tipo bajo cada figura legal / "A tu nombre".
+  function buildEstructuraDiagramaSVG(acts){
+    acts = acts || [];
+    if(!acts.length) return null;
+    const cabeza = (state.profile && state.profile.nombre) ? state.profile.nombre : 'Tú';
+    const VEH = {
+      'Sociedad Comercial':{label:'Sociedad comercial',sub:'SAS · Ltda · S.A.',c:'#2563eb',bg:'#eff4ff'},
+      'LLC':{label:'LLC',sub:'Sociedad en el exterior',c:'#0e7c4a',bg:'#eaf6ef'},
+      'Holding':{label:'Holding familiar',sub:'Agrupa tus bienes',c:'#7c3aed',bg:'#f3edff'},
+      'Fideicomiso':{label:'Fideicomiso / trust',sub:'Patrimonio autónomo',c:'#b45309',bg:'#fbf1e6'},
+      'Otro':{label:'Otra figura',sub:'Por confirmar',c:'#6f6e6a',bg:'#f5f5f3'}
+    };
+    const TIPO = {
+      'Financiero':{label:'Financiero',c:'#0e7c4a',bg:'#f0f8f3'},'Inmueble':{label:'Inmuebles',c:'#b45309',bg:'#fdf7ef'},
+      'Empresarial':{label:'Empresarial',c:'#2563eb',bg:'#f3f7ff'},'Uso Personal':{label:'Uso personal',c:'#6f6e6a',bg:'#f7f6f3'},
+      'Alternativo':{label:'Alternativos',c:'#7c3aed',bg:'#f6f2fd'}
+    };
+    const tipoDe = a => TIPO[a._categoria] ? a._categoria : 'Otro';
+    const fmtM = v => fmt(v||0);
+    const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    // Agrupar
+    const directo={}, vehic={};
+    let dTot=0;
+    acts.forEach(a=>{
+      const est=a._estructuraLegal, t=tipoDe(a);
+      if(!est || est==='Propiedad Directa'){ directo[t]=directo[t]||{n:0,tot:0}; directo[t].n++; directo[t].tot+=a.valor||0; dTot+=a.valor||0; }
+      else { const v=vehic[est]=vehic[est]||{g:{}}; v.g[t]=v.g[t]||{n:0,tot:0}; v.g[t].n++; v.g[t].tot+=a.valor||0; }
+    });
+    const ramas=[];
+    Object.keys(vehic).forEach(est=>{ const i=VEH[est]||VEH['Otro']; ramas.push({label:i.label,sub:i.sub,c:i.c,bg:i.bg,g:vehic[est].g}); });
+    const hayVeh = ramas.length>0;
+    const hayDir = Object.keys(directo).length>0;
+    if(hayDir && hayVeh) ramas.unshift({label:'A tu nombre',sub:'Sin sociedad de por medio',c:'#2b2b2e',bg:'#ffffff',g:directo});
+
+    const anchoTexto=(t,mono)=>(t?String(t).length:0)*(mono?4.9:5.9);
+    const anchoCaja=(tit,sub,mono,min)=>Math.max(Math.max(anchoTexto(tit,false),anchoTexto(sub,mono))+28, min||120);
+    const CAB_H=44, GRP_H=38, PAD=10;
+    const box=(x,y,w,h,tit,sub,fill,stroke,txtColor,mono)=>{
+      let s='<rect x="'+(x-w/2)+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="8" fill="'+fill+'" stroke="'+stroke+'" stroke-width="1.5"/>';
+      s+='<text x="'+x+'" y="'+(y+(sub?16:h/2+4))+'" text-anchor="middle" font-size="10.5" font-weight="bold" fill="'+txtColor+'" font-family="Helvetica">'+esc(tit)+'</text>';
+      if(sub) s+='<text x="'+x+'" y="'+(y+29)+'" text-anchor="middle" font-size="'+(mono?8:8.5)+'" fill="'+(txtColor==='#ffffff'?'#cfcfcf':'#6f6e6a')+'" font-family="'+(mono?'Courier':'Helvetica')+'">'+esc(sub)+'</text>';
+      return s;
+    };
+    const linea=(x1,y1,x2,y2)=>{const my=(y1+y2)/2;return '<path d="M'+x1+' '+y1+' L'+x1+' '+my+' L'+x2+' '+my+' L'+x2+' '+y2+'" fill="none" stroke="#d9d6cf" stroke-width="1.2"/>';};
+    const grpSub=g=>g.n+(g.n===1?' activo · ':' activos · ')+fmtM(g.tot);
+    const CAB_W=anchoCaja(cabeza,'Tú, la persona',false,180);
+
+    let svg, W, H;
+    if(!hayVeh){
+      const grupos=Object.keys(directo).sort((a,b)=>directo[b].tot-directo[a].tot);
+      const n=grupos.length, GAP=16;
+      const anchos=grupos.map(t=>anchoCaja((TIPO[t]||{label:'Otros'}).label, grpSub(directo[t]), true, 128));
+      const suma=anchos.reduce((s,w)=>s+w,0);
+      W=Math.max(suma+(n-1)*GAP+PAD*2, CAB_W+PAD*2);
+      const yCab=PAD, yGrp=yCab+CAB_H+40; H=yGrp+GRP_H+PAD; const cx=W/2;
+      let sx=(W-(suma+(n-1)*GAP))/2; const cen=anchos.map((w,i)=>{const c=sx+w/2;sx+=w+GAP;return c;});
+      svg='<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" xmlns="http://www.w3.org/2000/svg">';
+      grupos.forEach((t,i)=>svg+=linea(cx,yCab+CAB_H,cen[i],yGrp));
+      svg+=box(cx,yCab,CAB_W,CAB_H,cabeza,'Tú, la persona','#1a1a1a','#1a1a1a','#ffffff',false);
+      grupos.forEach((t,i)=>{const T=TIPO[t]||{label:'Otros',c:'#6f6e6a',bg:'#f5f5f3'};svg+=box(cen[i],yGrp,anchos[i],GRP_H,T.label,grpSub(directo[t]),T.bg,T.c,'#16201c',true);});
+      svg+='</svg>';
+    } else {
+      const nR=ramas.length, GAP=20, GG=8;
+      const rAnchos=ramas.map(r=>{let w=anchoCaja(r.label,r.sub,false,148);Object.keys(r.g).forEach(t=>{w=Math.max(w,anchoCaja((TIPO[t]||{label:'Otros'}).label,grpSub(r.g[t]),true,128));});return w;});
+      const suma=rAnchos.reduce((s,w)=>s+w,0);
+      W=Math.max(suma+(nR-1)*GAP+PAD*2, CAB_W+PAD*2);
+      const yCab=PAD, yR=yCab+CAB_H+38, yG0=yR+CAB_H+16;
+      const maxG=Math.max(1,...ramas.map(r=>Object.keys(r.g).length));
+      H=yG0+maxG*(GRP_H+GG)+PAD; const cx=W/2;
+      let sx=(W-(suma+(nR-1)*GAP))/2; const rc=rAnchos.map((w,i)=>{const c=sx+w/2;sx+=w+GAP;return c;});
+      svg='<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" xmlns="http://www.w3.org/2000/svg">';
+      ramas.forEach((r,i)=>svg+=linea(cx,yCab+CAB_H,rc[i],yR));
+      svg+=box(cx,yCab,CAB_W,CAB_H,cabeza,'Tú, la persona','#1a1a1a','#1a1a1a','#ffffff',false);
+      ramas.forEach((r,i)=>{
+        const x=rc[i], rw=rAnchos[i];
+        svg+=box(x,yR,rw,CAB_H,r.label,r.sub,r.bg,r.c,'#16201c',false);
+        const tipos=Object.keys(r.g).sort((a,b)=>r.g[b].tot-r.g[a].tot);
+        tipos.forEach((t,gi)=>{const gy=yG0+gi*(GRP_H+GG);const T=TIPO[t]||{label:'Otros',c:'#6f6e6a',bg:'#f5f5f3'};
+          if(gi===0) svg+=linea(x,yR+CAB_H,x,gy); else svg+='<path d="M'+x+' '+(gy-GG)+' L'+x+' '+gy+'" fill="none" stroke="#d9d6cf" stroke-width="1.2"/>';
+          svg+=box(x,gy,rw,GRP_H,T.label,grpSub(r.g[t]),T.bg,T.c,'#16201c',true);});
+      });
+      svg+='</svg>';
+    }
+    return { svg, width:W, height:H };
+  }
+
+  function renderEstructuraDiagrama(){
+    const cont = document.getElementById('leg-estructura-diagrama');
+    if(!cont) return;
+    const md = (typeof MapaPatrimonial !== 'undefined' && MapaPatrimonial.getData) ? MapaPatrimonial.getData() : null;
+    const acts = (md && md.activosNormalizados) ? md.activosNormalizados : [];
+    if(!acts.length){ cont.innerHTML=''; return; }
+
+    const cabeza = (state.profile && state.profile.nombre) ? state.profile.nombre : 'Tú';
+    const VEHIC = {
+      'Sociedad Comercial': { label:'Sociedad comercial', sub:'SAS · Ltda · S.A.', clase:'soc' },
+      'LLC':                { label:'LLC', sub:'Sociedad en el exterior', clase:'llc' },
+      'Holding':            { label:'Holding familiar', sub:'Agrupa tus bienes', clase:'hold' },
+      'Fideicomiso':        { label:'Fideicomiso / trust', sub:'Patrimonio autónomo', clase:'fid' },
+      'Otro':               { label:'Otra figura', sub:'Por confirmar', clase:'otro' },
+    };
+    // Tipo de activo → etiqueta y clase de color (para las cajas agrupadas)
+    const TIPO = {
+      'Financiero':  { label:'Financiero',   clase:'fin' },
+      'Inmueble':    { label:'Inmuebles',    clase:'inm' },
+      'Empresarial': { label:'Empresarial',  clase:'emp' },
+      'Uso Personal':{ label:'Uso personal', clase:'uso' },
+      'Alternativo': { label:'Alternativos', clase:'otr' },
+    };
+    const tipoDe = (a) => TIPO[a._categoria] ? a._categoria : 'Otro';
+
+    // 1) Repartir activos: los de figura legal en su rama; lo demás bajo "A tu nombre".
+    const ramas = [];  // {tipo:'directo'|'vehiculo', est, label, sub, clase, grupos:{tipo:{n,total}}, total}
+    const directoGrupos = {}; let directoTotal = 0;
+    const vehiculosMap = {};
+    acts.forEach(a=>{
+      const est = a._estructuraLegal;
+      const t = tipoDe(a);
+      if(!est || est === 'Propiedad Directa'){
+        directoGrupos[t] = directoGrupos[t] || {n:0,total:0};
+        directoGrupos[t].n++; directoGrupos[t].total += (a.valor||0); directoTotal += (a.valor||0);
+      } else {
+        const v = vehiculosMap[est] = vehiculosMap[est] || {grupos:{}, total:0};
+        v.grupos[t] = v.grupos[t] || {n:0,total:0};
+        v.grupos[t].n++; v.grupos[t].total += (a.valor||0); v.total += (a.valor||0);
+      }
+    });
+    Object.keys(vehiculosMap).forEach(est=>{
+      const info = VEHIC[est] || VEHIC['Otro'];
+      ramas.push({ tipo:'vehiculo', label:info.label, sub:info.sub, clase:'veh '+info.clase, grupos:vehiculosMap[est].grupos, total:vehiculosMap[est].total });
+    });
+    const hayDirectos = Object.keys(directoGrupos).length > 0;
+    const hayVehiculos = ramas.length > 0;   // ramas hasta aquí solo contiene figuras legales
+    // "A tu nombre" solo tiene sentido como rama cuando HAY figuras de las que distinguirlo.
+    if(hayDirectos && hayVehiculos) ramas.unshift({ tipo:'directo', label:'A tu nombre', sub:'Sin sociedad de por medio', clase:'veh dir', grupos:directoGrupos, total:directoTotal });
+
+    // 2) Layout compacto con cajas que SE AJUSTAN A SU TEXTO (nunca se desbordan).
+    const CAB_H = 44, GRP_H = 38, PAD = 10;
+    // Ancho aproximado del texto según fuente. mono ≈ 5.4px/char a 9px; sans ≈ 6.6px/char a 12px.
+    const anchoTexto = (t, mono) => (t ? t.length : 0) * (mono ? 4.9 : 5.9);
+    const anchoCaja = (titulo, sub, subMono, min) => {
+      const w = Math.max(anchoTexto(titulo,false), anchoTexto(sub,subMono)) + 28;  // +padding lateral
+      return Math.max(w, min||120);
+    };
+    const rectBox = (x, y, w, h, titulo, sub, clase, mono) =>
+      '<g class="leg-node '+clase+'">'
+      + '<rect x="'+(x-w/2)+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="9"/>'
+      + '<text class="leg-node-t" x="'+x+'" y="'+(y+(sub?16:h/2+4))+'">'+escapeHtml(titulo)+'</text>'
+      + (sub ? '<text class="leg-node-s'+(mono?' mono':'')+'" x="'+x+'" y="'+(y+28)+'">'+escapeHtml(sub)+'</text>' : '')
+      + '</g>';
+    const linea = (x1,y1,x2,y2) => { const my=(y1+y2)/2; return '<path class="leg-link" d="M'+x1+' '+y1+' L'+x1+' '+my+' L'+x2+' '+my+' L'+x2+' '+y2+'"/>'; };
+    const grupoSub = (g) => g.n + (g.n===1?' activo · ':' activos · ') + fmt(g.total);
+    const CAB_W = anchoCaja(cabeza, 'Tú, la persona', false, 190);
+
+    let svg, totalW, totalH;
+    if(!hayVehiculos){
+      const grupos = Object.keys(directoGrupos).sort((a,b)=> directoGrupos[b].total - directoGrupos[a].total);
+      const n = grupos.length, GAP_X = 18;
+      // ancho de cada caja según su propio contenido
+      const anchos = grupos.map(t => { const info=TIPO[t]||{label:'Otros'}; return anchoCaja(info.label, grupoSub(directoGrupos[t]), true, 130); });
+      const sumaAnchos = anchos.reduce((s,w)=>s+w,0);
+      totalW = Math.max(sumaAnchos + (n-1)*GAP_X + PAD*2, CAB_W + PAD*2);
+      const yCab = PAD, yGrp = yCab + CAB_H + 46;
+      totalH = yGrp + GRP_H + PAD;
+      const cx = totalW/2;
+      // posiciones centradas
+      let startX = (totalW - (sumaAnchos + (n-1)*GAP_X))/2;
+      const centros = anchos.map((w,i)=>{ const c = startX + w/2; startX += w + GAP_X; return c; });
+      svg = '<svg viewBox="0 0 '+totalW+' '+totalH+'" preserveAspectRatio="xMidYMin meet" class="leg-svg">';
+      grupos.forEach((t,i)=> svg += linea(cx, yCab+CAB_H, centros[i], yGrp));
+      svg += rectBox(cx, yCab, CAB_W, CAB_H, cabeza, 'Tú, la persona', 'cab');
+      grupos.forEach((t,i)=>{ const info=TIPO[t]||{label:'Otros',clase:'otr'}; svg += rectBox(centros[i], yGrp, anchos[i], GRP_H, info.label, grupoSub(directoGrupos[t]), 'grp '+info.clase, true); });
+      svg += '</svg>';
+    } else {
+      const nR = ramas.length, GAP_X = 22, GRP_GAP = 8;
+      // ancho de cada rama = el máximo entre su etiqueta y sus grupos
+      const ramaAnchos = ramas.map(r=>{
+        let w = anchoCaja(r.label, r.sub, false, 150);
+        Object.keys(r.grupos).forEach(t=>{ const info=TIPO[t]||{label:'Otros'}; w = Math.max(w, anchoCaja(info.label, grupoSub(r.grupos[t]), true, 130)); });
+        return w;
+      });
+      const sumaR = ramaAnchos.reduce((s,w)=>s+w,0);
+      totalW = Math.max(sumaR + (nR-1)*GAP_X + PAD*2, CAB_W + PAD*2);
+      const yCab = PAD, yRama = yCab + CAB_H + 44, yGrp0 = yRama + CAB_H + 18;
+      const maxG = Math.max(1, ...ramas.map(r=>Object.keys(r.grupos).length));
+      totalH = yGrp0 + maxG*(GRP_H+GRP_GAP) + PAD;
+      const cx = totalW/2;
+      let startX = (totalW - (sumaR + (nR-1)*GAP_X))/2;
+      const rCentros = ramaAnchos.map((w,i)=>{ const c = startX + w/2; startX += w + GAP_X; return c; });
+      svg = '<svg viewBox="0 0 '+totalW+' '+totalH+'" preserveAspectRatio="xMidYMin meet" class="leg-svg">';
+      ramas.forEach((r,i)=> svg += linea(cx, yCab+CAB_H, rCentros[i], yRama));
+      svg += rectBox(cx, yCab, CAB_W, CAB_H, cabeza, 'Tú, la persona', 'cab');
+      ramas.forEach((r,i)=>{
+        const x = rCentros[i], rw = ramaAnchos[i];
+        svg += rectBox(x, yRama, rw, CAB_H, r.label, r.sub, r.clase);
+        const tipos = Object.keys(r.grupos).sort((a,b)=> r.grupos[b].total - r.grupos[a].total);
+        tipos.forEach((t,gi)=>{
+          const gy = yGrp0 + gi*(GRP_H+GRP_GAP); const info=TIPO[t]||{label:'Otros',clase:'otr'};
+          if(gi===0) svg += linea(x, yRama+CAB_H, x, gy);
+          else svg += '<path class="leg-link" d="M'+x+' '+(gy-GRP_GAP)+' L'+x+' '+gy+'"/>';
+          svg += rectBox(x, gy, rw, GRP_H, info.label, grupoSub(r.grupos[t]), 'grp '+info.clase, true);
+        });
+      });
+      svg += '</svg>';
+    }
+
+    cont.innerHTML =
+      '<div class="card leg-diag-card"><div class="card-head">'
+      + '<div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="2" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="16" y="16" width="6" height="6" rx="1"/><path d="M12 8v4M12 12H5v4M12 12h7v4"/></svg></div>'
+      + '<h3>Cómo está organizado tu patrimonio</h3></div>'
+      + '<p class="summary-note" style="margin-top:0">Así se ve hoy quién es dueño de qué, agrupado por tipo de bien. '
+      + (hayVehiculos ? 'Lo que cuelga de una sociedad o figura está un paso separado de ti; lo que está “a tu nombre” responde directamente contigo.' : 'Todo está directamente a tu nombre: no hay ninguna sociedad o figura que separe tus bienes de ti, así que todos responden ante una demanda o un embargo.')
+      + ' Los nombres de cada bien están en tu Mapa Patrimonial.</p>'
+      + '<div class="leg-diag-scroll">'+svg+'</div>'
+      + '<p class="pf-note" style="margin-top:12px">Esquema educativo según lo que registraste en tu Mapa Patrimonial. No reemplaza el consejo de un abogado.</p>'
+      + '</div>';
+  }
+
+  function renderDiagnosticoLegal(){
+    const cont = document.getElementById('leg-diagnostico'); if(!cont) return;
+    inicializarLegal();   // defensivo
+    const L = state.fiscal.legal;
+    const test = L.testamento || {};
+    const aval = L.avalesTerceros || {};
+    const pleit = L.pleitosVigentes || {};
+
+    const llenoAlgo =
+      !!L.estadoCivil ||
+      (test.tiene !== null && test.tiene !== undefined) ||
+      (aval.tiene !== null && aval.tiene !== undefined) ||
+      (pleit.tieneComoDemandado !== null && pleit.tieneComoDemandado !== undefined) ||
+      (Array.isArray(L.segurosVida) && L.segurosVida.length > 0);
+
+    if(!llenoAlgo){
+      cont.innerHTML = `
+        <div class="pf-note" style="text-align:center;padding:30px 20px">
+          Completa los datos de arriba para ver tu diagnóstico legal patrimonial.
+        </div>`;
+      return;
+    }
+
+    const { hallazgos, palancas, resumen } = evaluarEstructuraLegal();
+
+    const ordenSev = { alta:0, media:1, info:2, ok:3 };
+    hallazgos.sort((a,b) => (ordenSev[a.sev]||9) - (ordenSev[b.sev]||9));
+
+    let html = '';
+
+    html += '<div class="pf-diag-head">';
+    html += '<h3>Diagnóstico legal patrimonial</h3>';
+    if(resumen.totalHallazgos === 0){
+      html += '<p>Sin hallazgos relevantes con los datos registrados. Revísalo cada año.</p>';
+    } else {
+      html += '<p>Detectamos '+resumen.totalHallazgos+' punto'+(resumen.totalHallazgos>1?'s':'')+' que conviene revisar';
+      if(resumen.porSeveridad.alta > 0) html += ', de los cuales '+resumen.porSeveridad.alta+' es'+(resumen.porSeveridad.alta>1?'':'')+' de alta prioridad';
+      html += '. Cada uno incluye la acción concreta y el profesional que la ejecuta cuando aplica.</p>';
+    }
+    html += '</div>';
+
+    html += '<div class="leg-disclaimer">'
+      + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
+      + '<span>Este diagnóstico es informativo, con normativa colombiana vigente y tus datos declarados. No sustituye asesoría legal para actos concretos: testamentos y capitulaciones se hacen ante notaría, la constitución de sociedades requiere abogado o cámara de comercio, y los procesos judiciales requieren apoderado. Las estimaciones de costo son órdenes de magnitud referenciales.</span>'
+      + '</div>';
+
+    hallazgos.forEach(h => {
+      const icoSev = h.sev === 'alta' ? '!' : (h.sev === 'media' ? '!' : (h.sev === 'ok' ? '✓' : 'i'));
+      html += '<div class="leg-hall sev-'+h.sev+'" id="hall-'+h.id+'">';
+      html += '  <div class="leg-hall-head">';
+      html += '    <span class="leg-hall-ico">'+icoSev+'</span>';
+      html += '    <div class="leg-hall-titles">';
+      html += '      <div class="leg-hall-cat">'+categoriaLabelLeg(h.categoria)+'</div>';
+      html += '      <div class="leg-hall-t">'+h.titulo+'</div>';
+      html += '    </div>';
+      html += '  </div>';
+      html += '  <div class="leg-hall-body">';
+      html += '    <p class="leg-hall-desc">'+h.descripcion+'</p>';
+      if(h.accionConcreta){
+        html += '    <div class="leg-hall-block"><div class="leg-hall-label">Qué hacer</div><div>'+h.accionConcreta+'</div></div>';
+      }
+      if(h.profesionalRequerido || h.estimacionCosto){
+        html += '    <div class="leg-hall-meta">';
+        if(h.profesionalRequerido){
+          html += '<span class="leg-hall-tag">Profesional: '+h.profesionalRequerido+'</span>';
+        }
+        if(h.estimacionCosto){
+          html += '<span class="leg-hall-tag">Costo referencial: '+h.estimacionCosto+'</span>';
+        }
+        html += '    </div>';
+      }
+      if(h.norma){
+        html += '    <div class="leg-hall-norma"><strong>Norma:</strong> '+h.norma+'</div>';
+      }
+      if(h.activosAfectados && h.activosAfectados.length > 0){
+        html += '    <div class="leg-hall-links">Aplica a: ';
+        html += h.activosAfectados.map(id => '<a href="#" data-goto-asset="'+id+'">Ver activo</a>').join(' · ');
+        html += '</div>';
+      }
+      if(h.cta && h.ctaLink){
+        html += '    <button class="pf-cta-mini" data-goto-mod="'+h.ctaLink+'">'+h.cta+'</button>';
+      }
+      html += '  </div>';
+      html += '</div>';
+    });
+
+    if(palancas.length > 0){
+      html += '<div class="leg-palancas">';
+      html += '  <h4>Palancas recomendadas</h4>';
+      html += '  <p class="pf-note" style="margin-top:0">Acciones proactivas que puedes activar en los próximos 12 meses. Cada una se implementa una vez y produce beneficios año tras año.</p>';
+      palancas.forEach(p => {
+        html += '  <div class="leg-palanca">';
+        html += '    <div class="leg-palanca-t">'+p.titulo+'</div>';
+        html += '    <div class="leg-palanca-d">'+p.descripcion+'</div>';
+        if(p.estimacionCosto){
+          html += '    <div class="leg-hall-tag">Costo referencial: '+p.estimacionCosto+'</div>';
+        }
+        html += '  </div>';
+      });
+      html += '</div>';
+    }
+
+    cont.innerHTML = html;
+
+    // Mostrar/ocultar el botón "Planifica tu sucesión" según si hay algo material que planificar
+    // (se muestra si hay dependientes o patrimonio > 200 SMMLV)
+    const totalDepM13 = (L.hijosMenores||0) + (L.hijosMayoresDependientes||0) + (L.otrosDependientes||0);
+    const mapaCheck = (typeof MapaPatrimonial !== 'undefined' && MapaPatrimonial.getData)
+      ? MapaPatrimonial.getData() : { resumen:{patrimonioBrutoCOP:0} };
+    const patBruto = (mapaCheck.resumen && mapaCheck.resumen.patrimonioBrutoCOP) || 0;
+    const mostrarBtnM14 = totalDepM13 > 0 || patBruto > getSMMLV() * 200;
+    const btnM14 = document.getElementById('leg-goto-m14');
+    if(btnM14) btnM14.style.display = mostrarBtnM14 ? '' : 'none';
+
+    cont.querySelectorAll('[data-goto-asset]').forEach(a => {
+      a.addEventListener('click', e => {
+        e.preventDefault();
+        try{ navigateTo(3); }catch(err){}
+      });
+    });
+    cont.querySelectorAll('[data-goto-mod]').forEach(b => {
+      b.addEventListener('click', () => {
+        const m = parseInt(b.dataset.gotoMod, 10);
+        try{ navigateTo(m); }catch(err){}
+      });
+    });
+  }
+
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     MÓDULO 14 · RENDER
+     Renderiza toda la sección de planificación sucesoral en su propio módulo.
+     Reutiliza las funciones renderPlanQuePasaria, renderPlanFlujoCaja,
+     renderPlanAcciones, renderPlanCTAs que viven en el bloque de planificación.
+     ═══════════════════════════════════════════════════════════════════════════ */
+  function renderModulo14(){
+    const cont = document.getElementById('m14-content'); if(!cont) return;
+    inicializarLegal();
+
+    // Necesitamos correr el motor de diagnóstico para tener los hallazgos que alimentan el plan.
+    let hallazgos = [];
+    try {
+      const res = evaluarEstructuraLegal();
+      hallazgos = res.hallazgos || [];
+    } catch(err) {
+      console.error('Error al evaluar diagnóstico legal para M14:', err);
+    }
+
+    // Renderizar la sección completa de planificación sucesoral
+    const html = renderPlanSucesoral(hallazgos);
+
+    if(!html || html.trim() === ''){
+      // No hay datos suficientes. Guiar al usuario al M13.
+      cont.innerHTML =
+        '<div class="pf-note" style="text-align:center;padding:40px 24px;background:#fff;border:1px solid rgba(0,0,0,.08);border-radius:12px">' +
+        '<p style="margin:0 0 12px;font-size:14px;color:rgba(0,0,0,.72)">Para generar tu plan sucesoral necesitamos algunos datos primero.</p>' +
+        '<p style="margin:0 0 20px;font-size:13px;color:rgba(0,0,0,.55)">Completa tu diagnóstico legal en el módulo anterior — sobre todo si tienes dependientes y cuánto necesitan al mes.</p>' +
+        '<button class="pf-cta primary" style="min-width:220px" onclick="navigateTo(13)">Ir al diagnóstico legal</button>' +
+        '</div>';
+      return;
+    }
+
+    cont.innerHTML = html;
+
+    // Listeners: CTAs de cotización → WhatsApp
+    cont.querySelectorAll('[data-cta-cotizar]').forEach(b => {
+      b.addEventListener('click', () => {
+        const tipo = b.dataset.ctaCotizar;
+        const monto = parseFloat(b.dataset.ctaMonto || 0);
+        const tema = whatsappTemaLegal(tipo, monto);
+        abrirWhatsAppAsesor(tema);
+      });
+    });
+    // Checkboxes persistentes
+    cont.querySelectorAll('.leg-plan-check').forEach(chk => {
+      chk.addEventListener('change', function(){
+        const id = this.dataset.accionId;
+        if(!id) return;
+        inicializarLegal();
+        if(this.checked) state.fiscal.legal.planSucesoral.acciones[id] = true;
+        else delete state.fiscal.legal.planSucesoral.acciones[id];
+        const label = this.closest('.leg-plan-accion');
+        if(label) label.classList.toggle('done', this.checked);
+        scheduleSave('fiscal');
+      });
+    });
+  }
+
+
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     PLANIFICACIÓN SUCESORAL
+     Sección posterior al diagnóstico. Se renderiza automáticamente cuando el
+     usuario ha llenado datos suficientes. Tiene 4 sub-secciones:
+     A. Qué pasaría hoy si tú faltas (bienes financieros, inmuebles, empresa)
+     B. Simulación de flujo de caja (cuánto tiempo aguanta la familia)
+     C. Checklist de acciones ordenadas por prioridad (persistente en Firestore)
+     D. CTAs de cotización + botón Contactar asesor
+     ═══════════════════════════════════════════════════════════════════════════ */
+
+  /* ─── SVGs consistentes con el resto de la app (estilo Feather) ─── */
+  const ICONS_PLAN = {
+    dinero:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>',
+    casa:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
+    empresa: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="14" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="3" y1="13" x2="21" y2="13"/></svg>',
+    escudo:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
+    balanza: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M5 8h14"/><path d="M8 8l-4 6c0 2 2 3 4 3s4-1 4-3l-4-6z"/><path d="M16 8l-4 6c0 2 2 3 4 3s4-1 4-3l-4-6z" transform="translate(4 0)"/></svg>',
+    usuarios:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+    documento:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>',
+    alerta:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+    check:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+    idea:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.4 1 1 1 1.8V17h6v-.5c0-.8.4-1.4 1-1.8A7 7 0 0 0 12 2z"/></svg>',
+    flecha:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>'
+  };
+
+  function renderPlanSucesoral(hallazgos){
+    inicializarLegal();
+    const L = state.fiscal.legal;
+    const mapa = (typeof MapaPatrimonial !== 'undefined' && MapaPatrimonial.getData)
+      ? MapaPatrimonial.getData() : { activos:[], activosNormalizados:[], resumen:{patrimonioBrutoCOP:0} };
+
+    const activosDetalle = mapa.activos || [];
+    const activosNorm = mapa.activosNormalizados || [];
+    const normsByIdPS = new Map(activosNorm.map(a => [a._mapaId, a]));
+    const totalDependientes = (L.hijosMenores||0) + (L.hijosMayoresDependientes||0) + (L.otrosDependientes||0);
+    const patrimonioBruto = (mapa.resumen && mapa.resumen.patrimonioBrutoCOP) || 0;
+    const smmlv = getSMMLV();
+
+    // Mostrar planificación solo si hay algo material que planificar
+    if(!totalDependientes && patrimonioBruto < smmlv * 200) return '';
+
+    let html = '<div class="leg-plan">';
+
+    /* ══ A. Qué pasaría hoy si tú faltas ══ */
+    html += renderPlanQuePasaria(activosDetalle, normsByIdPS);
+
+    /* ══ B. Simulación de flujo de caja ══ */
+    if(totalDependientes > 0 && (L.gastoMensualFamilia||0) > 0){
+      html += renderPlanFlujoCaja(activosNorm, L);
+    }
+
+    /* ══ C. Acciones ordenadas por prioridad (checklist) ══ */
+    html += renderPlanAcciones(hallazgos, L, activosDetalle);
+
+    /* ══ D. CTAs de cotización y contactar asesor ══ */
+    html += renderPlanCTAs(hallazgos, L);
+
+    html += '</div>';
+    return html;
+  }
+
+
+  /* ─── A. Qué pasaría hoy si tú faltas ─── */
+  function renderPlanQuePasaria(activosDetalle, normsByIdPS){
+    let html = '<div class="leg-plan-sec">';
+    html += '<h4 class="leg-plan-sec-t">Qué pasaría hoy si tú faltas</h4>';
+
+    // ── Productos financieros ──
+    const financieros = activosDetalle.filter(a => a.category === 'Financiero');
+    if(financieros.length > 0){
+      const total = financieros.reduce((s,a) => {
+        const nrm = normsByIdPS.get(a.id);
+        return s + (nrm ? nrm.valor : 0);
+      }, 0);
+      html += '<div class="leg-plan-box">';
+      html += '<div class="leg-plan-box-h"><span class="leg-plan-ico">'+ICONS_PLAN.dinero+'</span><strong>Tus productos financieros</strong></div>';
+      html += '<ul class="leg-plan-list">';
+      financieros.forEach(a => {
+        const nrm = normsByIdPS.get(a.id);
+        const val = nrm ? nrm.valor : 0;
+        html += '<li><strong>'+(a.description||a.subtype||'Producto financiero')+'</strong> — '+fmt(val)+'</li>';
+      });
+      html += '</ul>';
+      html += '<div class="leg-plan-box-body">';
+      html += '<p><strong>Total en productos financieros:</strong> '+fmt(total)+'</p>';
+      html += '<p class="leg-plan-alert"><strong>Cómo acceden tus herederos hoy:</strong> nadie puede tocar ese dinero hasta que se abra la sucesión y un juez o notario les adjudique los bienes. El proceso toma entre 6 meses (notarial, sin conflicto) y 3 años (judicial, con desacuerdos). Los bancos exigen escritura de partición, certificado de defunción y certificado de vigencia de sucesión.</p>';
+      html += '<p><strong>Dos rutas más rápidas si el monto es bajo:</strong></p>';
+      html += '<ul class="leg-plan-sublist">';
+      html += '<li><strong>Retiro directo del banco sin sucesión</strong> (Estatuto Orgánico del Sistema Financiero): si el saldo total de las cuentas y CDTs no supera aproximadamente <strong>$87 millones</strong> (cifra que la Superintendencia Financiera ajusta anualmente), el cónyuge, compañero permanente o herederos pueden solicitar el retiro directamente al banco. Requieren registro civil de defunción, registro civil de nacimiento del solicitante y declaración extrajuicio de únicos herederos. Es una facultad del banco, no una obligación.</li>';
+      html += '<li><strong>Auxilio funerario de Colpensiones</strong> (si el fallecido era pensionado o cotizante activo): quien pagó los gastos funerarios reclama entre <strong>5 y 10 SMMLV</strong> (aprox. '+fmt(5*getSMMLV())+' a '+fmt(10*getSMMLV())+' en 2026) presentando la factura de la funeraria. Se solicita en Colpensiones dentro de los 12 meses siguientes al fallecimiento.</li>';
+      html += '</ul>';
+      html += '<p class="leg-plan-tip"><strong>Cómo agilizar el acceso al patrimonio completo:</strong></p>';
+      html += '<ul class="leg-plan-sublist">';
+      html += '<li>Cuenta bancaria conjunta con tu pareja (acceso inmediato al 50% que le corresponde por ley).</li>';
+      html += '<li>Portafolios de inversión con beneficiarios designados (Skandia, Old Mutual, Sura Investment permiten esto).</li>';
+      html += '<li>Fideicomiso mercantil con instrucciones específicas de entrega.</li>';
+      html += '</ul>';
+      html += '</div></div>';
+    }
+
+    // ── Inmuebles ──
+    const inmuebles = activosDetalle.filter(a => a.category === 'Inmueble');
+    if(inmuebles.length > 0){
+      const total = inmuebles.reduce((s,a) => {
+        const nrm = normsByIdPS.get(a.id);
+        return s + (nrm ? nrm.valor : 0);
+      }, 0);
+      const UVT = 52374;
+      const exVivienda = 13000 * UVT;
+      const exOtros = 6500 * UVT;
+      const exLegit = 3250 * UVT;
+      html += '<div class="leg-plan-box">';
+      html += '<div class="leg-plan-box-h"><span class="leg-plan-ico">'+ICONS_PLAN.casa+'</span><strong>Tus bienes inmuebles</strong></div>';
+      html += '<ul class="leg-plan-list">';
+      inmuebles.forEach(a => {
+        const nrm = normsByIdPS.get(a.id);
+        const val = nrm ? nrm.valor : 0;
+        html += '<li><strong>'+(a.description||a.subtype||'Inmueble')+'</strong> — '+fmt(val)+'</li>';
+      });
+      html += '</ul>';
+      html += '<div class="leg-plan-box-body">';
+      html += '<p><strong>Total en inmuebles:</strong> '+fmt(total)+'</p>';
+      html += '<p class="leg-plan-alert"><strong>Cómo se transfieren:</strong> por sucesión notarial (si hay acuerdo entre herederos) o judicial (si no hay acuerdo). Ambas duran varios meses. Mientras no se adjudiquen, los inmuebles siguen a tu nombre y no se pueden vender ni arrendar oficialmente.</p>';
+      html += '<p><strong>Qué impuesto pagarían:</strong> quien hereda paga el 15% de lo que recibe, pero la ley perdona una parte antes de cobrar. Sobre la casa donde vivías no se cobra impuesto hasta '+fmt(exVivienda)+'; sobre los demás inmuebles, hasta '+fmt(exOtros)+'; y además cada hijo, padre o cónyuge tiene un descuento propio de '+fmt(exLegit)+'. Solo se paga el 15% sobre lo que quede por encima de eso.</p>';
+      html += '</div></div>';
+    }
+
+    // ── Empresas ──
+    const empresas = activosDetalle.filter(a => a.category === 'Empresarial');
+    if(empresas.length > 0){
+      html += '<div class="leg-plan-box">';
+      html += '<div class="leg-plan-box-h"><span class="leg-plan-ico">'+ICONS_PLAN.empresa+'</span><strong>Tu participación empresarial</strong></div>';
+      html += '<ul class="leg-plan-list">';
+      empresas.forEach(a => {
+        const nrm = normsByIdPS.get(a.id);
+        const val = nrm ? nrm.valor : 0;
+        const rol = a.rolEmpresarial ? ' · '+a.rolEmpresarial : '';
+        html += '<li><strong>'+(a.description||a.subtype||'Empresa')+'</strong> — '+fmt(val)+rol+'</li>';
+      });
+      html += '</ul>';
+      html += '<div class="leg-plan-box-body">';
+      html += '<p class="leg-plan-alert"><strong>Qué pasa con la operación:</strong> las acciones o cuotas de la empresa entran a tu herencia. Mientras no se adjudiquen, no hay representante legal claro y la operación puede paralizarse. Contratos, empleados, clientes y proveedores quedan en incertidumbre.</p>';
+      html += '<p>Los herederos reciben acciones proporcionales pero pueden no coincidir en visión (uno quiere vender, otro quiere seguir operando). Muchos negocios pierden valor sustancial durante este período.</p>';
+      html += '<p class="leg-plan-tip"><strong>Qué puedes hacer AHORA:</strong></p>';
+      html += '<ul class="leg-plan-sublist">';
+      html += '<li>Cláusulas estatutarias sobre transmisión de acciones al fallecer un socio.</li>';
+      html += '<li>Acuerdo con socios sobre valoración, opción de compra y sucesión operativa.</li>';
+      html += '<li>Instrucciones específicas en tu testamento sobre quién administra la empresa.</li>';
+      html += '<li>Fideicomiso mercantil que administre profesionalmente hasta que los herederos estén listos.</li>';
+      html += '</ul>';
+      html += '</div></div>';
+    }
+
+    html += '</div>';   // fin leg-plan-sec
+    return html;
+  }
+
+
+  /* ─── B. Simulación de flujo de caja post-fallecimiento ─── */
+  function renderPlanFlujoCaja(activosNorm, L){
+    const activosLiquidos = activosNorm.filter(a => a.tipo === 'LÍQUIDO' && !a.restringido)
+      .reduce((s,a) => s + (a.valor||0), 0);
+    const gastoMensual = L.gastoMensualFamilia || 0;
+    if(gastoMensual <= 0) return '';
+
+    // Ruta rápida de acceso a saldos bancarios sin sucesión (~$87M, se ajusta anualmente)
+    const topeRetiroDirecto = 87000000;
+    const mesesConLiquidezActual = Math.floor(activosLiquidos / gastoMensual);
+    const gastoAnual = gastoMensual * 12;
+
+    // Suma asegurada sugerida: entre 5 y 10 años de gasto familiar
+    const sugerido5anios = gastoAnual * 5;
+    const sugerido10anios = gastoAnual * 10;
+
+    let html = '<div class="leg-plan-sec">';
+    html += '<h4 class="leg-plan-sec-t">Simulación · Flujo de caja de tu familia si tú faltas</h4>';
+
+    html += '<div class="leg-plan-flujo">';
+    html += '<div class="leg-plan-flujo-row"><span>Gasto mensual de tu familia:</span><strong>'+fmt(gastoMensual)+'</strong></div>';
+    html += '<div class="leg-plan-flujo-row"><span>Gasto anual total:</span><strong>'+fmt(gastoAnual)+'</strong></div>';
+    html += '<div class="leg-plan-flujo-row"><span>Liquidez disponible (cuentas, CDTs, portafolios):</span><strong>'+fmt(activosLiquidos)+'</strong></div>';
+    if(activosLiquidos <= topeRetiroDirecto){
+      html += '<div class="leg-plan-flujo-row"><span>Acceso sin sucesión (si saldos &lt; $87M):</span><strong>Posible</strong></div>';
+    } else {
+      html += '<div class="leg-plan-flujo-row"><span>Acceso sin sucesión (saldos &gt; $87M):</span><strong>Requiere sucesión formal</strong></div>';
+    }
+    html += '</div>';
+
+    // Análisis del gap
+    if(mesesConLiquidezActual < 12){
+      html += '<div class="leg-plan-danger">';
+      html += '<div class="leg-plan-danger-t"><span class="leg-plan-sev-ico">'+ICONS_PLAN.alerta+'</span> Déficit crítico</div>';
+      html += '<p>Tu familia solo tendría liquidez para aproximadamente <strong>'+mesesConLiquidezActual+' mes'+(mesesConLiquidezActual!==1?'es':'')+'</strong> — y eso <em>si</em> pudieran acceder al dinero, cosa que en Colombia toma meses después de abrir la sucesión.</p>';
+      html += '<p>El déficit acumulado a 12 meses sería de aproximadamente <strong>'+fmt(Math.max(0, gastoAnual - activosLiquidos))+'</strong>. Ese dinero saldría de préstamos familiares, venta forzada de bienes a bajo precio, o simplemente ajuste dramático del nivel de vida.</p>';
+      html += '</div>';
+    } else if(mesesConLiquidezActual < 60){
+      html += '<div class="leg-plan-warning">';
+      html += '<div class="leg-plan-warning-t"><span class="leg-plan-sev-ico">'+ICONS_PLAN.alerta+'</span> Cobertura parcial</div>';
+      html += '<p>Tu familia podría sostenerse aproximadamente <strong>'+mesesConLiquidezActual+' meses</strong> con la liquidez actual (siempre que puedan acceder rápido). Después de eso, dependen de vender bienes ilíquidos, lo cual toma tiempo y suele hacerse a precio de urgencia.</p>';
+      html += '</div>';
+    } else {
+      html += '<div class="leg-plan-ok">';
+      html += '<div class="leg-plan-ok-t"><span class="leg-plan-sev-ico">'+ICONS_PLAN.check+'</span> Buena cobertura de liquidez</div>';
+      html += '<p>Tu familia tendría liquidez para más de <strong>'+Math.floor(mesesConLiquidezActual/12)+' años</strong>. Aun así, recuerda que en Colombia el acceso a esos recursos no es inmediato: se requiere abrir la sucesión.</p>';
+      html += '</div>';
+    }
+
+    // Recomendación de seguro
+    html += '<div class="leg-plan-recom">';
+    html += '<div class="leg-plan-recom-t"><span class="leg-plan-sev-ico">'+ICONS_PLAN.idea+'</span> Recomendación de seguro de vida</div>';
+    html += '<p>Un seguro de vida entrega efectivo directamente a los beneficiarios en menos de 30 días, sin pasar por sucesión. En Colombia, el pago está <strong>exento de impuestos hasta '+fmt(3250*52374)+'</strong> (Art. 303-1 ET).</p>';
+    html += '<p>Con base en el gasto mensual de tu familia, tu suma asegurada ideal sería:</p>';
+    html += '<div class="leg-plan-recom-tabla">';
+    html += '<div class="leg-plan-recom-cell"><div class="leg-plan-recom-label">Cobertura básica (5 años)</div><div class="leg-plan-recom-val">'+fmt(sugerido5anios)+'</div></div>';
+    html += '<div class="leg-plan-recom-cell primary"><div class="leg-plan-recom-label">Cobertura recomendada (10 años)</div><div class="leg-plan-recom-val">'+fmt(sugerido10anios)+'</div></div>';
+    html += '</div>';
+    html += '<p class="leg-plan-recom-nota">Costo referencial de una póliza temporal a 20 años: entre 0,3% y 1,5% de la suma asegurada al año. Por ejemplo, una póliza de '+fmt(sugerido10anios)+' costaría entre '+fmt(Math.round(sugerido10anios*0.003))+' y '+fmt(Math.round(sugerido10anios*0.015))+' al año.</p>';
+    html += '<button class="pf-cta-mini" data-cta-cotizar="seguro_vida" data-cta-monto="'+sugerido10anios+'">Cotizar mi seguro de vida ideal</button>';
+    html += '</div>';
+
+    html += '</div>';
+    return html;
+  }
+
+
+  /* ─── C. Acciones ordenadas por prioridad (checklist persistente) ─── */
+  function renderPlanAcciones(hallazgos, L, activosDetalle){
+    const acciones = generarAccionesPlan(hallazgos, L, activosDetalle);
+    if(acciones.length === 0) return '';
+
+    let html = '<div class="leg-plan-sec">';
+    html += '<h4 class="leg-plan-sec-t">Acciones ordenadas por prioridad</h4>';
+    html += '<p class="leg-plan-sec-sub">Marca las acciones a medida que las vas completando. Tu progreso se guarda automáticamente.</p>';
+
+    // Agrupar por prioridad
+    const grupos = { alta: [], media: [], baja: [] };
+    acciones.forEach(a => { grupos[a.prioridad].push(a); });
+
+    const labelsGrupos = {
+      alta: { txt:'Hacer este mes', color:'alta' },
+      media:{ txt:'Hacer este trimestre', color:'media' },
+      baja: { txt:'Evaluar con asesor (6-12 meses)', color:'baja' }
+    };
+
+    ['alta','media','baja'].forEach(pri => {
+      if(grupos[pri].length === 0) return;
+      const lbl = labelsGrupos[pri];
+      html += '<div class="leg-plan-priog leg-plan-priog-'+lbl.color+'">';
+      html += '<div class="leg-plan-priog-h"><span class="leg-plan-priog-dot"></span>'+lbl.txt+'</div>';
+      grupos[pri].forEach(a => {
+        const checked = !!(L.planSucesoral && L.planSucesoral.acciones && L.planSucesoral.acciones[a.id]);
+        html += '<label class="leg-plan-accion'+(checked?' done':'')+'" data-accion-id="'+a.id+'">';
+        html += '<input type="checkbox" class="leg-plan-check"'+(checked?' checked':'')+' data-accion-id="'+a.id+'">';
+        html += '<div class="leg-plan-accion-body">';
+        html += '  <div class="leg-plan-accion-t">'+a.titulo+'</div>';
+        html += '  <div class="leg-plan-accion-d">'+a.descripcion+'</div>';
+        if(a.costo){
+          html += '  <div class="leg-plan-accion-meta">'+a.costo+'</div>';
+        }
+        html += '</div>';
+        html += '</label>';
+      });
+      html += '</div>';
+    });
+
+    html += '</div>';
+    return html;
+  }
+
+
+  /* ─── Generación dinámica de acciones basadas en el diagnóstico ─── */
+  function generarAccionesPlan(hallazgos, L, activosDetalle){
+    const acciones = [];
+    const hallazgosIds = new Set(hallazgos.map(h => h.id.split('_').slice(0,2).join('_')));
+    // También identificamos por prefijo R# porque algunos IDs traen sufijo con id de activo
+    const tieneRegla = (prefix) => hallazgos.some(h => h.id.startsWith(prefix));
+
+    // 🔴 Prioridad ALTA (este mes)
+    if(tieneRegla('R6_sin_testamento')){
+      acciones.push({
+        id:'testamento',
+        prioridad:'alta',
+        titulo:'Otorgar testamento en notaría',
+        descripcion:'Pide cita en cualquier notaría. Lleva tu cédula y una lista de tus bienes y a quiénes quieres dejar qué. En una sola visita queda protocolizado.',
+        costo:'Costo: $200.000 a $500.000 · Duración: 1 día'
+      });
+    }
+    if(tieneRegla('R21_iliquidez')){
+      acciones.push({
+        id:'seguro_vida',
+        prioridad:'alta',
+        titulo:'Cotizar seguro de vida para tu familia',
+        descripcion:'Solicita cotizaciones a mínimo 3 aseguradoras (Sura, Bolívar, Liberty). Como referencia, la suma asegurada debe cubrir entre 5 y 10 años de gastos de tu familia.',
+        costo:'Costo: entre 0,3% y 1,5% de la suma asegurada al año'
+      });
+    }
+    if(tieneRegla('R5_pleito_demandado')){
+      acciones.push({
+        id:'defensa_pleito',
+        prioridad:'alta',
+        titulo:'Fortalecer tu defensa en el proceso judicial',
+        descripcion:'Prioriza contratar un buen abogado especializado en el tipo de proceso. No hagas movimientos patrimoniales durante el pleito — se pueden anular por fraude a acreedores.',
+        costo:'Costo: honorarios de abogado según proceso'
+      });
+    }
+    if(tieneRegla('R23_sin_rc') && !(L.coberturas && L.coberturas.rcProfesional && L.coberturas.rcProfesional.tiene === true)){
+      acciones.push({
+        id:'poliza_rc',
+        prioridad:'alta',
+        titulo:'Cotizar póliza de Responsabilidad Civil Profesional',
+        descripcion:'Con tu actividad económica de riesgo, esta póliza cubre tu defensa jurídica y condenas si un cliente te demanda por errores profesionales.',
+        costo:'Costo anual: entre 0,5% y 2% de tu facturación anual'
+      });
+    }
+    if(tieneRegla('R24_sin_dyo') && !(L.coberturas && L.coberturas.dyo && L.coberturas.dyo.tiene === true)){
+      acciones.push({
+        id:'poliza_dyo',
+        prioridad:'alta',
+        titulo:'Cotizar póliza D&O (para administradores)',
+        descripcion:'Con tu rol de administrador en una empresa, esta póliza cubre tu patrimonio personal si te demandan por decisiones tomadas en ese rol.',
+        costo:'Costo anual: entre $3M y $30M según tamaño de la empresa'
+      });
+    }
+
+    // 🟡 Prioridad MEDIA (este trimestre)
+    if(tieneRegla('R10_seguro_ben_legales') || ((L.segurosVida||[]).length === 0 && (L.hijosMenores||0)+(L.hijosMayoresDependientes||0) > 0)){
+      // Solo si tiene seguros con beneficiarios legales, o si no tiene seguros pero sí dependientes
+      if(tieneRegla('R10_seguro')){
+        acciones.push({
+          id:'beneficiarios_seguros',
+          prioridad:'media',
+          titulo:'Designar beneficiarios específicos en tus seguros',
+          descripcion:'Llama a cada aseguradora y pide el formato de designación. Nombra personas con nombre, cédula y porcentaje. Es gratis y toma minutos.',
+          costo:'Costo: gratuito'
+        });
+      }
+    }
+    // Beneficiarios en productos financieros (si tiene productos financieros y no ha marcado la acción)
+    const tieneFinancierosAltos = activosDetalle.some(a => a.category === 'Financiero');
+    if(tieneFinancierosAltos){
+      acciones.push({
+        id:'beneficiarios_productos',
+        prioridad:'media',
+        titulo:'Designar beneficiarios en portafolios y CDTs',
+        descripcion:'Skandia, Old Mutual y Sura Investment permiten designar beneficiarios en portafolios de inversión. Con esto tus herederos reciben directo, sin pasar por sucesión.',
+        costo:'Costo: gratuito · Duración: llamada de 15 min por entidad'
+      });
+    }
+    if(!L.poderes || !L.poderes.generalAdmin){
+      acciones.push({
+        id:'poder_general',
+        prioridad:'media',
+        titulo:'Otorgar poder general de administración',
+        descripcion:'Le permite a tu pareja o familiar de confianza hacer trámites por ti (bancos, DIAN, notarías) si tienes un accidente o enfermedad que te incapacite.',
+        costo:'Costo: $200.000 a $400.000 en notaría'
+      });
+    }
+    if(tieneRegla('R22_sin_directiva') || (!L.poderes || !L.poderes.directivaAnticipada)){
+      acciones.push({
+        id:'directiva_anticipada',
+        prioridad:'media',
+        titulo:'Otorgar voluntad anticipada médica',
+        descripcion:'Documento donde defines qué tratamientos médicos aceptas o rechazas si un día no puedes hablar por ti. Se firma en notaría o con tu médico tratante.',
+        costo:'Costo: $150.000 a $300.000 en notaría'
+      });
+    }
+    if(tieneRegla('R8_sociedad_conyugal')){
+      acciones.push({
+        id:'documentar_origen_bienes',
+        prioridad:'media',
+        titulo:'Documentar el origen de tus bienes propios',
+        descripcion:'Reúne extractos bancarios, escrituras, testamentos o contratos de donación que prueben qué bienes son "propios" (anteriores al matrimonio o por herencia). Evita disputas futuras.',
+        costo:'Costo: gratuito · Solo requiere organización'
+      });
+    }
+
+    // 🟢 Prioridad BAJA (6-12 meses, con asesor)
+    if(tieneRegla('R1_negocio') || tieneRegla('R2_renta') || tieneRegla('R16_concentracion')){
+      acciones.push({
+        id:'estructura_societaria',
+        prioridad:'baja',
+        titulo:'Evaluar estructura societaria para bienes personales',
+        descripcion:'Consulta con contador y abogado si te conviene crear una SAS para tu actividad económica o para tus bienes productivos. Corre el simulador SAS del Perfil Fiscal para ver los números.',
+        costo:'Constitución: $600k-$1,2M · Mantenimiento anual: $4-7M'
+      });
+    }
+    if(tieneRegla('R11_empresa_familiar')){
+      acciones.push({
+        id:'protocolo_familiar',
+        prioridad:'baja',
+        titulo:'Diseñar protocolo o acuerdo de accionistas',
+        descripcion:'Con abogado societario, define por escrito qué pasa con la empresa si tú faltas: quién administra, cómo se valoran las acciones, qué opciones tienen los herederos.',
+        costo:'Costo: $2M a $8M según complejidad'
+      });
+    }
+    if(tieneRegla('R18_copropiedad')){
+      acciones.push({
+        id:'acuerdo_copropiedad',
+        prioridad:'baja',
+        titulo:'Firmar acuerdo escrito con copropietarios',
+        descripcion:'Define quién administra, cómo se toman decisiones, derecho de preferencia si alguno vende, y qué pasa si uno de ustedes fallece.',
+        costo:'Costo: $500k a $2M por redacción del acuerdo'
+      });
+    }
+    if(tieneRegla('R17_concentracion_vehiculo') || tieneRegla('R19')){
+      acciones.push({
+        id:'holding',
+        prioridad:'baja',
+        titulo:'Evaluar creación de holding patrimonial',
+        descripcion:'Con contador tributarista, corre los números para una SAS holding que agrupe tu operativa, tus inmuebles productivos y tus inversiones. Beneficios tributarios (art. 246-1 ET) y sucesorales.',
+        costo:'Aporte de bienes: $5-20M · Mantenimiento: $5-10M/año'
+      });
+    }
+    if(tieneRegla('R20_fideicomiso')){
+      acciones.push({
+        id:'fideicomiso',
+        prioridad:'baja',
+        titulo:'Evaluar fideicomiso mercantil',
+        descripcion:'Con fiduciaria (Alianza, Fiduagraria, Skandia), estructura un fideicomiso que administre profesionalmente los bienes para tus hijos menores hasta cierta edad.',
+        costo:'Constitución: $8-20M · Comisión anual: 0,5% a 1,5% de activos'
+      });
+    }
+
+    return acciones;
+  }
+
+
+  /* ─── D. CTAs de cotización + Contactar asesor ─── */
+  function renderPlanCTAs(hallazgos, L){
+    const tieneRegla = (prefix) => hallazgos.some(h => h.id.startsWith(prefix));
+    const necesitaSegVida = tieneRegla('R21_iliquidez') || tieneRegla('R6_sin_testamento') || ((L.hijosMenores||0)+(L.hijosMayoresDependientes||0) > 0 && (L.segurosVida||[]).length === 0);
+    const necesitaRC = tieneRegla('R23_sin_rc') && !(L.coberturas && L.coberturas.rcProfesional && L.coberturas.rcProfesional.tiene === true);
+    const necesitaDyo = tieneRegla('R24_sin_dyo') && !(L.coberturas && L.coberturas.dyo && L.coberturas.dyo.tiene === true);
+    const necesitaAsesorLegal = tieneRegla('R1_negocio') || tieneRegla('R11_empresa') || tieneRegla('R17') || tieneRegla('R18') || tieneRegla('R19') || tieneRegla('R20');
+
+    let html = '<div class="leg-plan-sec leg-plan-ctas">';
+    html += '<h4 class="leg-plan-sec-t">Servicios recomendados según tu perfil</h4>';
+    html += '<p class="leg-plan-sec-sub">Cotiza o agenda directamente con un asesor especializado. Toda la información va por WhatsApp con contexto de tu diagnóstico.</p>';
+
+    html += '<div class="leg-plan-ctas-grid">';
+
+    if(necesitaSegVida){
+      html += '<div class="leg-plan-cta-card">';
+      html += '<div class="leg-plan-cta-ico">'+ICONS_PLAN.escudo+'</div>';
+      html += '<div class="leg-plan-cta-t">Cotizar seguro de vida</div>';
+      html += '<div class="leg-plan-cta-d">Liquidez inmediata para tu familia. Exento hasta '+fmt(3250*52374)+'.</div>';
+      html += '<button class="pf-cta-mini" data-cta-cotizar="seguro_vida">Cotizar</button>';
+      html += '</div>';
+    }
+    if(necesitaRC){
+      html += '<div class="leg-plan-cta-card">';
+      html += '<div class="leg-plan-cta-ico">'+ICONS_PLAN.balanza+'</div>';
+      html += '<div class="leg-plan-cta-t">Cotizar RC profesional</div>';
+      html += '<div class="leg-plan-cta-d">Cubre tu defensa y condenas por errores profesionales.</div>';
+      html += '<button class="pf-cta-mini" data-cta-cotizar="rc_profesional">Cotizar</button>';
+      html += '</div>';
+    }
+    if(necesitaDyo){
+      html += '<div class="leg-plan-cta-card">';
+      html += '<div class="leg-plan-cta-ico">'+ICONS_PLAN.usuarios+'</div>';
+      html += '<div class="leg-plan-cta-t">Cotizar póliza D&O</div>';
+      html += '<div class="leg-plan-cta-d">Protege tu patrimonio como administrador de empresas.</div>';
+      html += '<button class="pf-cta-mini" data-cta-cotizar="dyo">Cotizar</button>';
+      html += '</div>';
+    }
+    if(tieneRegla('R6_sin_testamento') || tieneRegla('R7_testamento_viejo')){
+      html += '<div class="leg-plan-cta-card">';
+      html += '<div class="leg-plan-cta-ico">'+ICONS_PLAN.documento+'</div>';
+      html += '<div class="leg-plan-cta-t">Asesoría para testamento</div>';
+      html += '<div class="leg-plan-cta-d">Un abogado revisa tu situación y te acompaña al proceso notarial.</div>';
+      html += '<button class="pf-cta-mini" data-cta-cotizar="testamento">Solicitar</button>';
+      html += '</div>';
+    }
+    if(necesitaAsesorLegal){
+      html += '<div class="leg-plan-cta-card">';
+      html += '<div class="leg-plan-cta-ico">'+ICONS_PLAN.balanza+'</div>';
+      html += '<div class="leg-plan-cta-t">Asesoría legal societaria</div>';
+      html += '<div class="leg-plan-cta-d">Estructuración de SAS, holding, protocolos familiares y acuerdos.</div>';
+      html += '<button class="pf-cta-mini" data-cta-cotizar="asesor_legal">Solicitar</button>';
+      html += '</div>';
+    }
+
+    html += '</div>';   // fin ctas-grid
+
+    // Botón grande principal: contactar asesor patrimonial
+    html += '<div class="leg-plan-contact">';
+    html += '<div class="leg-plan-contact-body">';
+    html += '<div class="leg-plan-contact-t">¿Quieres una asesoría patrimonial completa?</div>';
+    html += '<div class="leg-plan-contact-d">Un asesor revisa tu diagnóstico, aterriza el plan a tu situación específica y te acompaña en la implementación paso a paso.</div>';
+    html += '</div>';
+    html += '<button class="pf-cta primary leg-plan-contact-btn" data-cta-cotizar="asesor_patrimonial">Hablar con un asesor patrimonial '+ICONS_PLAN.flecha+'</button>';
+    html += '</div>';
+
+    html += '</div>';
+    return html;
+  }
+
+
+  /* ─── Mensajes de WhatsApp por tipo de CTA ─── */
+  function whatsappTemaLegal(tipo, monto){
+    const map = {
+      seguro_vida:       'Cotización de seguro de vida' + (monto ? ' (suma asegurada de referencia: '+fmt(monto)+')' : ''),
+      rc_profesional:    'Cotización de póliza de Responsabilidad Civil Profesional',
+      dyo:               'Cotización de póliza D&O para administradores',
+      testamento:        'Asesoría para otorgar testamento',
+      asesor_legal:      'Asesoría legal societaria (estructuración, protocolos, acuerdos)',
+      asesor_patrimonial:'Asesoría patrimonial completa · vengo del módulo Estructura Legal Patrimonial'
+    };
+    return map[tipo] || 'Módulo Estructura Legal Patrimonial';
+  }
+
+  function categoriaLabelLeg(cat){
+    return {
+      proteccion:'Protección patrimonial',
+      sucesion:'Sucesión',
+      cumplimiento:'Cumplimiento',
+      concentracion:'Concentración',
+      vehiculo:'Vehículo apropiado'
+    }[cat] || cat;
+  }
+
+
+  /* ═════ WIRING ═════ */
+  function wireEstructuraLegal(){
+    const L = () => state.fiscal.legal;
+    const persist = () => { scheduleSave('fiscal'); renderDiagnosticoLegal(); };
+
+    const eciv = document.getElementById('leg-estado-civil');
+    if(eciv) eciv.addEventListener('change', function(){
+      L().estadoCivil = this.value;
+      toggleShowLeg('leg-regimen-wrap', this.value === 'casado' || this.value === 'union_marital');
+      toggleShowLeg('leg-anio-union-wrap', this.value === 'union_marital');
+      persist();
+    });
+    const reg = document.getElementById('leg-regimen-conyugal');
+    if(reg) reg.addEventListener('change', function(){ L().regimenConyugal = this.value; persist(); });
+    const anio = document.getElementById('leg-anio-union');
+    if(anio) anio.addEventListener('input', function(){ L().anioMatrimonioUnion = this.value.replace(/[^0-9]/g,'').slice(0,4); persist(); });
+
+    ['leg-hijos-menores','leg-hijos-mayores','leg-otros-dep'].forEach(id => {
+      const el = document.getElementById(id); if(!el) return;
+      el.addEventListener('input', function(){
+        const v = parseInt(this.value.replace(/[^0-9]/g,''), 10) || 0;
+        if(id==='leg-hijos-menores') L().hijosMenores = v;
+        if(id==='leg-hijos-mayores') L().hijosMayoresDependientes = v;
+        if(id==='leg-otros-dep') L().otrosDependientes = v;
+        // Refrescar visibilidad de la pregunta de gasto familiar
+        const tot = (L().hijosMenores||0) + (L().hijosMayoresDependientes||0) + (L().otrosDependientes||0);
+        toggleShowLeg('leg-gasto-familia-wrap', tot > 0);
+        persist();
+      });
+    });
+
+    const gastoFam = document.getElementById('leg-gasto-familia');
+    if(gastoFam){
+      attachMoneyInput(gastoFam);
+      gastoFam.addEventListener('input', function(){
+        L().gastoMensualFamilia = n(this.value);
+        persist();
+      });
+    }
+
+    const test = document.getElementById('leg-testamento-tiene');
+    if(test) test.addEventListener('change', function(){
+      L().testamento.tiene = this.value === 'si' ? true : (this.value === 'no' ? false : null);
+      toggleShowLeg('leg-testamento-detalle', this.value === 'si');
+      persist();
+    });
+    const testTipo = document.getElementById('leg-testamento-tipo');
+    if(testTipo) testTipo.addEventListener('change', function(){ L().testamento.tipo = this.value; persist(); });
+    const testAnio = document.getElementById('leg-testamento-anio');
+    if(testAnio) testAnio.addEventListener('input', function(){
+      L().testamento.anioOtorgamiento = this.value.replace(/[^0-9]/g,'').slice(0,4);
+      persist();
+    });
+    const testRev = document.getElementById('leg-testamento-revisado');
+    if(testRev) testRev.addEventListener('change', function(){
+      L().testamento.revisadoTrasCambios = this.value === 'si' ? true : (this.value === 'no' ? false : null);
+      persist();
+    });
+
+    const pAdmin = document.getElementById('leg-poder-admin');
+    if(pAdmin) pAdmin.addEventListener('click', function(e){
+      if(e.target.closest('.info-tip')) return;
+      L().poderes.generalAdmin = !L().poderes.generalAdmin;
+      this.classList.toggle('on', L().poderes.generalAdmin);
+      persist();
+    });
+    const pDir = document.getElementById('leg-poder-directiva');
+    if(pDir) pDir.addEventListener('click', function(e){
+      if(e.target.closest('.info-tip')) return;
+      L().poderes.directivaAnticipada = !L().poderes.directivaAnticipada;
+      this.classList.toggle('on', L().poderes.directivaAnticipada);
+      persist();
+    });
+
+    const btnAddSeg = document.getElementById('leg-add-seguro');
+    if(btnAddSeg) btnAddSeg.addEventListener('click', function(){
+      L().segurosVida.push({ aseguradora:'', sumaAsegurada:0, beneficiarios:'' });
+      renderSegurosVida(); persist();
+    });
+
+    const avT = document.getElementById('leg-avales-tiene');
+    if(avT) avT.addEventListener('change', function(){
+      L().avalesTerceros.tiene = this.value === 'si' ? true : (this.value === 'no' ? false : null);
+      toggleShowLeg('leg-avales-detalle', this.value === 'si');
+      persist();
+    });
+    const avM = document.getElementById('leg-avales-monto');
+    if(avM){ attachMoneyInput(avM); avM.addEventListener('input', function(){ L().avalesTerceros.monto = n(this.value); persist(); }); }
+    const avD = document.getElementById('leg-avales-descripcion');
+    if(avD) avD.addEventListener('input', function(){ L().avalesTerceros.detalle = this.value; persist(); });
+
+    // ── Bloque 7 · blindaje del patrimonio y del ingreso ──
+    const invT = document.getElementById('leg-invalidez-tiene');
+    if(invT) invT.addEventListener('change', function(){
+      L().coberturas = L().coberturas || {};
+      L().coberturas.invalidez = L().coberturas.invalidez || {};
+      L().coberturas.invalidez.tiene = this.value === 'si' ? true : (this.value === 'no' ? false : null);
+      toggleShowLeg('leg-invalidez-monto-wrap', this.value === 'si');
+      persist();
+    });
+    const invM = document.getElementById('leg-invalidez-monto');
+    if(invM){ attachMoneyInput(invM); invM.addEventListener('input', function(){
+      L().coberturas = L().coberturas || {}; L().coberturas.invalidez = L().coberturas.invalidez || {};
+      L().coberturas.invalidez.rentaMensual = n(this.value); persist(); }); }
+    const vpS = document.getElementById('leg-vivienda-protegida');
+    if(vpS) vpS.addEventListener('change', function(){
+      L().viviendaProtegida = this.value === 'si' ? true : (this.value === 'no' ? false : null); persist(); });
+    const avSoc = document.getElementById('leg-aval-sociedad');
+    if(avSoc) avSoc.addEventListener('change', function(){
+      L().avalSociedad = this.value === 'si' ? true : (this.value === 'no' ? false : null); persist(); });
+    const protF = document.getElementById('leg-protocolo-familiar');
+    if(protF) protF.addEventListener('change', function(){
+      L().protocoloFamiliar = this.value === 'si' ? true : (this.value === 'no' ? false : null); persist(); });
+    const guar = document.getElementById('leg-guarda-designada');
+    if(guar) guar.addEventListener('change', function(){
+      L().guardaDesignada = this.value === 'si' ? true : (this.value === 'no' ? false : null); persist(); });
+
+    const plT = document.getElementById('leg-pleitos-tiene');
+    if(plT) plT.addEventListener('change', function(){
+      L().pleitosVigentes.tieneComoDemandado = this.value === 'si' ? true : (this.value === 'no' ? false : null);
+      toggleShowLeg('leg-pleitos-detalle', this.value === 'si');
+      persist();
+    });
+    const plM = document.getElementById('leg-pleitos-monto');
+    if(plM){ attachMoneyInput(plM); plM.addEventListener('input', function(){ L().pleitosVigentes.montoPretensiones = n(this.value); persist(); }); }
+    const plD = document.getElementById('leg-pleitos-descripcion');
+    if(plD) plD.addEventListener('input', function(){ L().pleitosVigentes.detalle = this.value; persist(); });
+
+    const f160 = document.getElementById('leg-form160-presentado');
+    if(f160) f160.addEventListener('change', function(){
+      L().cumplimientoExterior.formulario160Presentado =
+        this.value === 'si' ? true : (this.value === 'no' ? false : null);
+      persist();
+    });
+    const ece = document.getElementById('leg-ece');
+    if(ece) ece.addEventListener('click', function(e){
+      if(e.target.closest('.info-tip')) return;
+      L().cumplimientoExterior.tieneVehiculoECE = !L().cumplimientoExterior.tieneVehiculoECE;
+      this.classList.toggle('on', L().cumplimientoExterior.tieneVehiculoECE);
+      persist();
+    });
+
+    // ─── Coberturas (RC profesional + D&O) ───
+    const rcT = document.getElementById('leg-rc-tiene');
+    if(rcT) rcT.addEventListener('change', function(){
+      L().coberturas.rcProfesional.tiene =
+        this.value === 'si' ? true :
+        this.value === 'no' ? false :
+        this.value === 'no_se' ? 'no_se' : null;
+      toggleShowLeg('leg-rc-monto-wrap', this.value === 'si');
+      persist();
+    });
+    const rcM = document.getElementById('leg-rc-monto');
+    if(rcM){
+      attachMoneyInput(rcM);
+      rcM.addEventListener('input', function(){
+        L().coberturas.rcProfesional.sumaAsegurada = n(this.value);
+        persist();
+      });
+    }
+
+    const dyoT = document.getElementById('leg-dyo-tiene');
+    if(dyoT) dyoT.addEventListener('change', function(){
+      L().coberturas.dyo.tiene =
+        this.value === 'si' ? true :
+        this.value === 'no' ? false :
+        this.value === 'no_se' ? 'no_se' : null;
+      toggleShowLeg('leg-dyo-quien-wrap', this.value === 'si');
+      persist();
+    });
+    const dyoQ = document.getElementById('leg-dyo-quien');
+    if(dyoQ) dyoQ.addEventListener('change', function(){
+      L().coberturas.dyo.quienContrata = this.value;
+      persist();
+    });
+  }
+
+
+  /* ═════ EXPOSICIÓN AL WINDOW (opcional, para debug) ═════ */
+  if(typeof window !== 'undefined'){
+    window.__renderEstructuraLegal = renderEstructuraLegal;
+    window.__evaluarEstructuraLegal = evaluarEstructuraLegal;
+    window.__renderModulo14 = renderModulo14;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     FIN DEL MÓDULO 13
+     ═══════════════════════════════════════════════════════════════════════════ */
+
   const DEFINITIONS = {
     regimen_fiscal: { title:'Régimen tributario', text:'Define cómo pagas tus impuestos. En el <strong>Ordinario</strong> declaras renta por el sistema cedular. En el <strong>Simple (RST)</strong> pagas una sola tarifa sobre tus ingresos brutos que integra renta e ICA, en anticipos bimestrales. Si no sabes cuál tienes, lo leemos de tu RUT.' },
     resp_iva: { title:'Responsable de IVA', text:'Significa que debes cobrar el IVA en tus ventas y declararlo a la DIAN. Aplica, en general, si superas ~3.500 UVT de ingresos o tienes varios establecimientos. Si lo eres y no facturas IVA, hay sanción.' },
@@ -10269,6 +13185,80 @@ function showToast(msg, type) {
     costo_vida_real: {
       title: 'Costo de vida real',
       text: 'Tus gastos mensuales más el equivalente mensual de los gastos anuales (matrícula, predial, primas, etc., divididos en 12). Es lo que <strong>realmente</strong> te cuesta vivir cada mes, no solo lo que paga la tarjeta debit este mes.'
+    },
+
+    /* ── Módulo 13 · Estructura Legal Patrimonial ── */
+    leg_estado_civil: {
+      title:'Estado civil',
+      text:'Tu situación de pareja según el registro civil. Lo importante para el patrimonio es si vives con alguien: <strong>casado</strong> genera automáticamente un régimen donde comparten bienes al 50%, y la <strong>unión libre de más de 2 años</strong> también los comparte por ley (aunque hay que declararlo en notaría). Los <strong>solteros, viudos y divorciados</strong> con sociedad ya liquidada manejan sus bienes de forma individual.'
+    },
+    leg_regimen_conyugal: {
+      title:'¿Cómo manejan los bienes en el matrimonio?',
+      text:'Cuando te casaste, sin que firmaras nada especial, entraste automáticamente al régimen normal en Colombia: todo lo que compres durante el matrimonio (con excepción de herencias y regalos) es de los dos al 50%, aunque esté a nombre de uno solo. La única forma de mantener los bienes separados es firmar un acuerdo llamado <strong>capitulaciones</strong> ante notaría (antes o durante el matrimonio). Si no lo firmaste, todo es compartido.'
+    },
+    leg_capitulaciones: {
+      title:'Capitulaciones',
+      text:'Un acuerdo que firman los cónyuges ante notaría para mantener sus bienes separados durante el matrimonio, en vez del régimen normal donde todo lo adquirido se comparte al 50%. Se puede hacer antes de casarse o después. Ojo: solo aplica a partir de la fecha en que se firmen, no cambia el estado de los bienes que ya tenían antes. Costo aproximado: $300.000 a $800.000 en notaría.'
+    },
+    leg_union_marital: {
+      title:'Unión libre (unión marital de hecho)',
+      text:'Convivir de forma permanente y estable con una pareja sin estar casados. La ley colombiana reconoce que después de <strong>2 años de convivencia</strong> ustedes forman una "sociedad patrimonial": los bienes que compren en ese tiempo son de los dos, aunque estén a nombre de uno solo. Para que quede oficial y no toque probarlo en juzgado más adelante, conviene declararlo en notaría de común acuerdo. Base legal: Ley 54 de 1990.'
+    },
+    leg_testamento: {
+      title:'Testamento',
+      text:'Un documento donde dejas por escrito cómo quieres que se repartan tus bienes cuando faltes. Hay tres tipos, pero el más común y práctico es el <strong>abierto</strong>, que se hace en notaría en una sola visita. Sirve principalmente para: dejar bienes específicos a personas específicas (ej. la casa de la playa para un hijo particular), nombrar quién administra tu herencia mientras se resuelve, designar tutores si tienes hijos menores, y planificar qué pasa con tu negocio. Importante: no puedes desheredar completamente a tus hijos, padres o cónyuge — la ley les garantiza mínimo el 50% del total, ese es su derecho protegido.'
+    },
+    leg_testamento_tipo: {
+      title:'Tipos de testamento',
+      text:'<strong>Abierto</strong>: es el estándar. Le dices al notario cómo quieres repartir tus bienes, él lo escribe y lo firma con 2 testigos. Queda archivado en la notaría. <strong>Cerrado</strong>: lo escribes tú en privado, lo metes en un sobre sellado y lo entregas al notario; se abre cuando faltas. <strong>Ológrafo</strong>: escrito completamente a mano por ti, casi no se usa en Colombia. Si no estás seguro cuál tienes, casi siempre es el abierto.'
+    },
+    leg_beneficiarios: {
+      title:'¿A quién le paga el seguro?',
+      text:'Cuando contrates un seguro de vida, tienes dos opciones para decir quién recibe el dinero si tú faltas: (1) <strong>beneficiarios específicos</strong>: escoges tú a las personas y los porcentajes (por ejemplo: 60% para mi esposa, 40% para mi hijo). El pago llega directo a ellos en pocas semanas, no se pelea entre herederos y no responde por tus deudas. (2) <strong>Beneficiarios "de ley"</strong>: no escoges tú, sino que el dinero entra a la herencia general y se reparte con todo lo demás, lo que puede tomar meses y generar disputas. Cambiar quién recibe el dinero es gratis, se hace directamente con la aseguradora.'
+    },
+    leg_avales: {
+      title:'¿Qué es un aval?',
+      text:'Cuando firmas garantizando la deuda de otra persona o empresa. Es muy común: firmas como aval de un familiar en un préstamo, o de tu empresa cuando pide crédito. El riesgo: si esa persona o empresa deja de pagar, el banco te cobra <strong>directamente a ti todo el saldo</strong>, con tus bienes personales, sin tener que agotar primero al deudor principal. En pagarés, letras y la mayoría de préstamos personales así funciona (se llama "aval mercantil"). Revisa siempre qué firmaste.'
+    },
+    leg_pleitos: {
+      title:'Procesos judiciales en tu contra',
+      text:'Cualquier demanda donde eres la parte demandada: laboral (un ex-empleado te demanda), civil (un contrato que salió mal), comercial, penal con reclamo económico, o administrativa. Mientras el proceso esté abierto, el juez puede ordenar embargos sobre tus bienes como medida preventiva. Y ojo con algo importante: si en medio de un pleito activo intentas "esconder" bienes traspasándolos a familiares o vendiéndolos a precio bajo, el juez puede anular esas operaciones porque la ley las considera fraude a los acreedores.'
+    },
+    leg_formulario_160: {
+      title:'Formulario 160 · Activos en el exterior',
+      text:'Una declaración anual que le presentas a la DIAN si tienes bienes fuera de Colombia (cuentas bancarias, inversiones, apartamentos, empresas) por más de <strong>2.000 UVT</strong> (unos $104,7 millones en 2026). Es diferente y separada de tu declaración de renta normal. Se hace en el portal de la DIAN, en línea. Para <strong>personas naturales</strong> los plazos van del 12 de agosto al 26 de octubre de 2026, dependiendo de los dos últimos dígitos de tu cédula. Si no la presentas o la haces tarde, la sanción es del 0,5% del valor de esos activos por cada mes de atraso (tope 10%). Y importante: la DIAN recibe información de tus cuentas fuera del país automáticamente por convenios internacionales.'
+    },
+    leg_ece: {
+      title:'Ser dueño de una empresa fuera de Colombia',
+      text:'Si vives en Colombia pero eres dueño mayoritario (más del 50%) de una empresa en el exterior, la ley te obliga a algo especial: las ganancias "pasivas" de esa empresa (intereses de inversiones, dividendos que recibe, arriendos, regalías, ganancias por venta de acciones) se consideran <strong>tuyas directamente</strong> en Colombia el mismo año en que la empresa las obtiene, aunque no te hayan pagado ni un peso. Las ganancias de la operación normal del negocio (vender productos o servicios) no aplican a esta regla. Base legal: arts. 882 a 893 del Estatuto Tributario. Esto no es opcional y tiene sanciones fuertes si no se declara.'
+    },
+    leg_legitimarios: {
+      title:'Herederos con derecho protegido',
+      text:'La ley colombiana protege a ciertos familiares y les garantiza mínimo el 50% de tu herencia, no puedes desheredarlos: son tus <strong>hijos</strong> (o los nietos si un hijo faltó antes), tus <strong>padres</strong> (solo si no tienes hijos) y tu <strong>cónyuge</strong>. Ese 50% obligatorio se llama "legítima". El otro 50% sí lo puedes repartir libremente: 25% para dar más a algún hijo específico, y 25% para quien tú quieras (una amiga, una fundación, alguien fuera de la familia). Sin testamento, todo se reparte por reglas fijas: primero los hijos por partes iguales, luego padres/cónyuge, luego hermanos.'
+    },
+    leg_velo_corporativo: {
+      title:'¿Por qué una SAS te protege?',
+      text:'Cuando tu negocio está en una SAS (o cualquier sociedad), la ley dice que tú como socio solo respondes por las deudas del negocio hasta el monto que aportaste. Si al negocio le va mal, los acreedores no pueden ir contra tu casa, carro o cuentas personales. La <strong>excepción</strong>: si usas la sociedad para hacer trampa (por ejemplo, sacar plata de forma indebida o esconder bienes), un juez puede "levantar el velo" y hacerte responder con tu patrimonio personal. Esto casi nunca pasa en la operación normal — solo en casos claros de fraude.'
+    },
+    leg_holding: {
+      title:'¿Qué es un holding?',
+      text:'Una empresa cuyo único trabajo es ser dueña de las acciones de otras empresas, no operar directamente. Se usa cuando ya tienes patrimonio grande porque: (1) los dividendos que le paga tu empresa operativa al holding no vuelven a pagar impuesto de renta; (2) heredar se vuelve más simple porque tus herederos reciben "acciones del holding" en vez de una lista larga de bienes; (3) si tu empresa operativa tiene problemas, tus otros bienes (que están bajo el holding) quedan protegidos. Requiere análisis previo con contador y abogado.'
+    },
+    leg_fideicomiso: {
+      title:'Fideicomiso: administración profesional de bienes',
+      text:'Un contrato donde entregas ciertos bienes a una empresa fiduciaria (Alianza, Fiduagraria, Skandia, etc.) para que los administre según reglas que tú defines. Ejemplos de uso: para que administren la herencia de tus hijos si eres empresario y ellos son menores; para asegurar que un familiar con problemas de manejo del dinero reciba una mensualidad y no gaste todo de una; para separar bienes del patrimonio personal por protección. Los bienes en fideicomiso no responden por tus deudas personales.'
+    },
+    leg_rc_profesional: {
+      title:'Póliza de Responsabilidad Civil Profesional',
+      text:'Un seguro que te cubre si un cliente te demanda por un error en tu trabajo profesional: un médico por mala praxis, un ingeniero por un diseño con fallas, un contador por un dictamen errado, un abogado por asesoría deficiente. La aseguradora paga tu <strong>defensa jurídica</strong> (que puede ser costosa incluso si ganas el caso) y las <strong>condenas</strong> hasta el monto asegurado. Importante entender: aunque tengas tu negocio en una SAS, la responsabilidad profesional te persigue a ti como persona natural — la SAS no te protege de esto. La cotizan Sura, Bolívar, Liberty, Chubb, entre otras. Muchos gremios (colegios de médicos, contadores, arquitectos) tienen convenios que dan tarifas preferenciales.'
+    },
+    leg_dyo: {
+      title:'Póliza D&O (Directores y Administradores)',
+      text:'Un seguro que protege a los administradores de una empresa (representante legal, socio y RL, miembros de junta directiva, gerentes con poder de decisión) frente a demandas por decisiones tomadas en su rol. La ley colombiana (Ley 222 de 1995, arts. 22 a 25) establece que los administradores responden con su patrimonio personal por daños causados con culpa o dolo — a la sociedad, a los socios o a terceros. Ejemplos donde D&O es útil: demandas de socios minoritarios por decisiones que consideran perjudiciales, demandas de la DIAN por incumplimientos tributarios de la empresa, demandas laborales que buscan responsabilidad solidaria del representante legal, procesos por competencia desleal. La póliza paga la defensa jurídica y las condenas. Puede contratarla la empresa (más común) o el administrador personalmente.'
+    },
+    leg_gasto_familia: {
+      title:'Gasto mensual familiar en caso de fallecimiento',
+      text:'La cifra base para calcular cuánto tiempo aguantarían tus recursos líquidos si tú faltas, y qué tamaño de seguro de vida sería adecuado. Incluye: <strong>vivienda</strong> (arriendo o cuota de hipoteca, servicios, administración), <strong>alimentación y necesidades básicas</strong>, <strong>educación</strong> (colegio, universidad, actividades), <strong>salud</strong> (medicina prepagada, medicamentos, terapias), <strong>transporte</strong>, y un margen para <strong>otros gastos e imprevistos</strong>. Si estás casado o en unión libre, considera solo lo que aportaría tu ingreso — no lo que aporta tu pareja. La cifra típica de una familia de clase media en Colombia oscila entre $6M y $20M mensuales según ciudad, tamaño y estilo de vida.'
     }
   };
   
@@ -10447,13 +13437,48 @@ function showToast(msg, type) {
     const ratioConsumo = totalDeuda>0 ? totConsumo/totalDeuda : 0;
     const ratioApal = totalDeuda>0 ? totApal/totalDeuda : 0;
     const pctConsumoIng = ingresoMensual>0 ? pagosConsumo/ingresoMensual : 0;
-    // ── Activos ──
+    // ── Activos (tabla enriquecida: lee del Mapa Patrimonial normalizado) ──
     const activosFilas=[]; let totalLiquido=0, totalNoLiquido=0;
-    (state.activos||[]).forEach(a=>{
+    let mapaRD = null;
+    try { mapaRD = (window.MapaPatrimonial && window.MapaPatrimonial.getData) ? window.MapaPatrimonial.getData() : null; } catch(e){ mapaRD=null; }
+    const activosNorm = (mapaRD && Array.isArray(mapaRD.activosNormalizados)) ? mapaRD.activosNormalizados : [];
+    const estructuraLabel = (e)=>({
+      'Propiedad Directa':'A tu nombre','Sociedad Comercial':'Sociedad (SAS/Ltda/S.A.)','LLC':'LLC exterior',
+      'Holding':'Holding familiar','Fideicomiso':'Fideicomiso','Otro':'Otra figura'
+    }[e] || (e||'A tu nombre'));
+    activosNorm.forEach(a=>{
       const v=a.valor||0;
-      activosFilas.push({nombre:a.nombre||'Activo', tipo:a.tipo||'NO LÍQUIDO', valor:v});
       if(a.tipo==='LÍQUIDO') totalLiquido+=v; else totalNoLiquido+=v;
+      activosFilas.push({
+        nombre: a.nombre||'Activo',
+        subtipo: a._subtipo || a._categoria || '—',
+        categoria: a._categoria || '—',
+        valor: v,
+        participacion: (a._esCompartido && a._porcentajePropio < 100) ? a._porcentajePropio : 100,
+        estructura: estructuraLabel(a._estructuraLegal),
+        liquidez: a._liquidez || (a.tipo==='LÍQUIDO'?'Alta':'Ilíquida'),
+        moneda: a._moneda || 'COP',
+        pais: a._pais || 'Colombia',
+        sector: a._sector || '—',
+        renta: a._ingresoMensual || 0,
+        deuda: a._deudaCOP || 0,
+        neto: a._netoCOP != null ? a._netoCOP : v,
+        reparto: a._reparto === 'muchas' ? 'Repartida' : (a._reparto === 'una' ? 'Una sola' : ''),
+        beneficioTrib: !!a._beneficioTributario,
+        restringido: !!a.restringido
+      });
     });
+    // Compatibilidad: si el Mapa no está disponible, caer a state.activos (versión simple).
+    if(!activosNorm.length){
+      (state.activos||[]).forEach(a=>{
+        const v=a.valor||0;
+        if(a.tipo==='LÍQUIDO') totalLiquido+=v; else totalNoLiquido+=v;
+        activosFilas.push({nombre:a.nombre||'Activo', subtipo:'—', categoria:'—', valor:v, participacion:100,
+          estructura:'—', liquidez:a.tipo==='LÍQUIDO'?'Alta':'Ilíquida', moneda:'COP', pais:'Colombia', sector:'—',
+          renta:0, deuda:0, neto:v, reparto:'', beneficioTrib:false, restringido:!!a.restringido});
+      });
+    }
+    const totalRentaMensual = activosFilas.reduce((s,a)=>s+(a.renta||0),0);
     const totalActivos = totalLiquido+totalNoLiquido;
     const patrimonio = totalActivos - totalDeuda;
     const solvencia = totalDeuda>0 ? totalActivos/totalDeuda : 0;
@@ -10550,6 +13575,16 @@ function showToast(msg, type) {
     if(superavit<0) alertas.push({txt:'Tu salida mensual supera tus ingresos; conviene ajustar gastos.', estado:'rojo'});
     if(ratioConsumo>=.6) alertas.push({txt:'Alta concentración de deuda de consumo ('+pct(ratioConsumo)+').', estado:'rojo'});
 
+    // ── Sección FISCAL ──
+    let fiscal = null;
+    try { fiscal = buildFiscalReportSection(); } catch(e){ console.error('Error sección fiscal informe:', e); fiscal=null; }
+    // ── Sección SUCESORAL ──
+    let sucesion = null;
+    try { sucesion = buildSucesionReportSection(totalActivos); } catch(e){ console.error('Error sección sucesoral informe:', e); sucesion=null; }
+    // ── Diagrama de estructura legal (SVG para el PDF) ──
+    let diagramaSVG = null;
+    try { diagramaSVG = (typeof buildEstructuraDiagramaSVG === 'function') ? buildEstructuraDiagramaSVG(activosNorm) : null; } catch(e){ diagramaSVG=null; }
+
     return {
       cliente: reportClientName(),
       fecha: new Date().toLocaleDateString('es-CO',{day:'numeric',month:'long',year:'numeric'}),
@@ -10560,11 +13595,123 @@ function showToast(msg, type) {
                  hogar:{socio1:state.p5.socio1||'', socio2:state.p5.socio2||'', modo:(state.tablero.couple&&state.tablero.couple.modo)||'proporcional'}},
       gastos: {filas:gastosFilas, detalle:gastosDetalle, totalNec, totalDes, total:totalGastos, anuales:anualesGastos},
       deudas: {filas:deudasFilas, totalDeuda, servicioDeuda, tasaProm, pctConsumoIng, ratioConsumo, ratioApal, soloIntereses},
-      activos: {filas:activosFilas, totalLiquido, totalNoLiquido, total:totalActivos, patrimonio, solvencia, pctLiquidos},
+      activos: {filas:activosFilas, totalLiquido, totalNoLiquido, total:totalActivos, patrimonio, solvencia, pctLiquidos, totalRentaMensual},
       ahorro: {precaucion:ahorroPrec, inversion:ahorroInv, total:totalAhorro, capacidadPct, fondoEmergMeses, fondoEstab, provisiones},
       presupuesto: {regla:reglaRows, uso:usoRows, anual, ingresoRegla, ingresoMensualBase:ingresoMensual, ingresoAnualProrr:(state.p5.ingAnual||0)/12, reglaNombre, reglaOk},
       plan, metas,
-      diagnostico: {fortalezas, alertas}
+      diagnostico: {fortalezas, alertas},
+      fiscal,
+      sucesion,
+      estructuraLegal: buildLegalReportSection(),
+      diagramaSVG
+    };
+  }
+
+  /* ─── Sección FISCAL para el informe M9 ─── */
+  function buildFiscalReportSection(){
+    if(typeof pfImpuestoPatrimonio !== 'function') return null;
+    const f = state.fiscal || {};
+    // Solo incluir si el usuario tocó algo del módulo fiscal (evita una sección vacía).
+    const tocado = f.actividad || (f.resp && (f.resp.iva||f.resp.ica||f.resp.retencion)) || f.regimen || (f.sas && (f.sas.costosNegocio||f.sas.salario)) || (state.activos||[]).length>0;
+    if(!tocado) return null;
+    const decl = (typeof pfDebeDeclarar === 'function') ? pfDebeDeclarar() : null;
+    const renta = (typeof pfRentaEstimada === 'function') ? pfRentaEstimada() : null;
+    const iva = (typeof pfIvaPeriodo === 'function') ? pfIvaPeriodo() : null;
+    const ica = (typeof pfIcaEstimado === 'function') ? pfIcaEstimado() : null;
+    const patrim = pfImpuestoPatrimonio();
+    // Comparación de régimen (solo si hay actividad de negocio con ingresos)
+    let regimen = null;
+    try {
+      if(typeof pfSasEstimado === 'function' && typeof pfRentaEstimada === 'function'){
+        const pn = pfRentaEstimada().impuesto || 0;
+        const sas = pfSasEstimado();
+        const eligS = (typeof pfSasElegibleSimple==='function') ? pfSasElegibleSimple() : {elegible:false};
+        const sasS = (eligS.elegible && typeof pfSasSimpleEstimado==='function') ? pfSasSimpleEstimado() : null;
+        const ops = [{k:'pn', nombre:'Persona natural (como hoy)', total:pn}];
+        if(sas) ops.push({k:'ord', nombre:'SAS · Ordinario', total:sas.total});
+        if(sasS) ops.push({k:'simple', nombre:'SAS · Simple', total:sasS.total});
+        if(ops.length>1){
+          const ganador = ops.reduce((a,b)=> b.total<a.total?b:a);
+          regimen = { ops, ganador:ganador.nombre, ahorroVsHoy: Math.max(0, pn - ganador.total) };
+        }
+      }
+    } catch(e){ regimen=null; }
+    return {
+      declara: decl ? { debe:decl.debe, razones:(decl.razones||[]).map(r=>r.k) } : null,
+      renta: renta ? { ingresos:renta.ingresos||0, baseGravable:renta.baseGravable||0, impuesto:renta.impuesto||0,
+                       retencion:renta.retencion||0, saldo:renta.saldo||0, esSimple:!!renta.esSimple } : null,
+      iva, ica, patrimonio: patrim, regimen
+    };
+  }
+
+  /* ─── Sección SUCESORAL para el informe M9 ─── */
+  function buildSucesionReportSection(totalActivos){
+    const L = (state.fiscal && state.fiscal.legal) || null;
+    if(!L) return null;
+    const tocado = L.estadoCivil || (L.hijosMenores||0)>0 || (L.testamento && L.testamento.tiene!==null) || (L.segurosVida||[]).length>0;
+    if(!tocado) return null;
+    const bruto = totalActivos || 0;
+    const conyugal = L.regimenConyugal === 'sociedad_conyugal';
+    const gananciales = conyugal ? 0.5 : 1;
+    const acervoHeredable = bruto * gananciales;
+    const impuesto = (typeof pfImpuestoHerenciaEstimado === 'function') ? pfImpuestoHerenciaEstimado(acervoHeredable) : 0;
+    const segurosSuma = (L.segurosVida||[]).reduce((s,x)=>s+(x.sumaAsegurada||0),0);
+    const dependientes = (L.hijosMenores||0)+(L.hijosMayoresDependientes||0)+(L.otrosDependientes||0);
+    return {
+      estadoCivil: L.estadoCivil||'—', regimen: conyugal?'Sociedad conyugal':(L.regimenConyugal||'—'),
+      dependientes, hijosMenores:L.hijosMenores||0,
+      tieneTestamento: !!(L.testamento && L.testamento.tiene===true),
+      brutoPatrimonio: bruto, gananciales, acervoHeredable, impuestoHerencia:impuesto,
+      segurosVidaSuma: segurosSuma,
+      liquidezVsImpuesto: segurosSuma - impuesto,
+      guardaDesignada: L.guardaDesignada===true, guardaFalta: (L.hijosMenores||0)>0 && L.guardaDesignada===false
+    };
+  }
+
+
+  /* ─── Sección legal para el informe M9 ─── */
+  function buildLegalReportSection(){
+    if(typeof evaluarEstructuraLegal !== 'function') return null;
+    const L = (state.fiscal && state.fiscal.legal) || null;
+    if(!L) return null;
+    const llenoAlgo =
+      L.estadoCivil ||
+      (L.testamento && L.testamento.tiene !== null) ||
+      (L.avalesTerceros && L.avalesTerceros.tiene !== null) ||
+      (L.pleitosVigentes && L.pleitosVigentes.tieneComoDemandado !== null) ||
+      (L.segurosVida && L.segurosVida.length > 0);
+    if(!llenoAlgo) return null;
+
+    let result;
+    try { result = evaluarEstructuraLegal(); }
+    catch(e){ console.error('Error evaluando estructura legal para informe:', e); return null; }
+
+    const { hallazgos, palancas, resumen } = result;
+    const ordenSev = { alta:0, media:1, info:2, ok:3 };
+    hallazgos.sort((a,b) => (ordenSev[a.sev]||9) - (ordenSev[b.sev]||9));
+
+    return {
+      datos: {
+        estadoCivil: L.estadoCivil || '—',
+        regimen: L.regimenConyugal || '—',
+        dependientes: (L.hijosMenores||0) + (L.hijosMayoresDependientes||0) + (L.otrosDependientes||0),
+        hijosMenores: L.hijosMenores || 0,
+        tieneTestamento: L.testamento && L.testamento.tiene === true,
+        anioTestamento: (L.testamento && L.testamento.anioOtorgamiento) || null,
+        segurosVidaCantidad: (L.segurosVida||[]).length,
+        segurosVidaSuma: (L.segurosVida||[]).reduce((s,x)=>s+(x.sumaAsegurada||0),0),
+        tieneAvales: L.avalesTerceros && L.avalesTerceros.tiene === true,
+        avalesMonto: (L.avalesTerceros && L.avalesTerceros.monto) || 0,
+        tienePleitos: L.pleitosVigentes && L.pleitosVigentes.tieneComoDemandado === true,
+        pleitosMonto: (L.pleitosVigentes && L.pleitosVigentes.montoPretensiones) || 0,
+        tieneInvalidez: (L.coberturas && L.coberturas.invalidez && L.coberturas.invalidez.tiene === true),
+        invalidezRenta: (L.coberturas && L.coberturas.invalidez && L.coberturas.invalidez.rentaMensual) || 0,
+        viviendaProtegida: L.viviendaProtegida === true,
+        avalSociedad: L.avalSociedad === true,
+        protocoloFamiliar: L.protocoloFamiliar === true,
+        guardaDesignada: L.guardaDesignada === true
+      },
+      hallazgos, palancas, resumen
     };
   }
 
@@ -10685,17 +13832,41 @@ function showToast(msg, type) {
     } else content.push({text:'No hay deudas registradas.', fontSize:10, color:'#6a6f6d'});
 
     // ── Activos y patrimonio ──
-    content.push({text:'Activos y patrimonio', style:'h1', pageBreak:'before', margin:[0,0,0,8]});
-    content.push(rptTable(['Activo','Tipo','Valor'], d.activos.filas.map(a=>[rptCell(a.nombre), rptCell(a.tipo), rptCellR(fmt(a.valor))]), ['*',100,120]));
-    content.push({text:'Líquidos: ' + fmt(d.activos.totalLiquido) + '  ·  No líquidos: ' + fmt(d.activos.totalNoLiquido) + '  ·  Total: ' + fmt(d.activos.total), fontSize:9, bold:true, margin:[0,0,0,6]});
+    content.push({text:'Activos y patrimonio', style:'h1', pageBreak:'before', pageOrientation:'landscape', margin:[0,0,0,8]});
+    content.push({text:'Detalle completo de cada activo, con la parte que es tuya, a nombre de quién está y la renta que genera.', fontSize:9, color:'#6a6f6d', margin:[0,0,0,6]});
+    const aHead = ['Activo','Tipo de bien','A nombre de','Tu %','Valor (tu parte)','Renta/mes','Deuda','Neto','Sector','Ubicación'];
+    const aRows = d.activos.filas.map(a=>{
+      const marcas=[];
+      if(a.reparto) marcas.push(a.reparto==='Repartida'?'fondo diversificado':'una sola empresa');
+      if(a.beneficioTrib) marcas.push('beneficio tributario');
+      if(a.restringido) marcas.push('restringido');
+      const nombreCell = marcas.length
+        ? {stack:[{text:a.nombre, fontSize:8.5}, {text:marcas.join(' · '), fontSize:7, italics:true, color:'#6a6f6d'}]}
+        : {text:a.nombre, fontSize:8.5};
+      return [
+        nombreCell,
+        {text:a.subtipo, fontSize:8},
+        {text:a.estructura, fontSize:8},
+        {text:a.participacion + '%', fontSize:8.5, alignment:'right'},
+        {text:fmt(a.valor), fontSize:8.5, alignment:'right'},
+        {text:a.renta>0?fmt(a.renta):'—', fontSize:8.5, alignment:'right'},
+        {text:a.deuda>0?fmt(a.deuda):'—', fontSize:8.5, alignment:'right'},
+        {text:fmt(a.neto), fontSize:8.5, alignment:'right'},
+        {text:a.sector||'—', fontSize:8},
+        {text:a.moneda!=='COP' ? (a.pais+' · '+a.moneda) : a.pais, fontSize:8}
+      ];
+    });
+    content.push(rptTable(aHead, aRows, [104,92,78,28,82,64,64,82,74,64]));
+    content.push({text:'Líquidos: ' + fmt(d.activos.totalLiquido) + '  ·  No líquidos: ' + fmt(d.activos.totalNoLiquido) + '  ·  Total: ' + fmt(d.activos.total) + (d.activos.totalRentaMensual>0?('  ·  Renta mensual de los activos: ' + fmt(d.activos.totalRentaMensual)):''), fontSize:9, bold:true, margin:[0,2,0,6]});
     content.push(rptKpiGrid([
       {label:'Patrimonio neto (activos − deuda)', value:fmt(d.activos.patrimonio), color:d.activos.patrimonio>=0?'#1a7f4b':'#b3261e'},
       {label:'Nivel de solvencia', value: d.deudas.totalDeuda>0?(d.activos.solvencia.toFixed(2)+'×'):'Sin deuda'},
       {label:'% activos líquidos', value:pct(d.activos.pctLiquidos)}
     ]));
+    content.push({text:'Los valores son la parte que te corresponde según tu participación. La renta es el ingreso mensual real que genera cada activo.', fontSize:8, italics:true, color:'#9aa0a8', margin:[0,4,0,0]});
 
-    // ── Ahorro y solvencia ──
-    content.push({text:'Ahorro y solvencia', style:'h1', pageBreak:'before', margin:[0,0,0,8]});
+    // ── Ahorro y solvencia (vuelve a vertical) ──
+    content.push({text:'Ahorro y solvencia', style:'h1', pageBreak:'before', pageOrientation:'portrait', margin:[0,0,0,8]});
     content.push(rptTable(['Concepto','Monto mensual'], [
       [rptCell('Ahorro de precaución (colchón)'), rptCellR(fmt(d.ahorro.precaucion))],
       [rptCell('Ahorro / inversión'), rptCellR(fmt(d.ahorro.inversion))],
@@ -10760,6 +13931,89 @@ function showToast(msg, type) {
       ]), ['*','auto','auto',42,'auto',54,90]));
     } else content.push({text:'No has registrado metas.', fontSize:10, color:'#6a6f6d'});
 
+    // ── Diagnóstico FISCAL (M11) ──
+    if(d.fiscal){
+      const F = d.fiscal;
+      content.push({text:'Diagnóstico fiscal', style:'h1', pageBreak:'before', margin:[0,0,0,8]});
+      content.push({text:'Estimación de planeación con tus datos declarados. No reemplaza la liquidación oficial ni el trabajo de tu contador.', fontSize:9, color:'#6a6f6d', margin:[0,0,0,8]});
+      // Renta
+      if(F.declara){
+        content.push({text: F.declara.debe ? 'Obligado a declarar renta' : 'Por ahora no estaría obligado a declarar renta',
+          fontSize:11, bold:true, color: F.declara.debe?'#9a6b00':'#1a7f4b', margin:[0,0,0,4]});
+        if(F.declara.debe && F.declara.razones.length) content.push({text:'Por: ' + F.declara.razones.join(', '), fontSize:9, color:'#5a635f', margin:[0,0,0,6]});
+      }
+      if(F.renta){
+        content.push(rptSection('Renta estimada'));
+        content.push(rptTable(['Concepto','Valor'], [
+          [rptCell('Ingresos del año'), rptCellR(fmt(F.renta.ingresos))],
+          [rptCell('Base gravable'), rptCellR(fmt(F.renta.baseGravable))],
+          [rptCell('Impuesto de renta estimado'), rptCellR(fmt(F.renta.impuesto))],
+          [rptCell('Retención en la fuente'), rptCellR(fmt(F.renta.retencion))],
+          [{text:'Saldo a pagar estimado', bold:true, fontSize:9}, {text:fmt(F.renta.saldo), bold:true, fontSize:9, alignment:'right'}]
+        ], ['*',150]));
+      }
+      // IVA / ICA
+      const tribRows=[];
+      if(F.iva) tribRows.push([rptCell('IVA del período (generado − descontable)'), rptCellR(fmt(F.iva.saldo))]);
+      if(F.ica && !F.ica.integradoSimple && !F.ica.sinTarifa) tribRows.push([rptCell('ICA estimado' + (F.ica.municipio?(' · '+F.ica.municipio):'')), rptCellR(fmt(F.ica.valor||0))]);
+      if(F.ica && F.ica.integradoSimple) tribRows.push([rptCell('ICA'), rptCell('Integrado en el régimen Simple')]);
+      if(tribRows.length){ content.push(rptSection('Otros impuestos')); content.push(rptTable(['Concepto','Valor'], tribRows, ['*',150])); }
+      // Impuesto al patrimonio
+      if(F.patrimonio){
+        const P=F.patrimonio;
+        content.push(rptSection('Impuesto al patrimonio'));
+        content.push(rptTable(['Concepto','Valor'], [
+          [rptCell('Patrimonio bruto'), rptCellR(fmt(P.bruto))],
+          [rptCell('− Deudas'), rptCellR('−'+fmt(P.deudas))],
+          [{text:'Patrimonio líquido', bold:true, fontSize:9}, {text:fmt(P.liquido), bold:true, fontSize:9, alignment:'right'}],
+          [rptCell('Umbral del impuesto (72.000 UVT)'), rptCellR(fmt(P.umbral))],
+          [rptCell('Impuesto al patrimonio estimado'), rptCellR(fmt(P.impuesto))]
+        ], ['*',150]));
+        content.push({text: P.obligado ? 'Supera el umbral: obligado a declarar y pagar impuesto al patrimonio (Formulario 420).'
+          : (P.enZonaTemporal ? 'Entre 40.000 y 72.000 UVT: podría quedar obligado por el Decreto 1474/2025 (en revisión). Confírmalo con tu contador.'
+          : 'Por debajo del umbral: por ahora no pagaría impuesto al patrimonio.'),
+          fontSize:9, color: P.obligado?'#9a6b00':(P.enZonaTemporal?'#9a6b00':'#1a7f4b'), margin:[0,4,0,4]});
+      }
+      // Régimen
+      if(F.regimen){
+        content.push(rptSection('Comparación de régimen'));
+        content.push(rptTable(['Opción','Costo total anual estimado'],
+          F.regimen.ops.map(o=>[ {text:o.nombre + (o.nombre===F.regimen.ganador?'  (más económico)':''), fontSize:9, bold:o.nombre===F.regimen.ganador}, rptCellR(fmt(o.total)) ]), ['*',170]));
+        if(F.regimen.ahorroVsHoy>0) content.push({text:'Ahorro potencial frente a como estás hoy: ' + fmt(F.regimen.ahorroVsHoy) + ' al año.', fontSize:9, bold:true, color:'#1a7f4b', margin:[0,4,0,0]});
+        content.push({text:'La conveniencia de una SAS depende de tus costos reales, tu reparto de utilidades y tu situación completa. Tu contador lo valida.', fontSize:8, italics:true, color:'#9aa0a8', margin:[0,4,0,0]});
+      }
+    }
+
+    // ── Planeación sucesoral (M14) ──
+    if(d.sucesion){
+      const S = d.sucesion;
+      content.push({text:'Planeación sucesoral', style:'h1', pageBreak:'before', margin:[0,0,0,8]});
+      content.push({text:'Qué pasaría con tu patrimonio y tu familia si faltas. Estimación con tus datos declarados.', fontSize:9, color:'#6a6f6d', margin:[0,0,0,8]});
+      content.push(rptTable(['Dato','Valor'], [
+        [rptCell('Estado civil'), rptCell(S.estadoCivil)],
+        [rptCell('Régimen patrimonial'), rptCell(S.regimen)],
+        [rptCell('Personas que dependen de ti'), rptCellR(String(S.dependientes))],
+        [rptCell('Hijos menores de edad'), rptCellR(String(S.hijosMenores))],
+        [rptCell('¿Tiene testamento?'), rptCell(S.tieneTestamento?'Sí':'No')]
+      ], ['*',150]));
+      content.push(rptSection('Impuesto de herencia estimado (ganancia ocasional)'));
+      const filasHer = [[rptCell('Patrimonio bruto'), rptCellR(fmt(S.brutoPatrimonio))]];
+      if(S.gananciales < 1) filasHer.push([rptCell('− Gananciales del cónyuge (sociedad conyugal: 50%)'), rptCellR('−'+fmt(S.brutoPatrimonio - S.acervoHeredable))]);
+      filasHer.push([{text:'Base que se hereda (acervo)', bold:true, fontSize:9}, {text:fmt(S.acervoHeredable), bold:true, fontSize:9, alignment:'right'}]);
+      filasHer.push([rptCell('Impuesto de herencia estimado (15% con exenciones)'), rptCellR(fmt(S.impuestoHerencia))]);
+      content.push(rptTable(['Concepto','Valor'], filasHer, ['*',150]));
+      content.push(rptSection('Liquidez para tus herederos'));
+      content.push(rptTable(['Concepto','Valor'], [
+        [rptCell('Seguros de vida con beneficiario (llegan directo)'), rptCellR(fmt(S.segurosVidaSuma))],
+        [rptCell('Impuesto que tendrían que pagar'), rptCellR(fmt(S.impuestoHerencia))],
+        [{text: S.liquidezVsImpuesto>=0?'Cubierto por los seguros':'Faltante de caja para pagar el impuesto', bold:true, fontSize:9},
+         {text: fmt(Math.abs(S.liquidezVsImpuesto)), bold:true, fontSize:9, alignment:'right', color: S.liquidezVsImpuesto>=0?'#1a7f4b':'#b3261e'}]
+      ], ['*',150]));
+      if(S.liquidezVsImpuesto < 0) content.push({text:'⚠ Tus herederos no tendrían con qué pagar el impuesto sin vender bienes. Un seguro de vida cubre ese faltante.', fontSize:9, color:'#b3261e', bold:true, margin:[0,4,0,0]});
+      if(S.guardaFalta) content.push({text:'⚠ Tienes hijos menores y no está definido quién los cuidaría ni administraría su herencia. Conviene dejarlo por escrito.', fontSize:9, color:'#b3261e', margin:[0,4,0,0]});
+      content.push({text:'Estimación informativa. El testamento y las capitulaciones se hacen ante notaría con acompañamiento profesional.', fontSize:8, italics:true, color:'#9aa0a8', margin:[0,6,0,0]});
+    }
+
     // ── Diagnóstico automático ──
     content.push({text:'Diagnóstico automático', style:'h1', pageBreak:'before', margin:[0,0,0,8]});
     content.push({text:'Fortalezas', style:'h2', margin:[0,4,0,5]});
@@ -10768,6 +14022,120 @@ function showToast(msg, type) {
     content.push({text:'Alertas y puntos a trabajar', style:'h2', margin:[0,10,0,5]});
     if(d.diagnostico.alertas.length) d.diagnostico.alertas.forEach(a=>content.push({text:'• ' + a.txt, fontSize:9.5, color:rptSemHex(a.estado), margin:[0,0,0,3]}));
     else content.push({text:'Sin alertas. Buen estado general.', fontSize:9.5, color:'#1a7f4b'});
+
+    // ── Estructura Legal Patrimonial (M13) ──
+    if(d.estructuraLegal){
+      const EL = d.estructuraLegal;
+      content.push({text:'Estructura Legal Patrimonial', style:'h1', pageBreak:'before', margin:[0,0,0,8]});
+      content.push({
+        text:'Este análisis complementa el diagnóstico fiscal con la lente jurídica. Detecta riesgos de protección patrimonial, planeación sucesoral, cumplimiento normativo y adecuación de vehículos jurídicos con base en los datos declarados.',
+        fontSize:9.5, color:'#5a635f', margin:[0,0,0,10]
+      });
+
+      content.push({text:'Datos declarados', style:'h2', margin:[0,4,0,6]});
+      const dep = EL.datos;
+      const estadoCivilLabel = {
+        soltero:'Soltero(a)', casado:'Casado(a)', union_marital:'Unión marital de hecho',
+        divorciado:'Divorciado(a)', viudo:'Viudo(a)'
+      }[dep.estadoCivil] || dep.estadoCivil || '—';
+      const regimenLabel = {
+        sociedad_conyugal:'Sociedad conyugal / patrimonial',
+        capitulaciones:'Capitulaciones (separación de bienes)',
+        no_se:'No definido'
+      }[dep.regimen] || '—';
+
+      content.push(rptTable(
+        ['Concepto','Valor'],
+        [
+          [rptCell('Estado civil'), rptCell(estadoCivilLabel)],
+          [rptCell('Régimen económico'), rptCell(regimenLabel)],
+          [rptCell('Personas dependientes'), rptCell(String(dep.dependientes)+(dep.hijosMenores>0?' (incluye '+dep.hijosMenores+' menor'+(dep.hijosMenores>1?'es':'')+')':''))],
+          [rptCell('Testamento vigente'), rptCell(dep.tieneTestamento ? ('Sí'+(dep.anioTestamento?' — otorgado en '+dep.anioTestamento:'')) : 'No')],
+          [rptCell('Seguros de vida'), rptCell(dep.segurosVidaCantidad>0 ? (dep.segurosVidaCantidad+' pólizas · suma total '+fmt(dep.segurosVidaSuma)) : 'No registrados')],
+          [rptCell('Avales a terceros'), rptCell(dep.tieneAvales ? fmt(dep.avalesMonto) : 'No')],
+          [rptCell('Procesos judiciales como demandado'), rptCell(dep.tienePleitos ? ('Sí — pretensiones '+fmt(dep.pleitosMonto)) : 'No')],
+          [rptCell('Seguro de invalidez / incapacidad'), rptCell(dep.tieneInvalidez ? ('Sí'+(dep.invalidezRenta>0?(' — renta '+fmt(dep.invalidezRenta)+'/mes'):'')) : 'No registrado')],
+          [rptCell('Vivienda protegida (patrimonio de familia / afectación)'), rptCell(dep.viviendaProtegida ? 'Sí' : 'No')],
+          [rptCell('Aval personal sobre deudas de tu sociedad'), rptCell(dep.avalSociedad ? 'Sí (levanta la protección de la sociedad)' : 'No')],
+          [rptCell('Protocolo familiar / acuerdo entre socios'), rptCell(dep.protocoloFamiliar ? 'Sí' : 'No')],
+          [rptCell('Guarda de menores designada'), rptCell(dep.guardaDesignada ? 'Sí' : (dep.hijosMenores>0?'No':'No aplica'))]
+        ],
+        ['*', '*']
+      ));
+
+      // Diagrama de estructura legal (SVG)
+      if(d.diagramaSVG && d.diagramaSVG.svg){
+        content.push({text:'Cómo está organizado tu patrimonio', style:'h2', margin:[0,14,0,6]});
+        const maxW = 500;
+        const w = Math.min(d.diagramaSVG.width, maxW);
+        content.push({svg: d.diagramaSVG.svg, width: w, margin:[0,0,0,6]});
+        content.push({text:'Agrupado por tipo de bien. Lo que cuelga de una sociedad o figura está un paso separado de ti; lo que está a tu nombre responde directamente contigo.', fontSize:8, italics:true, color:'#9aa0a8', margin:[0,0,0,4]});
+      }
+
+      const noOK = EL.hallazgos.filter(h => h.sev !== 'ok');
+      if(noOK.length === 0){
+        content.push({text:'Sin hallazgos legales con los datos actuales.',
+          fontSize:10, color:'#1a7f4b', margin:[0,10,0,4]});
+      } else {
+        content.push({text:'Hallazgos ('+noOK.length+')', style:'h2', margin:[0,10,0,6]});
+        noOK.forEach(h => {
+          const colorSev = h.sev==='alta' ? '#b3261e' : (h.sev==='media' ? '#9a6b00' : '#1f6f8b');
+          const labelSev = h.sev==='alta' ? 'ALTA' : (h.sev==='media' ? 'MEDIA' : 'INFO');
+          content.push({
+            table:{
+              widths:['auto','*'],
+              body:[[
+                { text:labelSev, color:'#ffffff', fillColor:colorSev, fontSize:8, bold:true, alignment:'center', margin:[6,4,6,4] },
+                {
+                  stack:[
+                    { text:h.titulo, bold:true, fontSize:10.5, color:'#16201c', margin:[0,2,0,3] },
+                    { text:h.descripcion, fontSize:9, color:'#3a423f', margin:[0,0,0,4] },
+                    h.accionConcreta ? {
+                      text:[{text:'Qué hacer: ', bold:true, fontSize:9}, {text:h.accionConcreta, fontSize:9}],
+                      margin:[0,0,0,3]
+                    } : null,
+                    h.profesionalRequerido || h.estimacionCosto ? {
+                      text:[
+                        h.profesionalRequerido ? {text:'Profesional: '+h.profesionalRequerido+'.  ', fontSize:8.5, color:'#5a635f'} : '',
+                        h.estimacionCosto ? {text:'Costo: '+h.estimacionCosto, fontSize:8.5, color:'#5a635f'} : ''
+                      ],
+                      margin:[0,0,0,3]
+                    } : null,
+                    h.norma ? { text:'Norma: '+h.norma, fontSize:8, italics:true, color:'#5a635f' } : null
+                  ].filter(x => x !== null),
+                  margin:[8,3,4,3]
+                }
+              ]]
+            },
+            layout:{
+              hLineWidth:()=>0.5, vLineWidth:()=>0,
+              hLineColor:()=>'#e3e6e5',
+              paddingTop:()=>0, paddingBottom:()=>0
+            },
+            margin:[0,0,0,6]
+          });
+        });
+      }
+
+      if(EL.palancas && EL.palancas.length > 0){
+        content.push({text:'Palancas recomendadas', style:'h2', margin:[0,12,0,6]});
+        EL.palancas.forEach(p => {
+          content.push({
+            stack:[
+              { text:'→ '+p.titulo, bold:true, fontSize:10, color:'#0e4d3a', margin:[0,0,0,2] },
+              { text:p.descripcion, fontSize:9, color:'#3a423f', margin:[0,0,0,3] },
+              p.estimacionCosto ? { text:'Costo referencial: '+p.estimacionCosto, fontSize:8.5, color:'#5a635f' } : null
+            ].filter(x => x !== null),
+            margin:[0,0,0,6]
+          });
+        });
+      }
+
+      content.push({
+        text:'Análisis informativo con base en normativa colombiana vigente y datos declarados. No sustituye asesoría legal para actos concretos (testamentos, capitulaciones, constitución de sociedades). Las estimaciones de costo son órdenes de magnitud referenciales.',
+        fontSize:8, italics:true, color:'#5a635f', margin:[0,10,0,0]
+      });
+    }
 
     // ── Notas ──
     content.push({text:'Notas', style:'h1', pageBreak:'before', margin:[0,0,0,8]});

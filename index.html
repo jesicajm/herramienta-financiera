@@ -15,7 +15,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<link rel="stylesheet" href="styles.css?v=59">
+<link rel="stylesheet" href="styles.css?v=89">
 <style>
 /* ═══ Simulador de Deuda (Módulo 7) ═══ */
 #modulo-7 .ds-hint{font-size:13px;line-height:1.5;color:rgba(0,0,0,.55);margin:0 0 14px}
@@ -620,6 +620,21 @@
       Diagnóstico fiscal
       <span class="sb-dot" id="dot-11"></span>
     </a>
+    <a class="sb-item" data-module="13" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2l7 4v6c0 5-3 9-7 10-4-1-7-5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>
+      Estructura legal
+      <span class="sb-dot" id="dot-13"></span>
+    </a>
+    <a class="sb-item" data-module="14" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      Planificación sucesoral
+      <span class="sb-dot" id="dot-14"></span>
+    </a>
+    <a class="sb-item" data-module="15" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polygon points="12 2 22 8 12 14 2 8 12 2"/><polyline points="2 13 12 19 22 13"/><polyline points="2 17.5 12 23.5 22 17.5"/></svg>
+      Evaluación 4 Capas
+      <span class="sb-dot" id="dot-15"></span>
+    </a>
   </aside>
 
   <!-- Main content -->
@@ -1008,6 +1023,19 @@
           Agregar objetivo
         </button>
       </div>
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg></div>
+          <h3>Respaldo para emergencias</h3>
+        </div>
+        <p class="summary-note" style="margin-top:0">Si mañana tuvieras una emergencia y tu ahorro no alcanzara, ¿cuánto podrías disponer de inmediato con tus tarjetas de crédito o cupos ya aprobados que hoy no estás usando?</p>
+        <div class="field" style="max-width:340px">
+          <label class="label" for="m4-cupos">Cupo aprobado disponible</label>
+          <input type="text" class="input" id="m4-cupos" placeholder="0" autocomplete="off">
+          <span class="field-hint">Es un respaldo, no un ahorro: si lo usas, pagas intereses. Lo tenemos en cuenta como una salida de emergencia, aparte de tu colchón. Si no tienes tarjetas o prefieres no contarlas, déjalo en cero.</span>
+        </div>
+      </div>
+
       <div class="kpi-grid" id="m4-kpis"></div>
       <div class="actions">
         <button class="btn btn-secondary" onclick="navigateTo(5)">Siguiente
@@ -1052,9 +1080,13 @@
           <h3>Fondo de provisiones <span class="info-tip" data-def="fondo_provisiones" tabindex="0">i</span></h3>
         </div>
         <div class="prov-config-grid">
-          <div class="mr-field">
-            <label>Saldo actual del fondo</label>
-            <input class="money-input" id="prov-saldo-actual" placeholder="0">
+          <div class="prov-stat prov-stat--input">
+            <div class="prov-stat-label">Saldo actual del fondo</div>
+            <div class="prov-stat-input-wrap">
+              <span class="prov-stat-prefix serif">COP $</span>
+              <input class="prov-stat-input-el serif" id="prov-saldo-actual" placeholder="0" inputmode="numeric">
+            </div>
+            <div class="prov-stat-sub">Lo que ya tienes ahorrado</div>
           </div>
           <div class="prov-stat">
             <div class="prov-stat-label">Aporte mensual sugerido</div>
@@ -1850,6 +1882,406 @@
       <div id="pg-screen"></div>
     </div>
 
+
+    <!-- ═══ MÓDULO 13 · ESTRUCTURA LEGAL PATRIMONIAL ═══ -->
+    <div id="modulo-13" class="module">
+
+      <div class="pf-intro">
+        <h2 class="pf-h">Tu <em>estructura legal</em> patrimonial</h2>
+        <p class="pf-sub">Con tus bienes ya registrados y unas preguntas cortas, revisamos si tu patrimonio está bien organizado desde el punto de vista legal. Detectamos: cómo protegerte frente a demandas, qué pasa con tus bienes si tú faltas, obligaciones que puedas tener pendientes con la DIAN, y si conviene mover algún bien a una estructura mejor.</p>
+      </div>
+
+      <!-- ─── BLOQUE 1 · Situación familiar ─── -->
+      <div class="pf-card">
+        <div class="pf-card-head">
+          <span class="pf-num">1</span>
+          <h3>Tu situación familiar<small>Define quién comparte bienes contigo y quién tiene derechos por ley</small></h3>
+        </div>
+
+        <div class="pf-grid2">
+          <div class="pf-field">
+            <label>Estado civil <span class="info-tip" data-def="leg_estado_civil" tabindex="0">i</span></label>
+            <select id="leg-estado-civil" class="pf-select">
+              <option value="">Selecciona</option>
+              <option value="soltero">Soltero(a)</option>
+              <option value="casado">Casado(a)</option>
+              <option value="union_marital">Unión libre</option>
+              <option value="divorciado">Divorciado(a)</option>
+              <option value="viudo">Viudo(a)</option>
+            </select>
+          </div>
+          <div class="pf-field" id="leg-anio-union-wrap" style="display:none">
+            <label>Año aproximado en que empezaron a convivir <span class="info-tip" data-def="leg_union_marital" tabindex="0">i</span></label>
+            <div class="pf-inp"><input type="text" id="leg-anio-union" inputmode="numeric" maxlength="4" placeholder="Ej: 2019"></div>
+          </div>
+        </div>
+
+        <div id="leg-regimen-wrap" style="display:none;margin-top:14px">
+          <div class="pf-field">
+            <label>¿Cómo manejan los bienes ustedes dos? <span class="info-tip" data-def="leg_regimen_conyugal" tabindex="0">i</span></label>
+            <select id="leg-regimen-conyugal" class="pf-select">
+              <option value="">Selecciona</option>
+              <option value="sociedad_conyugal">Todo lo que compramos es de los dos al 50% (el régimen normal)</option>
+              <option value="capitulaciones">Firmamos capitulaciones para mantener bienes separados</option>
+              <option value="no_se">No estoy seguro</option>
+            </select>
+          </div>
+          <p class="pf-note" style="margin-top:8px">Si nunca firmaste capitulaciones en notaría, tu régimen es el estándar: todo lo comprado durante la unión es de los dos al 50%, aunque esté a nombre de uno solo.</p>
+        </div>
+
+        <div class="pf-label" style="margin-top:20px">Personas que dependen económicamente de ti</div>
+        <div class="pf-grid2">
+          <div class="pf-field">
+            <label>Hijos menores de 18 años</label>
+            <div class="pf-inp"><input type="text" id="leg-hijos-menores" inputmode="numeric" placeholder="0"></div>
+          </div>
+          <div class="pf-field">
+            <label>Hijos mayores que aún dependen de ti</label>
+            <div class="pf-inp"><input type="text" id="leg-hijos-mayores" inputmode="numeric" placeholder="0"></div>
+          </div>
+          <div class="pf-field">
+            <label>Otros dependientes (padres, familiares con discapacidad)</label>
+            <div class="pf-inp"><input type="text" id="leg-otros-dep" inputmode="numeric" placeholder="0"></div>
+          </div>
+        </div>
+        <p class="pf-note" style="margin-top:8px">Con este dato calibramos las sugerencias de testamento, seguro de vida y planeación familiar. Es diferente de los dependientes que declaras para deducciones de renta (que tienen otros requisitos).</p>
+
+        <div id="leg-gasto-familia-wrap" style="display:none;margin-top:20px">
+          <div class="pf-field">
+            <label>¿Cuánto necesitaría tu familia al mes para vivir bien si tú faltas? <span class="info-tip" data-def="leg_gasto_familia" tabindex="0">i</span></label>
+            <div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="leg-gasto-familia" inputmode="numeric" placeholder="0"></div>
+          </div>
+          <p class="pf-note" style="margin-top:8px">Piensa en: arriendo o hipoteca, servicios, mercado, colegios, salud, transporte, y un margen razonable de otros gastos. Con esto simulamos cuánto tiempo alcanzarían tus recursos líquidos y calculamos la suma asegurada ideal de un seguro de vida.</p>
+        </div>
+      </div>
+
+      <!-- ─── BLOQUE 2 · Planeación sucesoral ─── -->
+      <div class="pf-card">
+        <div class="pf-card-head">
+          <span class="pf-num">2</span>
+          <h3>Qué pasa con tus bienes si tú faltas<small>Testamento, poderes y voluntad anticipada</small></h3>
+        </div>
+
+        <div class="pf-grid2">
+          <div class="pf-field">
+            <label>¿Tienes testamento firmado en notaría? <span class="info-tip" data-def="leg_testamento" tabindex="0">i</span></label>
+            <select id="leg-testamento-tiene" class="pf-select">
+              <option value="">Selecciona</option>
+              <option value="si">Sí</option>
+              <option value="no">No</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="leg-testamento-detalle" class="pf-grid2" style="display:none;margin-top:14px">
+          <div class="pf-field">
+            <label>¿De qué tipo es? <span class="info-tip" data-def="leg_testamento_tipo" tabindex="0">i</span></label>
+            <select id="leg-testamento-tipo" class="pf-select">
+              <option value="">Selecciona</option>
+              <option value="abierto">Abierto (lo dictaste al notario, es el más común)</option>
+              <option value="cerrado">Cerrado (lo entregaste al notario en un sobre sellado)</option>
+              <option value="olografo">Escrito a mano por ti (poco frecuente)</option>
+              <option value="no_se">No estoy seguro</option>
+            </select>
+          </div>
+          <div class="pf-field">
+            <label>¿En qué año lo firmaste?</label>
+            <div class="pf-inp"><input type="text" id="leg-testamento-anio" inputmode="numeric" maxlength="4" placeholder="Ej: 2020"></div>
+          </div>
+          <div class="pf-field" style="grid-column:1/-1">
+            <label>¿Lo has revisado después de cambios importantes en tu vida? (matrimonio, hijos, nuevos bienes o venta de bienes importantes)</label>
+            <select id="leg-testamento-revisado" class="pf-select">
+              <option value="">Selecciona</option>
+              <option value="si">Sí, todavía refleja lo que quiero</option>
+              <option value="no">No, no lo he revisado</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="pf-label" style="margin-top:20px">¿Tienes estos documentos firmados? (opcional)</div>
+        <div class="pf-toggles">
+          <span class="pf-tgl" id="leg-poder-admin"><span class="pf-box"></span>Poder para que mi pareja o un familiar administre mis bienes si me incapacito</span>
+          <span class="pf-tgl" id="leg-poder-directiva"><span class="pf-box"></span>Documento con mis decisiones médicas anticipadas (voluntad anticipada)</span>
+        </div>
+        <p class="pf-note" style="margin-top:10px">El <strong>poder general</strong> se firma en notaría y sirve para que alguien de tu confianza pueda hacer trámites por ti (bancos, DIAN, notarías) si tienes un accidente o enfermedad que te deje incapacitado. La <strong>voluntad anticipada</strong> es donde dejas por escrito qué tratamientos médicos aceptas o rechazas si un día no puedes hablar por ti (Ley 1733 de 2014).</p>
+        <div id="leg-guarda-wrap" style="display:none;margin-top:20px">
+          <div class="pf-field">
+            <label>Si tú y tu pareja faltaran, ¿ya dejaron dicho quién criaría a sus hijos y quién manejaría la plata que les quede?</label>
+            <select id="leg-guarda-designada" class="pf-select">
+              <option value="">Selecciona</option>
+              <option value="si">Sí, está definido por escrito</option>
+              <option value="no">No lo hemos definido</option>
+              <option value="no_se">No estoy seguro</option>
+            </select>
+          </div>
+          <p class="pf-note" style="margin-top:10px">Son dos cosas distintas y ambas importan: quién cuida a los niños, y quién administra lo que heredan hasta que sean mayores. Si no queda dicho, lo decide un juez, y eso puede tardar y no coincidir con lo que ustedes habrían querido.</p>
+        </div>
+      </div>
+
+      <!-- ─── BLOQUE 3 · Seguros de vida como vehículo ─── -->
+      <div class="pf-card">
+        <div class="pf-card-head">
+          <span class="pf-num">3</span>
+          <h3>Seguros de vida<small>Protección familiar y liquidez si tú faltas</small></h3>
+        </div>
+        <p class="pf-note" style="margin-top:0">Registra aquí las pólizas de seguro de vida donde tú eres el asegurado. Estos son los seguros donde, si tú faltas, la aseguradora paga una suma de dinero a tu familia. No incluyas seguros de ahorro o inversión que ya registraste como activo en tu Mapa Patrimonial. Lo importante en este bloque es <strong>a quién le paga la aseguradora</strong> cuando tú faltas.</p>
+
+        <div id="leg-seguros-list"></div>
+
+        <button class="btn-add" id="leg-add-seguro" type="button" style="margin-top:10px">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Agregar póliza
+        </button>
+      </div>
+
+      <!-- ─── BLOQUE 4 · Contingencias externas ─── -->
+      <div class="pf-card">
+        <div class="pf-card-head">
+          <span class="pf-num">4</span>
+          <h3>Deudas o pleitos que puedan afectar tu patrimonio<small>Avales que has firmado y procesos judiciales en tu contra</small></h3>
+        </div>
+
+        <div class="pf-grid2">
+          <div class="pf-field">
+            <label>¿Has firmado como aval o fiador de deudas de otras personas o empresas? <span class="info-tip" data-def="leg_avales" tabindex="0">i</span></label>
+            <select id="leg-avales-tiene" class="pf-select">
+              <option value="">Selecciona</option>
+              <option value="si">Sí</option>
+              <option value="no">No</option>
+            </select>
+          </div>
+        </div>
+        <div id="leg-avales-detalle" style="display:none;margin-top:14px">
+          <div class="pf-grid2">
+            <div class="pf-field">
+              <label>¿Cuánto suman esas deudas hoy?</label>
+              <div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="leg-avales-monto" inputmode="numeric" placeholder="0"></div>
+            </div>
+            <div class="pf-field">
+              <label>¿A quién respaldaste y para qué?</label>
+              <div class="pf-inp"><input type="text" id="leg-avales-descripcion" placeholder="Ej: A mi hermano en su hipoteca"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="pf-grid2" style="margin-top:20px">
+          <div class="pf-field">
+            <label>¿Tienes algún proceso judicial abierto donde te están demandando a ti? <span class="info-tip" data-def="leg_pleitos" tabindex="0">i</span></label>
+            <select id="leg-pleitos-tiene" class="pf-select">
+              <option value="">Selecciona</option>
+              <option value="si">Sí</option>
+              <option value="no">No</option>
+            </select>
+          </div>
+        </div>
+        <div id="leg-pleitos-detalle" style="display:none;margin-top:14px">
+          <div class="pf-grid2">
+            <div class="pf-field">
+              <label>¿Cuánto te están reclamando?</label>
+              <div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="leg-pleitos-monto" inputmode="numeric" placeholder="0"></div>
+            </div>
+            <div class="pf-field">
+              <label>¿De qué tipo es el proceso?</label>
+              <div class="pf-inp"><input type="text" id="leg-pleitos-descripcion" placeholder="Ej: Laboral, civil, contractual…"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── BLOQUE 5 · Coberturas de responsabilidad (solo si aplica) ─── -->
+      <div id="leg-coberturas-wrap" class="pf-card" style="display:none">
+        <div class="pf-card-head">
+          <span class="pf-num">5</span>
+          <h3 id="leg-coberturas-title">Coberturas de responsabilidad<small id="leg-coberturas-sub">Detectamos que tu actividad o rol requiere pólizas específicas</small></h3>
+        </div>
+
+        <div id="leg-rc-wrap" style="display:none">
+          <div class="pf-grid2">
+            <div class="pf-field">
+              <label>¿Tienes póliza de responsabilidad civil profesional? <span class="info-tip" data-def="leg_rc_profesional" tabindex="0">i</span></label>
+              <select id="leg-rc-tiene" class="pf-select">
+                <option value="">Selecciona</option>
+                <option value="si">Sí, la tengo activa</option>
+                <option value="no">No, no tengo</option>
+                <option value="no_se">No estoy seguro</option>
+              </select>
+            </div>
+            <div class="pf-field" id="leg-rc-monto-wrap" style="display:none">
+              <label>¿Cuál es la suma asegurada?</label>
+              <div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="leg-rc-monto" inputmode="numeric" placeholder="0"></div>
+            </div>
+          </div>
+          <p class="pf-note" style="margin-top:10px">La póliza de <strong>responsabilidad civil profesional</strong> te cubre si un cliente te demanda personalmente por un error en tu trabajo (mala praxis médica, dictamen contable errado, diseño con fallas, etc). Sin esta cobertura, una condena la pagas con tus bienes personales, aunque tu negocio esté en una SAS: la responsabilidad profesional te sigue a ti como persona.</p>
+        </div>
+
+        <div id="leg-dyo-wrap" style="display:none;margin-top:20px">
+          <div class="pf-grid2">
+            <div class="pf-field">
+              <label>¿Tienes póliza D&O (para administradores de empresas)? <span class="info-tip" data-def="leg_dyo" tabindex="0">i</span></label>
+              <select id="leg-dyo-tiene" class="pf-select">
+                <option value="">Selecciona</option>
+                <option value="si">Sí</option>
+                <option value="no">No</option>
+                <option value="no_se">No sé qué es</option>
+              </select>
+            </div>
+            <div class="pf-field" id="leg-dyo-quien-wrap" style="display:none">
+              <label>¿Quién la contrata?</label>
+              <select id="leg-dyo-quien" class="pf-select">
+                <option value="">Selecciona</option>
+                <option value="empresa">La empresa la contrata (me cubre a mí)</option>
+                <option value="personal">Yo la contrato directamente</option>
+              </select>
+            </div>
+          </div>
+          <p class="pf-note" style="margin-top:10px">La póliza <strong>D&O (Directors & Officers)</strong> protege a los administradores de empresas (representantes legales, socios administradores, miembros de junta) frente a demandas por decisiones que toman en su rol. La ley colombiana (Ley 222 de 1995) hace responsables a los administradores con su patrimonio personal por daños causados con culpa o dolo. Sin D&O, tu casa responde por decisiones que tomes en tu empresa.</p>
+        </div>
+      </div>
+
+      <!-- ─── BLOQUE 6 · Cumplimiento en el exterior (solo si aplica) ─── -->
+      <div id="leg-exterior-wrap" class="pf-card" style="display:none">
+        <div class="pf-card-head">
+          <span class="pf-num">6</span>
+          <h3>Tus obligaciones con la DIAN por bienes en el exterior<small>Detectamos activos fuera de Colombia en tu perfil fiscal</small></h3>
+        </div>
+
+        <div class="pf-grid2">
+          <div class="pf-field">
+            <label>¿Presentaste el Formulario 160 del año anterior? <span class="info-tip" data-def="leg_formulario_160" tabindex="0">i</span></label>
+            <select id="leg-form160-presentado" class="pf-select">
+              <option value="">No estoy seguro</option>
+              <option value="si">Sí, lo presenté</option>
+              <option value="no">No lo presenté</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="pf-toggles" style="margin-top:14px">
+          <span class="pf-tgl" id="leg-ece"><span class="pf-box"></span>Soy dueño mayoritario (más del 50%) de una empresa en el exterior <span class="info-tip" data-def="leg_ece" tabindex="0">i</span></span>
+        </div>
+        <p class="pf-note" style="margin-top:10px">Si tienes una empresa fuera de Colombia y eres dueño mayoritario, la DIAN aplica un régimen especial: las ganancias pasivas de esa empresa (intereses, dividendos que ella recibe, arriendos, regalías) se consideran tuyas en Colombia el mismo año, aunque no te hayan pagado nada. Se conoce como régimen ECE (arts. 882 a 893 del Estatuto Tributario).</p>
+      </div>
+
+      <!-- ─── BLOQUE 7 · Blindaje de tu patrimonio y tu ingreso ─── -->
+      <div class="pf-card">
+        <div class="pf-card-head">
+          <span class="pf-num">7</span>
+          <h3>Qué tan blindado está lo que tienes<small>Tu capacidad de generar ingreso, tu vivienda y la separación con tu empresa</small></h3>
+        </div>
+
+        <div class="pf-grid2">
+          <div class="pf-field">
+            <label>Si por una enfermedad o un accidente no pudieras volver a trabajar, ¿tienes un seguro que te siga pagando un ingreso?</label>
+            <select id="leg-invalidez-tiene" class="pf-select">
+              <option value="">Selecciona</option>
+              <option value="si">Sí, tengo una póliza para eso</option>
+              <option value="no">No tengo</option>
+              <option value="no_se">No estoy seguro</option>
+            </select>
+          </div>
+          <div class="pf-field" id="leg-invalidez-monto-wrap" style="display:none">
+            <label>¿Cuánto te pagaría al mes?</label>
+            <div class="pf-inp pf-mono"><span class="pf-pre">$</span><input type="text" id="leg-invalidez-monto" inputmode="numeric" placeholder="0"></div>
+          </div>
+        </div>
+        <p class="pf-note" style="margin-top:10px">Solemos asegurar el carro y la casa, pero casi nunca lo que los paga: tu trabajo. Si tú eres quien genera el ingreso de la familia, una incapacidad larga golpea más fuerte que perder cualquier bien, porque los gastos siguen y la entrada se detiene.</p>
+
+        <div class="pf-field" style="margin-top:20px">
+          <label>¿Tu vivienda tiene alguna figura legal que impida que te la embarguen?</label>
+          <select id="leg-vivienda-protegida" class="pf-select">
+            <option value="">Selecciona</option>
+            <option value="si">Sí, la registramos con esa protección</option>
+            <option value="no">No tiene ninguna</option>
+            <option value="no_se">No sé si la tiene</option>
+          </select>
+        </div>
+        <p class="pf-note" style="margin-top:10px">En Colombia una vivienda familiar se puede inscribir de forma que no responda por deudas: es un trámite en la notaría que queda anotado en la escritura. Si la tienes, tu casa queda fuera del alcance de la mayoría de los acreedores. Si no sabes, revisa el certificado de tradición o pregúntale a tu notaría.</p>
+
+        <div id="leg-empresa-wrap" style="display:none;margin-top:20px">
+          <div class="pf-field">
+            <label>Cuando tu empresa pidió un crédito, ¿te tocó firmar como codeudor o poner bienes tuyos como respaldo?</label>
+            <select id="leg-aval-sociedad" class="pf-select">
+              <option value="">Selecciona</option>
+              <option value="si">Sí, firmé personalmente</option>
+              <option value="no">No, la empresa respondió sola</option>
+              <option value="no_se">No estoy seguro</option>
+            </select>
+          </div>
+          <p class="pf-note" style="margin-top:10px">Esto es clave: tener la empresa en una sociedad separa tu patrimonio del de ella. Pero si firmaste personalmente el crédito, esa separación deja de funcionar para esa deuda y tus bienes personales responden igual.</p>
+
+          <div class="pf-field" style="margin-top:18px">
+            <label>¿Hay un acuerdo escrito sobre qué pasa con la empresa si un socio falta, se retira o quiere vender?</label>
+            <select id="leg-protocolo-familiar" class="pf-select">
+              <option value="">Selecciona</option>
+              <option value="si">Sí, está por escrito</option>
+              <option value="no">No hay nada escrito</option>
+              <option value="no_se">No estoy seguro</option>
+            </select>
+          </div>
+          <p class="pf-note" style="margin-top:10px">Sin ese acuerdo, la parte de un socio que fallece pasa a sus herederos, que pueden no conocer el negocio ni querer seguir en él. Muchas empresas rentables se traban o se venden a mal precio por no haber definido esto antes.</p>
+        </div>
+      </div>
+
+      <!-- ─── DIAGRAMA DE ESTRUCTURA — se renderiza desde app.js ─── -->
+      <div id="leg-estructura-diagrama"></div>
+
+      <!-- ─── DIAGNÓSTICO — se renderiza dinámicamente desde app.js ─── -->
+      <div id="leg-diagnostico"></div>
+
+      <div class="leg-cta-row" style="margin-top:24px">
+        <button class="pf-cta leg-cta-secondary" onclick="navigateTo(9)">
+          Ir al informe para mi asesor
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+        <button class="pf-cta primary leg-cta-primary" onclick="navigateTo(14)" id="leg-goto-m14" style="display:none">
+          Planifica tu sucesión
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         MÓDULO 14 · PLANIFICACIÓN SUCESORAL
+         Migrado desde el M13. Consume state.fiscal.legal y sus hallazgos.
+         ═══════════════════════════════════════════════════════════════════ -->
+    <div id="modulo-14" class="module">
+      <div class="pf-intro">
+        <h2 class="pf-h">Tu <em>plan sucesoral</em></h2>
+        <p class="pf-sub">Con base en tu diagnóstico legal, esto es lo que necesita tener listo tu familia si tú faltas. Muestra qué pasaría con cada tipo de bien, cuánto tiempo alcanzarían tus recursos y qué acciones concretas puedes tomar hoy — ordenadas por urgencia y con opción de cotizar directo.</p>
+      </div>
+
+      <!-- Contenido dinámico generado por renderModulo14() -->
+      <div id="m14-content"></div>
+
+      <div class="leg-cta-row" style="margin-top:24px">
+        <button class="pf-cta leg-cta-secondary" onclick="navigateTo(13)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+          Volver al diagnóstico legal
+        </button>
+        <button class="pf-cta primary leg-cta-primary" onclick="navigateTo(9)">
+          Ir al informe para mi asesor
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- ─── MÓDULO 15 · EVALUACIÓN 4 CAPAS ─── -->
+    <div id="modulo-15" class="module">
+      <div class="module-head">
+        <div class="module-eyebrow"><span class="dot"></span>Módulo 15</div>
+        <h1 class="module-title">Tu patrimonio en <em>cuatro capas</em></h1>
+        <p class="module-desc">Tener un patrimonio grande no basta. Miramos cuatro cosas: que <strong>nadie te lo pueda quitar</strong> (una demanda, un embargo, o el desorden que queda si tú faltas), que puedas <strong>convertir algo en plata</strong> cuando la necesites sin rematarlo, que no <strong>dependa todo de una sola cosa</strong>, y que tus bienes <strong>produzcan</strong> en vez de solo estar ahí. Si una falla, es la que primero te va a doler.</p>
+      </div>
+      <div id="capas-tablero"></div>
+      <div id="capas-vacio"></div>
+      <div class="actions">
+        <button class="btn btn-primary" onclick="navigateTo(3)">
+          Ver mi mapa patrimonial
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+      </div>
+    </div>
+
   </main>
 
   <!-- Bottom nav (mobile) -->
@@ -2032,7 +2464,7 @@
                             <input type="text" id="asset-anio-compra" class="input" placeholder="Ej: 2018" inputmode="numeric" autocomplete="off" maxlength="4">
                         </div>
                     </div>
-                    <div class="field-hint" id="asset-compra-hint">Ya sea que lo compraste, lo heredaste o lo recibiste: si recuerdas cuánto valía entonces, te mostramos cuánto ha crecido. Si no, no hay problema: lo dejamos en su valor de hoy.</div>
+                    <div class="field-hint" id="asset-compra-hint">Si recuerdas cuánto valía cuando lo obtuviste, te mostramos cuánto ha crecido. Si no, no hay problema: lo dejamos en su valor de hoy.</div>
                 </div>
 
                 <!-- Nota informativa — para activos que no se proyectan (efectivo, empresa, etc.) -->
@@ -2124,7 +2556,7 @@
                     </select>
                 </div>
 
-                <div class="field">
+                <div class="field" id="legal-structure-field">
                     <label class="field-label" for="asset-legal-structure">¿A nombre de quién está?</label>
                     <select id="asset-legal-structure" class="select">
                         <option value="Propiedad Directa">A mi nombre personal</option>
@@ -2143,7 +2575,7 @@
                 </div>
 
                 <!-- ─── CONDICIONES DEL ACTIVO: propiedad compartida y restricción legal ─── -->
-                <div class="field">
+                <div class="field" id="compartido-field">
                     <label class="field-label">¿Este activo es solo tuyo o lo compartes con alguien?</label>
                     <div class="yesno" id="asset-comparte">
                         <div class="yesno-option" data-comparte="no">Es solo mío</div>
@@ -2159,7 +2591,7 @@
                     <div class="field-hint">Solo contaremos tu parte en tu patrimonio. El valor total que registraste arriba se conserva para referencia.</div>
                 </div>
 
-                <div class="field">
+                <div class="field" id="restriccion-field">
                     <label class="checkbox-row">
                         <input type="checkbox" id="asset-restringido-legal">
                         <span>
@@ -2337,10 +2769,52 @@
                     <label class="checkbox-row">
                         <input type="checkbox" id="asset-beneficio-tributario">
                         <span>
-                            <strong>Tiene beneficio tributario</strong>
-                            <span class="checkbox-hint" id="beneficio-tributario-hint">Los aportes a este producto te ayudan a pagar menos impuestos. Si no estás seguro, déjalo sin marcar y tu asesor lo revisa.</span>
+                            <strong>Usé estos aportes para pagar menos impuestos</strong>
+                            <span class="checkbox-hint" id="beneficio-tributario-hint">Marca esta casilla si al declarar renta restaste lo que aportaste aquí y por eso pagaste menos impuesto. Importa porque si sacas ese dinero antes de tiempo tendrías que devolver ese ahorro de impuestos. Ojo: ese plazo lo fija la ley tributaria y es <strong>distinto</strong> del plazo que hayas acordado con la entidad, que puede ser mucho más largo. No tendrías que devolver nada si el retiro es para comprar vivienda, si ya te pensionaste, o si nunca tomaste el beneficio. ¿No estás seguro? Déjala sin marcar y revísalo con tu asesor.</span>
                         </span>
                     </label>
+                </div>
+
+                <div class="field" id="vigencia-cumplida-field" style="display:none;">
+                    <label class="checkbox-row">
+                        <input type="checkbox" id="asset-vigencia-cumplida">
+                        <span>
+                            <strong>Ya cumplí el plazo pactado de este producto</strong>
+                            <span class="checkbox-hint">Este ahorro está pensado para el largo plazo. Si ya llegaste al plazo que acordaste al contratarlo, puedes retirarlo completo. Si lo sacaras antes, todavía es tuyo y puedes hacerlo, pero la entidad te descuenta unos gastos de cancelación y el ahorro de impuestos que hayas tomado, así que recibirías un poco menos. Marca la casilla solo si ya cumpliste ese plazo.</span>
+                        </span>
+                    </label>
+                </div>
+
+                <div class="field" id="fpv-detalle-field" style="display:none;">
+                    <label class="checkbox-row">
+                        <input type="checkbox" id="asset-fpv-institucional">
+                        <span>
+                            <strong>Este fondo lo abrió la empresa donde trabajo</strong>
+                            <span class="checkbox-hint">Algunas empresas abren estos fondos para sus empleados y aportan junto con ellos. Cuando es así, la empresa suele poner condiciones para poder sacar la parte que ella aportó. Marca la casilla solo si tu fondo es de este tipo; si lo abriste tú por tu cuenta, déjala sin marcar.</span>
+                        </span>
+                    </label>
+                    <label class="checkbox-row" style="margin-top:10px">
+                        <input type="checkbox" id="asset-fpv-permanencia">
+                        <span>
+                            <strong>Acordé dejar el dinero un tiempo mínimo</strong>
+                            <span class="checkbox-hint">Al escoger dónde se invierte tu dinero dentro del fondo, algunas opciones piden dejarlo quieto un tiempo (suelen ser semanas o meses) o cobran una comisión si lo sacas antes. Si no recuerdas haber acordado nada de eso, déjala sin marcar.</span>
+                        </span>
+                    </label>
+                </div>
+
+                <div class="field" id="reparto-field" style="display:none;">
+                    <label class="label">¿Esta inversión está puesta en una sola empresa o repartida en muchas?</label>
+                    <div class="radio-group">
+                        <label class="radio-option" data-reparto="una">
+                            <input type="radio" name="asset-reparto" value="una">
+                            <span><strong>En una sola</strong><span class="radio-hint">Acciones de una empresa concreta, o un negocio puntual.</span></span>
+                        </label>
+                        <label class="radio-option" data-reparto="muchas">
+                            <input type="radio" name="asset-reparto" value="muchas">
+                            <span><strong>Repartida en muchas</strong><span class="radio-hint">Un fondo, ETF o cartera que por dentro invierte en decenas o cientos de empresas a la vez.</span></span>
+                        </label>
+                    </div>
+                    <span class="field-hint">Lo preguntamos porque cambia por completo el riesgo. Si todo está en una empresa, dependes de que a esa le vaya bien. Si está en un fondo que invierte en muchas, el riesgo ya viene repartido aunque en tu lista aparezca como un solo producto.</span>
                 </div>
 
                 <div class="error-msg" id="err-final">Completa todos los campos para guardar.</div>
@@ -2361,6 +2835,6 @@
     </div>
 </div>
 
-<script src="app.js?v=59"></script>
+<script src="app.js?v=89"></script>
 </body>
 </html>
