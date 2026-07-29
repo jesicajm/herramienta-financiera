@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════
    FIREBASE — auth + firestore
    ═══════════════════════════════════════════════════════════ */
-   console.log('%cABBA · build fiscal 2026-06-29-v89 · diagnóstico + vulnerabilidades + deducciones (dep336/387, GMF, vivienda auto, prepagada, FPV)', 'color:#0e4d3a;font-weight:bold');
+   console.log('%cABBA · build fiscal 2026-06-29-v91 · diagnóstico + vulnerabilidades + deducciones (dep336/387, GMF, vivienda auto, prepagada, FPV)', 'color:#0e4d3a;font-weight:bold');
    const firebaseConfig = {
     apiKey: "AIzaSyBLNS_xLAoAsnf5XfajAmVf12f4_mpUMfY",
     authDomain: "evaluafinanzas.firebaseapp.com",
@@ -440,6 +440,33 @@
      ═══════════════════════════════════════════════════════════ */
   let userId='', currency='COP $';
   let completedModules=new Set();
+
+  // ════════════════════════════════════════════════════════════════════════════════
+  // MONEDA DE LA HERRAMIENTA (estilo YNAB: una moneda base que el cliente elige)
+  // Cambia el símbolo y el formato de números; NO convierte los valores ya escritos.
+  // El manejo de activos en moneda extranjera (con tasa de cambio) es aparte.
+  // ════════════════════════════════════════════════════════════════════════════════
+  const MONEDAS = {
+    COP: { code:'COP', nombre:'Peso colombiano',        prefijo:'COP $', locale:'es-CO' },
+    USD: { code:'USD', nombre:'Dólar estadounidense',   prefijo:'US$',   locale:'en-US' },
+    EUR: { code:'EUR', nombre:'Euro',                   prefijo:'€',     locale:'de-DE' },
+    MXN: { code:'MXN', nombre:'Peso mexicano',          prefijo:'MX$',   locale:'es-MX' },
+    CLP: { code:'CLP', nombre:'Peso chileno',           prefijo:'CLP $', locale:'es-CL' },
+    ARS: { code:'ARS', nombre:'Peso argentino',         prefijo:'AR$',   locale:'es-AR' },
+    PEN: { code:'PEN', nombre:'Sol peruano',            prefijo:'S/',    locale:'es-PE' },
+    BRL: { code:'BRL', nombre:'Real brasileño',         prefijo:'R$',    locale:'pt-BR' },
+    GBP: { code:'GBP', nombre:'Libra esterlina',        prefijo:'£',     locale:'en-GB' },
+    CAD: { code:'CAD', nombre:'Dólar canadiense',       prefijo:'CA$',   locale:'en-CA' },
+  };
+  const MONEDA_DEFAULT = 'COP';
+  let _moneda = MONEDAS[MONEDA_DEFAULT];
+  function monedaCfg(){ return _moneda || MONEDAS[MONEDA_DEFAULT]; }
+  function monedaLocale(){ return monedaCfg().locale; }
+  // Aplica la moneda elegida: fija el prefijo y el formato usados en toda la app.
+  function aplicarMoneda(code){
+    _moneda = MONEDAS[code] || MONEDAS[MONEDA_DEFAULT];
+    currency = _moneda.prefijo;
+  }
   
   const MODULE_TITLES = {
     1:'Ingresos y Gastos',2:'Endeudamiento',3:'Mapa Patrimonial',
@@ -453,7 +480,8 @@
     13:'Estructura Legal',
     14:'Planificación Sucesoral',
     15:'Evaluación 4 Capas',
-    'var':'Ingresos Variables'
+    'var':'Ingresos Variables',
+    'perfil':'Mi perfil'
   };
   
   const MES_NAMES_ES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
@@ -555,7 +583,8 @@
     },
     profile:{
       tipoIngreso:'', // 'empleado' | 'independiente' | 'mixto' | ''
-      uid:'', edad:null, dependientes:null, edadRetiro:null
+      uid:'', edad:null, dependientes:null, edadRetiro:null,
+      moneda:'COP'   // moneda de la herramienta (estilo YNAB); ver MONEDAS
     },
     debtSim:{
       seeded:false,
@@ -917,7 +946,7 @@ function formatThousands(digitsStr) {
     if (!digitsStr) return '';
     const num = parseInt(digitsStr, 10);
     if (isNaN(num)) return '';
-    return num.toLocaleString('es-CO');
+    return num.toLocaleString(monedaLocale());
 }
 
 function attachNumberFormat(input) {
@@ -2503,16 +2532,16 @@ function showToast(msg, type) {
   };
   const fmt = v => {
     if (v == null || isNaN(v)) return currency + ' 0';
-    return currency + ' ' + Math.round(Number(v)).toLocaleString('es-CO');
+    return currency + ' ' + Math.round(Number(v)).toLocaleString(monedaLocale());
   };
   const fmtNum = v => {
     if (v == null || isNaN(v)) return '0';
-    return Math.round(Number(v)).toLocaleString('es-CO');
+    return Math.round(Number(v)).toLocaleString(monedaLocale());
   };
   const fmtInput = v => {
     // formato compacto sin moneda para inputs
     if (v == null || v === 0 || isNaN(v)) return '';
-    return Math.round(Number(v)).toLocaleString('es-CO');
+    return Math.round(Number(v)).toLocaleString(monedaLocale());
   };
   const pct = v => isNaN(v) ? '0%' : (v*100).toFixed(1) + '%';
   
@@ -2530,7 +2559,7 @@ function showToast(msg, type) {
       const digitsBefore = (before.slice(0,cursor).match(/\d/g)||[]).length;
       const digitsOnly = before.replace(/\D/g,'');
       const cleaned = digitsOnly.replace(/^0+(\d)/,'$1');
-      const formatted = cleaned ? Number(cleaned).toLocaleString('es-CO') : '';
+      const formatted = cleaned ? Number(cleaned).toLocaleString(monedaLocale()) : '';
       this.value = formatted;
       // restore cursor
       let pos = 0, count = 0;
@@ -2628,6 +2657,7 @@ function showToast(msg, type) {
     if(id===14){renderModulo14();}
     if(id===15){renderCapasTablero();}
     if(id==='var'){renderMVar();}
+    if(id==='perfil'){renderPerfil();}
     window.scrollTo({top:0,behavior:'smooth'});
   }
   
@@ -2847,7 +2877,7 @@ function showToast(msg, type) {
     if(cuposInp && !cuposInp.dataset.wired){
       cuposInp.dataset.wired = '1';
       attachMoneyInput(cuposInp);
-      cuposInp.value = (state.cuposDisponibles||0) ? Number(state.cuposDisponibles).toLocaleString('es-CO') : '';
+      cuposInp.value = (state.cuposDisponibles||0) ? Number(state.cuposDisponibles).toLocaleString(monedaLocale()) : '';
       cuposInp.addEventListener('input', ()=>{
         state.cuposDisponibles = +(cuposInp.value.replace(/\D/g,'')) || 0;
         scheduleSave('ahorro');
@@ -6349,19 +6379,10 @@ function showToast(msg, type) {
   function renderMetas(){
     seedMetas();
     const p = state.metas.proy || {};
-    // Perfil: edad, dependientes, edad de retiro
+    // Perfil (edad, retiro) ahora vive en "Mi perfil"; aquí solo usamos el horizonte para la proyección.
     const pr = state.profile || {};
-    const edadEl = document.getElementById('meta-edad'); if(edadEl) edadEl.value = pr.edad != null ? pr.edad : '';
-    const depEl = document.getElementById('meta-dependientes'); if(depEl) depEl.value = pr.dependientes != null ? pr.dependientes : '';
-    const retEl = document.getElementById('meta-edad-retiro'); if(retEl) retEl.value = pr.edadRetiro != null ? pr.edadRetiro : '';
-    const notaEl = document.getElementById('meta-perfil-nota');
-    let aniosRetiro = null;
     if(pr.edad != null && pr.edadRetiro != null && pr.edadRetiro > pr.edad){
-      aniosRetiro = pr.edadRetiro - pr.edad;
-      if(!p.aniosUserSet) p.anios = aniosRetiro;   // horizonte por defecto = años hasta el retiro
-      if(notaEl) notaEl.textContent = 'Te faltan ' + aniosRetiro + ' años para tu retiro objetivo (' + pr.edadRetiro + '). Usamos ese horizonte en tu proyección.';
-    } else if(notaEl){
-      notaEl.textContent = pr.edad==null || pr.edadRetiro==null ? 'Completa tu edad y tu edad de retiro para personalizar la proyección.' : '';
+      if(!p.aniosUserSet) p.anios = pr.edadRetiro - pr.edad;   // horizonte por defecto = años hasta el retiro
     }
     const rendEl = document.getElementById('meta-proy-rend'); if(rendEl) rendEl.value = p.rendimiento != null ? p.rendimiento : 9;
     const aniosEl = document.getElementById('meta-proy-anios'); if(aniosEl) aniosEl.value = p.anios != null ? p.anios : 28;
@@ -6753,6 +6774,7 @@ function showToast(msg, type) {
     return {
       nombre:p.nombre||'', email:p.email||'', whatsapp:p.whatsapp||'', tipoIngreso:p.tipoIngreso||'',
       edad:(p.edad!=null?p.edad:null), dependientes:(p.dependientes!=null?p.dependientes:null), edadRetiro:(p.edadRetiro!=null?p.edadRetiro:null),
+      moneda:(p.moneda||'COP'),
       consentimientoTratamiento:p.consentimientoTratamiento, consentimientoRecomendaciones:p.consentimientoRecomendaciones
     };
   }
@@ -7299,6 +7321,7 @@ function showToast(msg, type) {
     const edad = parseInt(document.getElementById('ob-edad').value)||null;
     const dependientes = parseInt(document.getElementById('ob-dependientes').value);
     const edadRetiro = parseInt(document.getElementById('ob-edad-retiro').value)||null;
+    const moneda = (document.getElementById('ob-moneda')||{}).value || 'COP';
     const perfilData = {
       uid: _onboardingUser.uid,
       nombre: nombre,
@@ -7308,6 +7331,7 @@ function showToast(msg, type) {
       edad: edad,
       dependientes: isNaN(dependientes) ? null : dependientes,
       edadRetiro: edadRetiro,
+      moneda: moneda,
       consentimientoTratamiento: {
         aceptado: true,
         fecha: now,
@@ -7330,9 +7354,11 @@ function showToast(msg, type) {
         edad: edad,
         dependientes: isNaN(dependientes) ? null : dependientes,
         edadRetiro: edadRetiro,
+        moneda: moneda,
         consentimientoTratamiento: perfilData.consentimientoTratamiento,
         consentimientoRecomendaciones: perfilData.consentimientoRecomendaciones
       });
+      aplicarMoneda(moneda);
       document.getElementById('user-display').textContent = nombre;
       document.getElementById('user-avatar').textContent = nombre.charAt(0).toUpperCase();
       document.getElementById('onboarding-screen').style.display = 'none';
@@ -7413,9 +7439,11 @@ function showToast(msg, type) {
       edad: perfil.edad != null ? perfil.edad : null,
       dependientes: perfil.dependientes != null ? perfil.dependientes : null,
       edadRetiro: perfil.edadRetiro != null ? perfil.edadRetiro : null,
+      moneda: perfil.moneda || 'COP',
       consentimientoTratamiento: perfil.consentimientoTratamiento,
       consentimientoRecomendaciones: perfil.consentimientoRecomendaciones || {aceptado:false}
     });
+    aplicarMoneda(state.profile.moneda);
   
     document.getElementById('user-display').textContent = state.profile.nombre;
     document.getElementById('user-avatar').textContent = (state.profile.nombre||'U').charAt(0).toUpperCase();
@@ -7553,7 +7581,7 @@ function showToast(msg, type) {
   document.getElementById('dd-perfil').addEventListener('click', function(e){
     e.preventDefault();
     document.getElementById('user-dropdown').style.display = 'none';
-    showToast('La pantalla de perfil estará disponible próximamente', 'info');
+    navigateTo('perfil');
   });
   document.querySelectorAll('.sb-item, .bb-item').forEach(item=>{
     item.addEventListener('click',function(e){
@@ -7613,27 +7641,76 @@ function showToast(msg, type) {
     const el = document.getElementById(id);
     if(el) el.addEventListener('input', function(){ if(id==='meta-proy-anios') state.metas.proy.aniosUserSet=true; renderProyeccion(); });
   });
-  /* Perfil editable desde Metas */
-  (function(){
-    const e = document.getElementById('meta-edad'), d = document.getElementById('meta-dependientes'), r = document.getElementById('meta-edad-retiro');
-    function upd(){
-      state.profile.edad = e.value.trim()!=='' ? (parseInt(e.value)||null) : null;
-      const dv = parseInt(d.value); state.profile.dependientes = isNaN(dv) ? null : dv;
-      state.profile.edadRetiro = r.value.trim()!=='' ? (parseInt(r.value)||null) : null;
-      persistPerfilDebounced();
-      const pr = state.profile, notaEl = document.getElementById('meta-perfil-nota');
+  /* ── Mi perfil (datos personales + moneda) ── */
+  function renderPerfil(){
+    const pr = state.profile || {};
+    const setV = (id,v)=>{ const el=document.getElementById(id); if(el) el.value = v; };
+    setV('pf-nombre', pr.nombre || '');
+    setV('pf-email', pr.email || '');
+    setV('pf-whatsapp', pr.whatsapp || '');
+    setV('pf-edad', pr.edad != null ? pr.edad : '');
+    setV('pf-dependientes', pr.dependientes != null ? pr.dependientes : '');
+    setV('pf-edad-retiro', pr.edadRetiro != null ? pr.edadRetiro : '');
+    setV('pf-moneda', pr.moneda || 'COP');
+    const nota = document.getElementById('pf-perfil-nota');
+    if(nota){
       if(pr.edad!=null && pr.edadRetiro!=null && pr.edadRetiro>pr.edad){
-        const aniosRetiro = pr.edadRetiro - pr.edad;
-        state.metas.proy.anios = aniosRetiro;
-        state.metas.proy.aniosUserSet = false;
-        const aniosEl = document.getElementById('meta-proy-anios'); if(aniosEl) aniosEl.value = aniosRetiro;
-        if(notaEl) notaEl.textContent = 'Te faltan ' + aniosRetiro + ' años para tu retiro objetivo (' + pr.edadRetiro + '). Usamos ese horizonte en tu proyección.';
-      } else if(notaEl){
-        notaEl.textContent = (pr.edad==null||pr.edadRetiro==null) ? 'Completa tu edad y tu edad de retiro para personalizar la proyección.' : '';
+        nota.textContent = 'Te faltan ' + (pr.edadRetiro - pr.edad) + ' años para tu retiro objetivo (' + pr.edadRetiro + '). Usamos ese horizonte en tu proyección.';
+      } else {
+        nota.textContent = (pr.edad==null||pr.edadRetiro==null) ? 'Completa tu edad y tu edad de retiro para personalizar la proyección.' : '';
       }
-      renderProyeccion();
     }
-    [e,d,r].forEach(el=>{ if(el) el.addEventListener('input', upd); });
+  }
+  (function(){
+    const nombre = document.getElementById('pf-nombre');
+    const whatsapp = document.getElementById('pf-whatsapp');
+    const e = document.getElementById('pf-edad'), d = document.getElementById('pf-dependientes'), r = document.getElementById('pf-edad-retiro');
+    if(nombre) nombre.addEventListener('input', function(){
+      state.profile.nombre = this.value;
+      const ud=document.getElementById('user-display'); if(ud) ud.textContent = this.value;
+      const av=document.getElementById('user-avatar'); if(av) av.textContent = (this.value||'U').charAt(0).toUpperCase();
+      persistPerfilDebounced();
+    });
+    if(whatsapp) whatsapp.addEventListener('input', function(){
+      this.value = this.value.replace(/[^\d]/g,'').slice(0,10);
+      state.profile.whatsapp = this.value; persistPerfilDebounced();
+    });
+    function updPerfil(){
+      if(e) state.profile.edad = e.value.trim()!=='' ? (parseInt(e.value)||null) : null;
+      if(d){ const dv = parseInt(d.value); state.profile.dependientes = isNaN(dv) ? null : dv; }
+      if(r) state.profile.edadRetiro = r.value.trim()!=='' ? (parseInt(r.value)||null) : null;
+      persistPerfilDebounced();
+      const pr = state.profile;
+      if(pr.edad!=null && pr.edadRetiro!=null && pr.edadRetiro>pr.edad){
+        state.metas.proy.anios = pr.edadRetiro - pr.edad;
+        state.metas.proy.aniosUserSet = false;
+        const aniosEl = document.getElementById('meta-proy-anios'); if(aniosEl) aniosEl.value = state.metas.proy.anios;
+      }
+      const nota = document.getElementById('pf-perfil-nota');
+      if(nota){
+        nota.textContent = (pr.edad!=null && pr.edadRetiro!=null && pr.edadRetiro>pr.edad)
+          ? 'Te faltan ' + (pr.edadRetiro - pr.edad) + ' años para tu retiro objetivo (' + pr.edadRetiro + '). Usamos ese horizonte en tu proyección.'
+          : ((pr.edad==null||pr.edadRetiro==null) ? 'Completa tu edad y tu edad de retiro para personalizar la proyección.' : '');
+      }
+      if(typeof renderProyeccion==='function') renderProyeccion();
+    }
+    [e,d,r].forEach(el=>{ if(el) el.addEventListener('input', updPerfil); });
+    // Selector de moneda de la herramienta
+    const mon = document.getElementById('pf-moneda');
+    if(mon){
+      mon.addEventListener('change', function(){
+        const code = this.value || 'COP';
+        state.profile.moneda = code;
+        aplicarMoneda(code);
+        persistPerfilDebounced();
+        // Re-renderizar el módulo activo para que los montos tomen el nuevo símbolo y formato.
+        try {
+          const act = document.querySelector('.module.active');
+          if(act){ const mid = act.id.replace('modulo-',''); navigateTo(isNaN(+mid)?mid:+mid); }
+        } catch(_){}
+        showToast('Moneda actualizada a ' + (MONEDAS[code]?MONEDAS[code].nombre:code), 'success');
+      });
+    }
   })();
 
   /* ── Wiring de la Regla de presupuesto (Tablero) ── */
@@ -11778,7 +11855,7 @@ function showToast(msg, type) {
     setSelLeg('leg-invalidez-tiene', inv.tiene === true ? 'si' : (inv.tiene === false ? 'no' : ''));
     toggleShowLeg('leg-invalidez-monto-wrap', inv.tiene === true);
     const invMi = document.getElementById('leg-invalidez-monto');
-    if(invMi && (inv.rentaMensual||0) > 0) invMi.value = Number(inv.rentaMensual).toLocaleString('es-CO');
+    if(invMi && (inv.rentaMensual||0) > 0) invMi.value = Number(inv.rentaMensual).toLocaleString(monedaLocale());
     setSelLeg('leg-vivienda-protegida', L.viviendaProtegida === true ? 'si' : (L.viviendaProtegida === false ? 'no' : ''));
     setSelLeg('leg-aval-sociedad', L.avalSociedad === true ? 'si' : (L.avalSociedad === false ? 'no' : ''));
     setSelLeg('leg-protocolo-familiar', L.protocoloFamiliar === true ? 'si' : (L.protocoloFamiliar === false ? 'no' : ''));

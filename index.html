@@ -15,7 +15,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<link rel="stylesheet" href="styles.css?v=89">
+<link rel="stylesheet" href="styles.css?v=91">
 <style>
 /* ═══ Simulador de Deuda (Módulo 7) ═══ */
 #modulo-7 .ds-hint{font-size:13px;line-height:1.5;color:rgba(0,0,0,.55);margin:0 0 14px}
@@ -492,6 +492,23 @@
       <span class="field-hint">Opcional. Lo usamos para personalizar tus metas y la proyección de patrimonio.</span>
     </div>
 
+    <div class="field">
+      <label for="ob-moneda">Moneda que vas a usar</label>
+      <select id="ob-moneda" class="select">
+        <option value="COP">Peso colombiano — COP $</option>
+        <option value="USD">Dólar estadounidense — US$</option>
+        <option value="EUR">Euro — €</option>
+        <option value="MXN">Peso mexicano — MX$</option>
+        <option value="CLP">Peso chileno — CLP $</option>
+        <option value="ARS">Peso argentino — AR$</option>
+        <option value="PEN">Sol peruano — S/</option>
+        <option value="BRL">Real brasileño — R$</option>
+        <option value="GBP">Libra esterlina — £</option>
+        <option value="CAD">Dólar canadiense — CA$</option>
+      </select>
+      <span class="field-hint">Toda la herramienta mostrará los montos en esta moneda. Podrás cambiarla luego en tu perfil.</span>
+    </div>
+
     <!-- Consentimientos -->
     <div class="consent-section">
       <h4 class="consent-title">Autorizaciones</h4>
@@ -720,6 +737,64 @@
     </div>
 
     <!-- ─── MÓDULO INGRESOS VARIABLES ─── -->
+    <div id="modulo-perfil" class="module">
+      <div class="module-head">
+        <div class="module-eyebrow"><span class="dot"></span>Tu cuenta</div>
+        <h1 class="module-title">Mi perfil</h1>
+        <p class="module-desc">Tus datos personales y la configuración de la herramienta. Cámbialos cuando quieras; se guardan solos.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+          <h3>Tus datos</h3>
+        </div>
+        <div class="ds-cap-grid">
+          <div class="mr-field"><label>Nombre</label><input type="text" id="pf-nombre" placeholder="Tu nombre" autocapitalize="words"></div>
+          <div class="mr-field"><label>Correo</label><input type="email" id="pf-email" placeholder="tucorreo@ejemplo.com" readonly></div>
+          <div class="mr-field"><label>WhatsApp</label><input type="tel" id="pf-whatsapp" placeholder="3001234567" inputmode="numeric" maxlength="10"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div>
+          <h3>Para personalizar tus metas</h3>
+        </div>
+        <p class="ds-hint">Estos datos personalizan tus metas y la proyección de patrimonio.</p>
+        <div class="ds-cap-grid">
+          <div class="mr-field"><label>Tu edad</label><input type="number" id="pf-edad" min="18" max="100" placeholder="—"></div>
+          <div class="mr-field"><label>Personas a cargo</label><input type="number" id="pf-dependientes" min="0" max="20" placeholder="0"></div>
+          <div class="mr-field"><label>Edad de retiro objetivo</label><input type="number" id="pf-edad-retiro" min="40" max="90" placeholder="—"></div>
+        </div>
+        <div id="pf-perfil-nota" class="meta-perfil-nota"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8" opacity=".5"/><path d="M9.5 9.5a3.5 3.5 0 0 1 5 0M9.5 14.5a3.5 3.5 0 0 0 5 0"/></svg></div>
+          <h3>Moneda de la herramienta</h3>
+        </div>
+        <div class="ds-cap-grid">
+          <div class="mr-field"><label>Moneda</label>
+            <select id="pf-moneda" class="select">
+              <option value="COP">Peso colombiano — COP $</option>
+              <option value="USD">Dólar estadounidense — US$</option>
+              <option value="EUR">Euro — €</option>
+              <option value="MXN">Peso mexicano — MX$</option>
+              <option value="CLP">Peso chileno — CLP $</option>
+              <option value="ARS">Peso argentino — AR$</option>
+              <option value="PEN">Sol peruano — S/</option>
+              <option value="BRL">Real brasileño — R$</option>
+              <option value="GBP">Libra esterlina — £</option>
+              <option value="CAD">Dólar canadiense — CA$</option>
+            </select>
+          </div>
+        </div>
+        <div class="ds-hint" style="margin-top:6px">Toda la herramienta mostrará los montos en esta moneda. Cambia solo el símbolo y el formato de los números — no convierte los montos que ya escribiste.</div>
+      </div>
+    </div>
+
     <div id="modulo-var" class="module">
       <div class="module-head">
         <div class="module-eyebrow"><span class="dot"></span>Para independientes</div>
@@ -1634,21 +1709,6 @@
         <div class="module-eyebrow"><span class="dot"></span>Plan de acción</div>
         <h1 class="module-title">Tus <em>metas</em> y tu patrimonio futuro</h1>
         <p class="module-desc">Convierte tus sueños en metas medibles —con monto, fecha y avance que se calcula solo— y mira a dónde puede llegar tu patrimonio si mantienes el rumbo.</p>
-      </div>
-
-      <!-- Tu perfil -->
-      <div class="card">
-        <div class="card-head">
-          <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
-          <h3>Tu perfil</h3>
-        </div>
-        <p class="ds-hint">Estos datos personalizan tus metas y la proyección de patrimonio. Cámbialos cuando quieras.</p>
-        <div class="ds-cap-grid">
-          <div class="mr-field"><label>Tu edad</label><input type="number" id="meta-edad" min="18" max="100" placeholder="—"></div>
-          <div class="mr-field"><label>Personas a cargo</label><input type="number" id="meta-dependientes" min="0" max="20" placeholder="0"></div>
-          <div class="mr-field"><label>Edad de retiro objetivo</label><input type="number" id="meta-edad-retiro" min="40" max="90" placeholder="—"></div>
-        </div>
-        <div id="meta-perfil-nota" class="meta-perfil-nota"></div>
       </div>
 
       <!-- Metas -->
@@ -2835,6 +2895,6 @@
     </div>
 </div>
 
-<script src="app.js?v=89"></script>
+<script src="app.js?v=91"></script>
 </body>
 </html>
