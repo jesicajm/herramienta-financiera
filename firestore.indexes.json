@@ -1,36 +1,11 @@
 {
   "indexes": [
     {
-      "collectionGroup": "eventos",
+      "collectionGroup": "diagnostico_sessions",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "tipo", "order": "ASCENDING" },
-        { "fieldPath": "fechaEsperada", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "eventos",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "clienteUid", "order": "ASCENDING" },
-        { "fieldPath": "fechaEsperada", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "eventos",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "estado", "order": "ASCENDING" },
-        { "fieldPath": "fechaEsperada", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "eventos",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "tipo", "order": "ASCENDING" },
-        { "fieldPath": "companiaActual", "order": "ASCENDING" },
-        { "fieldPath": "fechaEsperada", "order": "ASCENDING" }
+        { "fieldPath": "status",           "order": "ASCENDING" },
+        { "fieldPath": "payment_deadline", "order": "ASCENDING" }
       ]
     }
   ],
