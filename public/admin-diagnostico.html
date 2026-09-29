@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Panel de diagnósticos — ABBA</title>
+  <style>
+    :root {
+      --navy: #1e2853;
+      --brand: #10578f;
+      --brand-hover: #0d466f;
+      --cream: #f6f3ec;
+      --ink: #1a1a1a;
+      --muted: #5d6a7d;
+      --border: #e2e0d8;
+      --success: #16a34a;
+      --alert: #c0392b;
+      --warning: #d97706;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--cream);
+      color: var(--ink);
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* Header */
+    .topbar {
+      background: var(--navy);
+      color: #fff;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .topbar h1 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+    }
+    .topbar h1 .brand-label {
+      display: block;
+      font-size: 10px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: #c9d3e6;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .user-info { font-size: 13px; display: flex; align-items: center; gap: 12px; }
+    .user-info .name { color: #fff; }
+    .user-info .email { color: #c9d3e6; font-size: 12px; }
+    .btn-logout {
+      background: transparent;
+      border: 1px solid rgba(255,255,255,0.3);
+      color: #fff;
+      padding: 6px 14px;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .btn-logout:hover { background: rgba(255,255,255,0.1); }
+
+    /* Container */
+    .container { max-width: 1100px; margin: 0 auto; padding: 24px; }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 20px;
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+    }
+    .tab {
+      background: transparent;
+      border: none;
+      padding: 12px 18px;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--muted);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      white-space: nowrap;
+    }
+    .tab:hover { color: var(--ink); }
+    .tab.active { color: var(--navy); border-bottom-color: var(--brand); }
+    .tab .count {
+      display: inline-block;
+      background: var(--cream);
+      color: var(--muted);
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      margin-left: 6px;
+      font-weight: 600;
+    }
+    .tab.active .count { background: var(--brand); color: #fff; }
+
+    /* Cards */
+    .cards { display: grid; gap: 16px; }
+    .card {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      display: grid;
+      gap: 16px;
+    }
+    .card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .card-name {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--navy);
+      margin: 0;
+    }
+    .card-email {
+      font-size: 13px;
+      color: var(--muted);
+      margin: 4px 0 0;
+    }
+    .card-email a { color: var(--brand); text-decoration: none; }
+
+    .badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 5px 10px;
+      border-radius: 12px;
+      white-space: nowrap;
+    }
+    .badge-pending { background: #fff7ed; color: var(--warning); }
+    .badge-confirmed { background: #ecfdf5; color: var(--success); }
+    .badge-expired { background: #fef2f2; color: var(--alert); }
+    .badge-cancelled { background: #f3f4f6; color: var(--muted); }
+
+    .card-details {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px 20px;
+      padding: 12px 0;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+    .field-label {
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 600;
+      margin: 0 0 4px;
+    }
+    .field-value { font-size: 14px; color: var(--ink); margin: 0; word-break: break-word; }
+    .field-value a { color: var(--brand); text-decoration: none; }
+
+    .motivo-block {
+      background: var(--cream);
+      border-left: 3px solid var(--brand);
+      padding: 12px 16px;
+      border-radius: 0 6px 6px 0;
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--ink);
+      white-space: pre-wrap;
+    }
+    .motivo-block .field-label { color: var(--brand); margin-bottom: 6px; }
+
+    .deadline {
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .deadline.urgent { color: var(--alert); }
+    .deadline.warning { color: var(--warning); }
+    .deadline.normal { color: var(--muted); }
+
+    .card-actions { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+    .btn {
+      padding: 10px 20px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: background .15s;
+    }
+    .btn-primary { background: var(--brand); color: #fff; }
+    .btn-primary:hover { background: var(--brand-hover); }
+    .btn-primary:disabled { background: #cbd5e1; cursor: not-allowed; }
+    .btn-secondary {
+      background: transparent;
+      color: var(--brand);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover { background: var(--cream); }
+
+    /* Login screen */
+    .login-screen {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 32px 16px;
+    }
+    .login-card {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 40px;
+      max-width: 420px;
+      width: 100%;
+      text-align: center;
+    }
+    .login-card .brand-label {
+      font-size: 10px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--brand);
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .login-card h2 { margin: 0 0 8px; color: var(--navy); font-weight: 500; }
+    .login-card p { color: var(--muted); margin: 0 0 24px; font-size: 14px; }
+    .btn-google {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: #fff;
+      color: var(--ink);
+      border: 1px solid var(--border);
+      padding: 12px 24px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-google:hover { background: var(--cream); }
+
+    .empty { text-align: center; padding: 60px 24px; color: var(--muted); }
+    .empty h3 { color: var(--ink); margin: 0 0 8px; font-weight: 500; }
+
+    .msg { padding: 12px 16px; border-radius: 6px; margin-bottom: 16px; font-size: 14px; }
+    .msg-error { background: #fef2f2; color: var(--alert); border: 1px solid #fecaca; }
+    .msg-info { background: #eff6ff; color: var(--brand); border: 1px solid #dbeafe; }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed; inset: 0;
+      background: rgba(30, 40, 83, 0.5);
+      display: none;
+      align-items: center; justify-content: center;
+      z-index: 100;
+      padding: 16px;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: #fff;
+      border-radius: 8px;
+      max-width: 460px;
+      width: 100%;
+      padding: 28px;
+    }
+    .modal h3 { margin: 0 0 12px; color: var(--navy); font-weight: 500; }
+    .modal p { margin: 0 0 20px; color: var(--muted); font-size: 14px; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+
+    @media (max-width: 640px) {
+      .topbar { padding: 12px 16px; }
+      .container { padding: 16px; }
+      .card { padding: 16px; }
+      .card-details { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- LOGIN VIEW -->
+  <div id="login-view" class="login-screen" style="display:none;">
+    <div class="login-card">
+      <p class="brand-label">ABBA Patrimonial</p>
+      <h2>Panel de diagnósticos</h2>
+      <p>Inicia sesión con la cuenta autorizada para confirmar pagos y gestionar sesiones.</p>
+      <button id="btn-login" class="btn-google">
+        <svg width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+          <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+          <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+          <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+        </svg>
+        Iniciar sesión con Google
+      </button>
+      <p id="login-error" class="msg msg-error" style="display:none; margin-top: 20px;"></p>
+    </div>
+  </div>
+
+  <!-- MAIN VIEW -->
+  <div id="main-view" style="display:none;">
+    <div class="topbar">
+      <h1>
+        <span class="brand-label">ABBA Patrimonial</span>
+        Panel de diagnósticos
+      </h1>
+      <div class="user-info">
+        <div>
+          <div class="name" id="user-name">—</div>
+          <div class="email" id="user-email">—</div>
+        </div>
+        <button id="btn-logout" class="btn-logout">Cerrar sesión</button>
+      </div>
+    </div>
+
+    <div class="container">
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-status="pending_payment">
+          Pendientes de pago <span class="count" id="count-pending">0</span>
+        </button>
+        <button class="tab" data-status="confirmed">
+          Confirmadas <span class="count" id="count-confirmed">0</span>
+        </button>
+        <button class="tab" data-status="expired">
+          Expiradas <span class="count" id="count-expired">0</span>
+        </button>
+        <button class="tab" data-status="cancelled">
+          Canceladas <span class="count" id="count-cancelled">0</span>
+        </button>
+      </div>
+
+      <div id="msg-container"></div>
+      <div id="cards" class="cards"></div>
+    </div>
+  </div>
+
+  <!-- MODAL confirm -->
+  <div id="modal-confirm" class="modal-overlay">
+    <div class="modal">
+      <h3>Confirmar pago</h3>
+      <p id="modal-text">¿Confirmás el pago de <strong id="modal-name">este cliente</strong>? Se le enviará automáticamente el enlace de Google Meet.</p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" id="modal-cancel">Cancelar</button>
+        <button class="btn btn-primary" id="modal-ok">Sí, confirmar</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+    import {
+      getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged
+    } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+    import {
+      getFirestore, collection, query, where, orderBy, onSnapshot,
+      doc, getDoc, updateDoc, serverTimestamp, limit
+    } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+    // Firebase config del proyecto evaluafinanzas (valores públicos, seguros en el cliente)
+    const firebaseConfig = {
+      apiKey: "AIzaSyBLNS_xLAoAsnf5XfajAmVf12f4_mpUMfY",
+      authDomain: "evaluafinanzas.firebaseapp.com",
+      projectId: "evaluafinanzas",
+      storageBucket: "evaluafinanzas.firebasestorage.app",
+      messagingSenderId: "216050844635",
+      appId: "1:216050844635:web:ca5700949ed37f45385dfe",
+      measurementId: "G-WWS234JYZC"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const provider = new GoogleAuthProvider();
+
+    // ───── DOM refs ─────
+    const loginView = document.getElementById("login-view");
+    const mainView = document.getElementById("main-view");
+    const loginError = document.getElementById("login-error");
+    const userName = document.getElementById("user-name");
+    const userEmail = document.getElementById("user-email");
+    const cardsContainer = document.getElementById("cards");
+    const msgContainer = document.getElementById("msg-container");
+    const tabs = document.querySelectorAll(".tab");
+    const modal = document.getElementById("modal-confirm");
+    const modalName = document.getElementById("modal-name");
+    const modalOk = document.getElementById("modal-ok");
+    const modalCancel = document.getElementById("modal-cancel");
+
+    let currentStatus = "pending_payment";
+    let currentUser = null;
+    let asesorData = null;
+    let unsubscribe = null;
+    const counts = { pending_payment: 0, confirmed: 0, expired: 0, cancelled: 0 };
+
+    // ───── Auth ─────
+    document.getElementById("btn-login").addEventListener("click", async () => {
+      loginError.style.display = "none";
+      try {
+        await signInWithPopup(auth, provider);
+      } catch (err) {
+        loginError.textContent = "No se pudo iniciar sesión: " + err.message;
+        loginError.style.display = "block";
+      }
+    });
+
+    document.getElementById("btn-logout").addEventListener("click", async () => {
+      if (unsubscribe) unsubscribe();
+      await signOut(auth);
+    });
+
+    onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        currentUser = null;
+        asesorData = null;
+        loginView.style.display = "flex";
+        mainView.style.display = "none";
+        return;
+      }
+
+      // Chequear que sea asesor
+      try {
+        const asesorSnap = await getDoc(doc(db, "asesores", user.uid));
+        if (!asesorSnap.exists()) {
+          await signOut(auth);
+          loginError.textContent =
+            "Esta cuenta no tiene permisos para el panel. Pedile al admin que te agregue a la colección `asesores` con tu UID: " + user.uid;
+          loginError.style.display = "block";
+          loginView.style.display = "flex";
+          mainView.style.display = "none";
+          return;
+        }
+        asesorData = asesorSnap.data();
+        currentUser = user;
+        userName.textContent = asesorData.nombre || user.displayName || "Asesor";
+        userEmail.textContent = user.email;
+        loginView.style.display = "none";
+        mainView.style.display = "block";
+        subscribeSessions(currentStatus);
+      } catch (err) {
+        loginError.textContent = "Error verificando permisos: " + err.message;
+        loginError.style.display = "block";
+      }
+    });
+
+    // ───── Tabs ─────
+    tabs.forEach(t => {
+      t.addEventListener("click", () => {
+        tabs.forEach(x => x.classList.remove("active"));
+        t.classList.add("active");
+        currentStatus = t.dataset.status;
+        subscribeSessions(currentStatus);
+      });
+    });
+
+    // ───── Sessions listener ─────
+    function subscribeSessions(status) {
+      if (unsubscribe) unsubscribe();
+      cardsContainer.innerHTML = '<p class="empty">Cargando…</p>';
+      msgContainer.innerHTML = "";
+
+      const q = query(
+        collection(db, "diagnostico_sessions"),
+        where("status", "==", status),
+        orderBy("session_start", "desc"),
+        limit(100)
+      );
+
+      unsubscribe = onSnapshot(
+        q,
+        (snap) => {
+          counts[status] = snap.size;
+          updateCounts();
+          renderCards(snap);
+        },
+        (err) => {
+          console.error(err);
+          msgContainer.innerHTML =
+            `<div class="msg msg-error">Error cargando sesiones: ${err.message}</div>`;
+          cardsContainer.innerHTML = "";
+        }
+      );
+
+      // También cargamos los otros counts en paralelo (una vez)
+      ["pending_payment","confirmed","expired","cancelled"].forEach(s => {
+        if (s === status) return;
+        const q2 = query(
+          collection(db, "diagnostico_sessions"),
+          where("status", "==", s),
+          limit(500)
+        );
+        onSnapshot(q2, (snap) => { counts[s] = snap.size; updateCounts(); });
+      });
+    }
+
+    function updateCounts() {
+      document.getElementById("count-pending").textContent = counts.pending_payment;
+      document.getElementById("count-confirmed").textContent = counts.confirmed;
+      document.getElementById("count-expired").textContent = counts.expired;
+      document.getElementById("count-cancelled").textContent = counts.cancelled;
+    }
+
+    // ───── Render ─────
+    const fmt = (d) => {
+      if (!d) return "—";
+      if (d.toDate) d = d.toDate();
+      return new Date(d).toLocaleString("es-CO", {
+        timeZone: "America/Bogota",
+        dateStyle: "full",
+        timeStyle: "short",
+      });
+    };
+
+    function timeUntil(deadlineTs) {
+      if (!deadlineTs) return { text: "—", cls: "normal" };
+      const deadline = deadlineTs.toDate ? deadlineTs.toDate() : new Date(deadlineTs);
+      const diffMs = deadline - new Date();
+      if (diffMs <= 0) return { text: "Expirada", cls: "urgent" };
+      const mins = Math.floor(diffMs / 60000);
+      const hours = Math.floor(mins / 60);
+      const rem = mins % 60;
+      let text = hours > 0 ? `${hours}h ${rem}m` : `${mins}m`;
+      const cls = mins < 30 ? "urgent" : mins < 60 ? "warning" : "normal";
+      return { text: `Vence en ${text}`, cls };
+    }
+
+    function renderCards(snap) {
+      if (snap.empty) {
+        cardsContainer.innerHTML =
+          `<div class="empty"><h3>No hay sesiones en esta pestaña</h3><p>Cuando aparezcan, las vas a ver acá.</p></div>`;
+        return;
+      }
+
+      const html = [];
+      snap.forEach(docSnap => {
+        const s = docSnap.data();
+        const id = docSnap.id;
+        const isPending = s.status === "pending_payment";
+        const isConfirmed = s.status === "confirmed";
+        const badge = statusBadge(s.status);
+        const deadline = isPending ? timeUntil(s.payment_deadline) : null;
+        const waHref = s.client_whatsapp
+          ? `https://wa.me/${String(s.client_whatsapp).replace(/[^\d]/g, "")}`
+          : "";
+
+        html.push(`
+          <div class="card" data-id="${id}">
+            <div class="card-head">
+              <div>
+                <p class="card-name">${escapeHtml(s.client_name || "—")}</p>
+                <p class="card-email">
+                  <a href="mailto:${escapeHtml(s.client_email || "")}">${escapeHtml(s.client_email || "—")}</a>
+                </p>
+              </div>
+              <span class="badge ${badge.cls}">${badge.text}</span>
+            </div>
+
+            <div class="card-details">
+              <div>
+                <p class="field-label">Fecha de sesión</p>
+                <p class="field-value">${fmt(s.session_start)}</p>
+              </div>
+              <div>
+                <p class="field-label">WhatsApp</p>
+                <p class="field-value">
+                  ${
+                    waHref
+                      ? `<a href="${waHref}" target="_blank">${escapeHtml(s.client_whatsapp)}</a>`
+                      : "(no dejó)"
+                  }
+                </p>
+              </div>
+              ${
+                isPending
+                  ? `<div>
+                       <p class="field-label">Deadline pago</p>
+                       <p class="field-value">
+                         ${fmt(s.payment_deadline)}<br>
+                         <span class="deadline ${deadline.cls}">${deadline.text}</span>
+                       </p>
+                     </div>`
+                  : ""
+              }
+              ${
+                isConfirmed && s.confirmed_at
+                  ? `<div>
+                       <p class="field-label">Confirmada</p>
+                       <p class="field-value">${fmt(s.confirmed_at)}<br>
+                         <span style="font-size:12px;color:var(--muted);">por ${escapeHtml(s.confirmed_by || "—")}</span>
+                       </p>
+                     </div>`
+                  : ""
+              }
+              ${
+                isConfirmed && s.meet_link
+                  ? `<div>
+                       <p class="field-label">Meet</p>
+                       <p class="field-value"><a href="${escapeAttr(s.meet_link)}" target="_blank">Abrir enlace</a></p>
+                     </div>`
+                  : ""
+              }
+            </div>
+
+            ${
+              s.client_motivo
+                ? `<div class="motivo-block">
+                     <p class="field-label">Lo que trae el cliente</p>
+                     ${escapeHtml(s.client_motivo)}
+                   </div>`
+                : ""
+            }
+
+            ${
+              isPending
+                ? `<div class="card-actions">
+                     <button class="btn btn-primary" data-action="confirm" data-id="${id}" data-name="${escapeAttr(s.client_name || "")}">
+                       Confirmar pago
+                     </button>
+                   </div>`
+                : ""
+            }
+          </div>
+        `);
+      });
+
+      cardsContainer.innerHTML = html.join("");
+
+      cardsContainer.querySelectorAll('[data-action="confirm"]').forEach(btn => {
+        btn.addEventListener("click", () => openModal(btn.dataset.id, btn.dataset.name));
+      });
+    }
+
+    function statusBadge(status) {
+      switch (status) {
+        case "pending_payment": return { text: "Pendiente pago", cls: "badge-pending" };
+        case "confirmed":       return { text: "Confirmada",     cls: "badge-confirmed" };
+        case "expired":         return { text: "Expirada",       cls: "badge-expired" };
+        case "cancelled":       return { text: "Cancelada",      cls: "badge-cancelled" };
+        default:                return { text: status,           cls: "badge-cancelled" };
+      }
+    }
+
+    function escapeHtml(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+    }
+    function escapeAttr(s) { return escapeHtml(s); }
+
+    // ───── Modal & confirm ─────
+    let pendingId = null;
+    function openModal(id, name) {
+      pendingId = id;
+      modalName.textContent = name || "este cliente";
+      modal.classList.add("open");
+    }
+    function closeModal() {
+      pendingId = null;
+      modal.classList.remove("open");
+      modalOk.disabled = false;
+      modalOk.textContent = "Sí, confirmar";
+    }
+    modalCancel.addEventListener("click", closeModal);
+    modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+
+    modalOk.addEventListener("click", async () => {
+      if (!pendingId || !currentUser) return;
+      modalOk.disabled = true;
+      modalOk.textContent = "Confirmando…";
+      try {
+        await updateDoc(doc(db, "diagnostico_sessions", pendingId), {
+          status: "confirmed",
+          confirmed_at: serverTimestamp(),
+          confirmed_by: (asesorData && asesorData.nombre) || currentUser.displayName || currentUser.email,
+          confirmed_by_uid: currentUser.uid,
+        });
+        msgContainer.innerHTML =
+          `<div class="msg msg-info">✅ Pago confirmado. El cliente recibirá el email con el enlace de Meet en unos segundos.</div>`;
+        setTimeout(() => { msgContainer.innerHTML = ""; }, 6000);
+        closeModal();
+      } catch (err) {
+        console.error(err);
+        alert("Error al confirmar: " + err.message);
+        modalOk.disabled = false;
+        modalOk.textContent = "Sí, confirmar";
+      }
+    });
+  </script>
+</body>
+</html>

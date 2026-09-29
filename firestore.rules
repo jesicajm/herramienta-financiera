@@ -1,0 +1,82 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Helpers ─────────────────────────────────────────────────
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+    function isAsesor() {
+      return isSignedIn() &&
+             exists(/databases/$(database)/documents/asesores/$(request.auth.uid));
+    }
+    // 🆕 Admin: asesor cuyo doc tiene rol == "admin"
+    function isAdmin() {
+      return isAsesor() &&
+             get(/databases/$(database)/documents/asesores/$(request.auth.uid)).data.rol == 'admin';
+    }
+
+    // ─── Colección: config ───────────────────────────────────────
+    // Lectura pública SOLO para payment_info (la página de pago la necesita sin auth).
+    // 🆕 Escritura basada en rol admin en vez de UID hardcodeado.
+    match /config/payment_info {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /config/{document=**} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // ─── Colección: diagnostico_sessions ─────────────────────────
+    // Lectura pública por ID (el UUID es imposible de adivinar) para que la página
+    // de pago funcione sin login. Los asesores además pueden listar.
+    //
+    // 🆕 Los asesores pueden UPDATE — pero SOLO los campos de confirmación.
+    //    create/delete siguen bloqueados (los crea la Cloud Function con
+    //    Admin SDK, que bypasa las reglas).
+    match /diagnostico_sessions/{sessionId} {
+      allow get: if true;
+      allow list: if isAsesor();
+      allow create, delete: if false;
+      allow update: if isAsesor()
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'confirmed_at', 'confirmed_by',
+                       'confirmed_by_uid', 'payment_notes'])
+        && request.resource.data.status in ['confirmed', 'cancelled', 'pending_payment'];
+    }
+
+    // ─── Colección: clientes ─────────────────────────────────────
+    match /clientes/{uid} {
+      allow read: if isOwner(uid) || isAsesor();
+      allow write: if isOwner(uid);
+      match /modulos/{nombreModulo} {
+        allow read: if isOwner(uid) || isAsesor();
+        allow write: if isOwner(uid);
+      }
+    }
+
+    // ─── Colección: eventos ──────────────────────────────────────
+    match /eventos/{eventoId} {
+      allow read: if isAsesor() ||
+                    (isSignedIn() && resource.data.clienteUid == request.auth.uid);
+      allow create: if isSignedIn() &&
+                       request.resource.data.clienteUid == request.auth.uid;
+      allow delete: if isSignedIn() &&
+                       resource.data.clienteUid == request.auth.uid;
+      allow update: if (isSignedIn() && resource.data.clienteUid == request.auth.uid)
+                    || (isAsesor()
+                        && request.resource.data.diff(resource.data).affectedKeys()
+                             .hasOnly(['estado','notasInternas']));
+    }
+
+    // ─── Colección: asesores ─────────────────────────────────────
+    match /asesores/{uid} {
+      allow read: if isAsesor();
+      allow write: if false;
+    }
+  }
+}

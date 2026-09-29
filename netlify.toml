@@ -1,0 +1,42 @@
+# ─────────────────────────────────────────────────────────────────
+#  Configuración de Netlify para evaluafinanzas
+# ─────────────────────────────────────────────────────────────────
+
+[build]
+  # Netlify publica los archivos que están en `public/`
+  publish = "public"
+  # Como el proyecto es HTML estático, no hay comando de build
+  command = ""
+
+# ─────────────────────────────────────────────────────────────────
+#  Headers de seguridad
+# ─────────────────────────────────────────────────────────────────
+
+# Headers globales para todas las páginas
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+# El panel de admin no debería poder embeberse en un iframe (protección contra clickjacking)
+[[headers]]
+  for = "/admin-diagnostico.html"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+# ─────────────────────────────────────────────────────────────────
+#  Redirects — dejamos comentado por si más adelante querés
+#  URLs limpias tipo /admin en vez de /admin-diagnostico.html
+# ─────────────────────────────────────────────────────────────────
+
+# [[redirects]]
+#   from = "/admin"
+#   to = "/admin-diagnostico.html"
+#   status = 200
+
+# [[redirects]]
+#   from = "/pago"
+#   to = "/pago-diagnostico.html"
+#   status = 200
