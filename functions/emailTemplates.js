@@ -197,14 +197,14 @@ function renderEmailInstruccionesPago(ctx) {
               Qué sigue
             </h2>
             <ol style="margin:0 0 24px;padding-left:20px;font-size:14px;line-height:1.7;color:${COLORS.ink};">
-              <li>Hacés la transferencia por ${formatCOP(amount)} COP.</li>
-              <li>Enviás el comprobante por WhatsApp con el botón de arriba.</li>
+              <li>Haces la transferencia por ${formatCOP(amount)} COP.</li>
+              <li>Envías el comprobante por WhatsApp con el botón de arriba.</li>
               <li>${whatsappAgent} valida el pago y te envía por email el enlace de Google Meet para la sesión.</li>
               <li>Nos vemos en la sesión el ${formatBogota(sessionStart)}.</li>
             </ol>
 
             <p style="margin:0 0 8px;font-size:13px;color:${COLORS.muted};line-height:1.6;">
-              Si tenés cualquier duda sobre el pago, escribinos a
+              Si tienes cualquier duda sobre el pago, escríbenos a
               <a href="mailto:${supportEmail}" style="color:${COLORS.brand};text-decoration:none;">${supportEmail}</a>.
             </p>
           </td>
@@ -281,8 +281,8 @@ Envía el comprobante por WhatsApp a ${whatsappAgent}:
   ${waLink}
 
 QUÉ SIGUE
-  1. Hacés la transferencia por ${formatCOP(amount)} COP.
-  2. Enviás el comprobante por el link de WhatsApp de arriba.
+  1. Haces la transferencia por ${formatCOP(amount)} COP.
+  2. Envías el comprobante por el link de WhatsApp de arriba.
   3. ${whatsappAgent} valida el pago y te envía por email el enlace de Google Meet.
   4. Nos vemos en la sesión el ${formatBogota(sessionStart)}.
 
@@ -328,7 +328,7 @@ function renderEmailExpiracion(ctx) {
             No recibimos el comprobante de pago dentro de las 3 horas posteriores a tu reserva, así que liberamos el horario para otros clientes.
           </p>
           <p style="margin:0 0 20px;font-size:15px;line-height:1.65;color:${COLORS.ink};">
-            Si querés retomar el proceso, podés volver a agendar cuando estés listo/a. Si tuviste algún inconveniente con el pago, respondé este correo y te ayudamos.
+            Si quieres retomar el proceso, puedes volver a agendar cuando estés listo/a. Si tuviste algún inconveniente con el pago, responde este correo y te ayudamos.
           </p>
           ${ctaBlock}
           <p style="margin:0;font-size:14px;color:${COLORS.muted};">Un abrazo,</p>
@@ -443,17 +443,17 @@ function renderEmailConfirmacion(ctx) {
                 : ""
             }
 
-            <p style="margin:0 0 10px;font-size:13px;letter-spacing:0.14em;text-transform:uppercase;color:${COLORS.brand};font-weight:600;">
+            <p style="margin:0 0 12px;font-size:13px;letter-spacing:0.14em;text-transform:uppercase;color:${COLORS.brand};font-weight:600;">
               Módulos más útiles para preparar tu sesión
             </p>
-            <ul style="margin:0 0 20px;padding-left:20px;font-size:14px;line-height:1.75;color:${COLORS.ink};">
-              <li><strong>Perfil personal y fiscal</strong> — tu situación básica, dependientes, régimen tributario.</li>
-              <li><strong>Ingresos y gastos</strong> — de dónde vienen tus ingresos y en qué se van.</li>
-              <li><strong>Mapa Patrimonial</strong> — inmuebles, empresa, inversiones, ahorros y deudas (si aplica a tu caso).</li>
-            </ul>
+            <div style="margin:0 0 20px;font-size:14px;line-height:1.8;color:${COLORS.ink};">
+              <p style="margin:0 0 10px;"><strong>Perfil personal y fiscal:</strong> tu situación básica, dependientes, régimen tributario.</p>
+              <p style="margin:0 0 10px;"><strong>Ingresos y gastos:</strong> basta con que registres tus ingresos, es lo que necesitamos para evaluar las fuentes desde lo tributario.</p>
+              <p style="margin:0;"><strong>Mapa Patrimonial:</strong> inmuebles, empresa, inversiones, ahorros y deudas, si aplica a tu caso.</p>
+            </div>
 
             <p style="margin:0 0 20px;font-size:14px;line-height:1.65;color:${COLORS.ink};">
-              Con tus datos cargados, Natalia trabaja sobre tu situación real desde el primer minuto — sin gastar tiempo en preguntas básicas. Si no alcanzas a completarlo antes, igualmente nos vemos: solo que avanzamos menos.
+              Con tus datos cargados, Natalia trabaja sobre tu situación real desde el primer minuto, sin gastar tiempo en preguntas básicas. Si no alcanzas a completarlo antes, igualmente nos vemos: solo que avanzamos menos.
             </p>
 
             <p style="margin:0 0 8px;font-size:13px;color:${COLORS.muted};line-height:1.6;">
@@ -499,19 +499,20 @@ FECHA DE LA SESIÓN
 ENLACE DE GOOGLE MEET
   ${meetLink || "(te lo compartimos por separado)"}
 
-ANTES DE LA SESIÓN — COMPLETA TU DIAGNÓSTICO EN LA APP
+ANTES DE LA SESIÓN, COMPLETA TU DIAGNÓSTICO EN LA APP
 Como parte de esta sesión, tienes acceso al plan gratuito de nuestra app patrimonial. Antes del encuentro, entra y completa los módulos que apliquen a tu situación. Toma 15-20 minutos.
 
 Ingresar a la app: ${appUrl || "https://abba-finanzas.netlify.app"}
 
 Los módulos más útiles para preparar tu sesión:
-  - Perfil personal y fiscal — tu situación básica, dependientes, régimen tributario.
-  - Ingresos y gastos — de dónde vienen tus ingresos y en qué se van.
-  - Mapa Patrimonial — inmuebles, empresa, inversiones, ahorros y deudas (si aplica).
 
-Con tus datos cargados, Natalia trabaja sobre tu situación real desde el primer minuto. Si no alcanzas a completarlo antes, igualmente nos vemos: solo que avanzamos menos.
+  Perfil personal y fiscal: tu situación básica, dependientes, régimen tributario.
+  Ingresos y gastos: basta con que registres tus ingresos, es lo que necesitamos para evaluar las fuentes desde lo tributario.
+  Mapa Patrimonial: inmuebles, empresa, inversiones, ahorros y deudas, si aplica a tu caso.
 
-Si necesitás reprogramar o tenés dudas, respondé este correo o escribinos a ${supportEmail}.
+Con tus datos cargados, Natalia trabaja sobre tu situación real desde el primer minuto, sin gastar tiempo en preguntas básicas. Si no alcanzas a completarlo antes, igualmente nos vemos: solo que avanzamos menos.
+
+Si necesitas reprogramar o tienes dudas, responde este correo o escríbenos a ${supportEmail}.
 
 Un abrazo,
 Natalia Jaramillo

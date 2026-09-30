@@ -55,9 +55,14 @@ const CONFIG = {
   // ⬇️  Reemplazá con el link exacto del event type "Diagnóstico patrimonial con Natalia"
   calendlyEventUrl:
     "https://calendly.com/abba-asesoria/diagnostico-patrimonial-con-natalia",
-  // URL de la app de ABBA (donde el cliente completa su diagnóstico)
-  // Cuando actives el custom domain (app.abbapatrimonial.com) actualizá esta URL.
-  appUrl: "https://abba-finanzas.netlify.app",
+  // URL de la app de ABBA (donde el cliente completa su diagnóstico).
+  //
+  // ⚠️ IMPORTANTE — actualizar esta URL en cada fase del proyecto:
+  //   1) Fase actual (dev/testing): apunta al preview de la rama con Model B
+  //   2) Cuando el custom domain esté activo: apuntar a "https://app.abbapatrimonial.com"
+  //   3) NUNCA apuntar a la URL default de Netlify (abba-finanzas.netlify.app) en producción
+  //      hasta que Model B esté mergeado a main.
+  appUrl: "https://feat-reestructura-diagnostico--abba-finanzas.netlify.app",
 };
 
 // ─────────────────────────────────────────────────────────────────
@@ -235,7 +240,7 @@ async function sendClientPaymentInstructions(transporter, session) {
   await transporter.sendMail({
     from: `"Natalia Jaramillo — ABBA Patrimonial" <${CONFIG.gmail.user}>`,
     to: session.client_email,
-    subject: "Confirma tu diagnóstico patrimonial — datos para el pago",
+    subject: "Confirma tu diagnóstico patrimonial: datos para el pago",
     html,
     text,
   });
@@ -272,7 +277,7 @@ async function sendInternalNotification(transporter, session) {
   await transporter.sendMail({
     from: `"Sistema ABBA" <${CONFIG.gmail.user}>`,
     to: CONFIG.jessica.email,
-    subject: `Nueva reserva de diagnóstico — ${session.client_name}`,
+    subject: `Nueva reserva de diagnóstico: ${session.client_name}`,
     html,
     text: `Nueva sesión de ${session.client_name} (${session.client_email}) — sesión ${formatBogota(session.session_start)} — deadline pago ${formatBogota(session.payment_deadline)}`,
   });
@@ -290,7 +295,7 @@ async function sendPaymentExpiredEmail(transporter, session) {
   await transporter.sendMail({
     from: `"Natalia Jaramillo — ABBA Patrimonial" <${CONFIG.gmail.user}>`,
     to: session.client_email,
-    subject: "Tu reserva expiró — podés volver a agendar cuando quieras",
+    subject: "Tu reserva expiró: puedes volver a agendar cuando quieras",
     html,
     text,
   });
@@ -488,7 +493,7 @@ async function sendConfirmationEmailToClient(transporter, session) {
   await transporter.sendMail({
     from: `"Natalia Jaramillo — ABBA Patrimonial" <${CONFIG.gmail.user}>`,
     to: session.client_email,
-    subject: "Tu diagnóstico patrimonial está confirmado — aquí el enlace de Meet",
+    subject: "Tu diagnóstico patrimonial está confirmado: aquí el enlace de Meet",
     html,
     text,
   });
@@ -508,7 +513,7 @@ async function sendConfirmationEmailToNatalia(transporter, session) {
   await transporter.sendMail({
     from: `"Sistema ABBA" <${CONFIG.gmail.user}>`,
     to: CONFIG.natalia.email,
-    subject: `Sesión confirmada — ${session.client_name}`,
+    subject: `Sesión confirmada: ${session.client_name}`,
     html,
     text: `Sesión confirmada de ${session.client_name}. Fecha: ${session.session_start}. Meet: ${session.meet_link}`,
   });
