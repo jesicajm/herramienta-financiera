@@ -18,7 +18,7 @@
  *    firebase deploy --only functions
  */
 
-const { onRequest } = require("firebase-functions/v2/https");
+const { onRequest, onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const { logger } = require("firebase-functions");
@@ -55,6 +55,9 @@ const CONFIG = {
   // ⬇️  Reemplazá con el link exacto del event type "Diagnóstico patrimonial con Natalia"
   calendlyEventUrl:
     "https://calendly.com/abba-asesoria/diagnostico-patrimonial-con-natalia",
+  // URL de la app de ABBA (donde el cliente completa su diagnóstico)
+  // Cuando actives el custom domain (app.abbapatrimonial.com) actualizá esta URL.
+  appUrl: "https://abba-finanzas.netlify.app",
 };
 
 // ─────────────────────────────────────────────────────────────────
@@ -71,11 +74,15 @@ function makeTransporter() {
 }
 
 function formatBogota(date) {
-  return date.toLocaleString("es-CO", {
-    timeZone: "America/Bogota",
-    dateStyle: "full",
-    timeStyle: "short",
-  });
+  return date
+    .toLocaleString("es-CO", {
+      timeZone: "America/Bogota",
+      dateStyle: "full",
+      timeStyle: "short",
+    })
+    // 9:00 a. m. → 9:00 AM   /   3:30 p. m. → 3:30 PM
+    .replace(/\s+a\.\s*m\./gi, " AM")
+    .replace(/\s+p\.\s*m\./gi, " PM");
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -461,12 +468,18 @@ exports.onSessionConfirmed = onDocumentUpdated(
 //  EMAILS de confirmación
 // ─────────────────────────────────────────────────────────────────
 async function sendConfirmationEmailToClient(transporter, session) {
+  const sessionToken = session.calendly_invitee_uuid || "";
+  const appUrlWithToken = sessionToken
+    ? `${CONFIG.appUrl}/?diag_session=${encodeURIComponent(sessionToken)}`
+    : CONFIG.appUrl;
+
   const ctx = {
     clientName: session.client_name,
     sessionStart: session.session_start,
     meetLink: session.meet_link || "",
     eventName: session.event_name || "Diagnóstico patrimonial",
     supportEmail: CONFIG.gmail.user,
+    appUrl: appUrlWithToken,
   };
 
   const html = renderEmailConfirmacion(ctx);
@@ -501,3 +514,108 @@ async function sendConfirmationEmailToNatalia(transporter, session) {
   });
   logger.info(`✉️  Aviso enviado a Natalia: ${CONFIG.natalia.email}`);
 }
+
+// ─────────────────────────────────────────────────────────────────
+//  linkDiagnosticSession — Callable
+//  Vincula la cuenta autenticada del cliente en la app con su
+//  diagnostico_session de Firestore. Se llama después del signup/login
+//  cuando la app detectó un token pendiente en localStorage.
+// ─────────────────────────────────────────────────────────────────
+exports.linkDiagnosticSession = onCall(
+  {
+    region: "us-central1",
+    memory: "256MiB",
+    timeoutSeconds: 30,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión primero.");
+    }
+    const uid = request.auth.uid;
+    const userEmail =
+      (request.auth.token && request.auth.token.email) || "";
+    const sessionToken =
+      request.data && typeof request.data.sessionToken === "string"
+        ? request.data.sessionToken.trim()
+        : "";
+
+    if (!sessionToken) {
+      throw new HttpsError("invalid-argument", "sessionToken es requerido.");
+    }
+    // Guardrail básico contra tokens malformados
+    if (!/^[a-zA-Z0-9\-_]{8,}$/.test(sessionToken)) {
+      throw new HttpsError("invalid-argument", "sessionToken con formato inválido.");
+    }
+
+    const sessionRef = db
+      .collection("diagnostico_sessions")
+      .doc(sessionToken);
+    const sessionSnap = await sessionRef.get();
+    if (!sessionSnap.exists) {
+      throw new HttpsError(
+        "not-found",
+        "No encontramos esta sesión de diagnóstico."
+      );
+    }
+
+    const session = sessionSnap.data();
+
+    // Prevenir hijack: si ya está vinculada a otro usuario, bloquear
+    if (session.linked_user_uid && session.linked_user_uid !== uid) {
+      logger.warn(
+        `🚫 Intento de re-vinculación bloqueado: session=${sessionToken}, ya vinculada a ${session.linked_user_uid}, intento por ${uid}`
+      );
+      throw new HttpsError(
+        "permission-denied",
+        "Esta sesión ya está vinculada a otra cuenta. Contacta soporte si crees que es un error."
+      );
+    }
+
+    // Idempotencia: si ya está vinculada al mismo uid, devolvemos éxito sin escribir
+    if (session.linked_user_uid === uid) {
+      logger.info(`↩️  Vinculación ya existente para ${uid}, no-op`);
+      return {
+        success: true,
+        alreadyLinked: true,
+        sessionName: session.client_name,
+        sessionEmail: session.client_email,
+        sessionStart: session.session_start.toDate
+          ? session.session_start.toDate().toISOString()
+          : session.session_start,
+      };
+    }
+
+    // Vincular ambos lados
+    const now = new Date();
+    await Promise.all([
+      sessionRef.update({
+        linked_user_uid: uid,
+        linked_user_email: userEmail,
+        linked_at: now,
+      }),
+      db
+        .collection("clientes")
+        .doc(uid)
+        .set(
+          {
+            linked_session_id: sessionToken,
+            linked_session_email: session.client_email,
+            linked_session_at: now,
+          },
+          { merge: true }
+        ),
+    ]);
+
+    logger.info(`🔗 Vinculado: session=${sessionToken} → uid=${uid}`);
+
+    return {
+      success: true,
+      alreadyLinked: false,
+      sessionName: session.client_name,
+      sessionEmail: session.client_email,
+      sessionStart: session.session_start.toDate
+        ? session.session_start.toDate().toISOString()
+        : session.session_start,
+    };
+  }
+);

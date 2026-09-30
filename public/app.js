@@ -27,6 +27,25 @@
     authAvailable=true;
   } catch(e){ console.warn('Firebase no configurado, usando localStorage.'); }
 
+    /* ═══════════════════════════════════════════════════════════
+     DEEP LINK — Capturar token de sesión pagada desde URL
+     Guarda ?diag_session=UUID en localStorage. El vínculo real
+     se hace en onAuthStateChange cuando el usuario esté autenticado.
+     ═══════════════════════════════════════════════════════════ */
+     (function detectDiagSessionToken(){
+      try {
+        const url = new URL(window.location.href);
+        const token = url.searchParams.get('diag_session');
+        if (token && /^[a-zA-Z0-9\-_]{8,}$/.test(token)) {
+          localStorage.setItem('abba_pending_diag_session', token);
+          // Limpiar la URL para que F5 no re-procese ni exponga el token
+          url.searchParams.delete('diag_session');
+          const cleanUrl = url.pathname + (url.search ? url.search : '') + url.hash;
+          window.history.replaceState({}, '', cleanUrl);
+          console.log('%c✓ Token de sesión pagada capturado', 'color:#0e4d3a;font-weight:bold');
+        }
+      } catch(e){ console.warn('detectDiagSessionToken falló:', e); }
+    })();
   /* ═══════════════════════════════════════════════════════════
      CONFIGURACIÓN FISCAL — parámetros por año (UVT, topes, tarifas, calendario)
      Fuente de verdad: Firestore  config/fiscal/anios/{año}  (editable sin re-desplegar).
@@ -8288,6 +8307,37 @@ function showToast(msg, type) {
     try {
       perfil = await loadPerfil(user.uid);
     } catch(e){ console.warn('Error cargando perfil:', e); }
+
+        /* 🔗 Vincular con sesión pagada si hay token pendiente en localStorage.
+       Se ejecuta SILENCIOSAMENTE — si falla no bloqueamos el flujo normal. */
+       try {
+        const pendingToken = localStorage.getItem('abba_pending_diag_session');
+        if (pendingToken && typeof firebase !== 'undefined' && firebase.functions) {
+          const linkFn = firebase.functions().httpsCallable('linkDiagnosticSession');
+          const result = await linkFn({ sessionToken: pendingToken });
+          if (result && result.data && result.data.success) {
+            console.log('%c✓ Cuenta vinculada con sesión pagada', 'color:#0e4d3a;font-weight:bold');
+            const clientName = (result.data.sessionName || '').split(' ')[0];
+            if (typeof showToast === 'function') {
+              showToast(`¡Hola${clientName ? ' ' + clientName : ''}! Tu sesión con Natalia está agendada.`, 'success');
+            }
+          }
+          localStorage.removeItem('abba_pending_diag_session');
+        }
+      } catch(err){
+        console.warn('No se pudo vincular la sesión de diagnóstico:', err);
+        const code = err && err.code;
+        // Errores permanentes: limpiar token para no reintentar
+        if (code === 'functions/not-found' ||
+            code === 'functions/permission-denied' ||
+            code === 'functions/invalid-argument') {
+          localStorage.removeItem('abba_pending_diag_session');
+          if (typeof showToast === 'function') {
+            showToast('No pudimos vincular tu sesión. Escríbenos a natalia.jaramillo@abbapatrimonial.com', 'error');
+          }
+        }
+        // Errores transitorios (network, timeout) → dejamos el token para reintentar en próximo login
+      }
   
     if(!perfil || !perfil.consentimientoTratamiento || !perfil.consentimientoTratamiento.aceptado){
       // Primer login: mostrar onboarding de perfil

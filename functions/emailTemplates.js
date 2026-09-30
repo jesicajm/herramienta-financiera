@@ -37,11 +37,15 @@ const COLORS = {
 // ─────────────────────────────────────────────────────────────────
 function formatBogota(date) {
   if (!(date instanceof Date)) date = new Date(date);
-  return date.toLocaleString("es-CO", {
-    timeZone: "America/Bogota",
-    dateStyle: "full",
-    timeStyle: "short",
-  });
+  return date
+    .toLocaleString("es-CO", {
+      timeZone: "America/Bogota",
+      dateStyle: "full",
+      timeStyle: "short",
+    })
+    // 9:00 a. m. → 9:00 AM   /   3:30 p. m. → 3:30 PM
+    .replace(/\s+a\.\s*m\./gi, " AM")
+    .replace(/\s+p\.\s*m\./gi, " PM");
 }
 
 function formatCOP(n) {
@@ -347,6 +351,7 @@ function renderEmailConfirmacion(ctx) {
     meetLink = "",
     eventName = "Diagnóstico patrimonial",
     supportEmail = "hola@abbapatrimonial.com",
+    appUrl = "",
   } = ctx;
 
   const meetBlock = meetLink
@@ -364,9 +369,6 @@ function renderEmailConfirmacion(ctx) {
                     padding:14px 32px;border-radius:6px;">
             Entrar a la sesión de Meet →
           </a>
-          <p style="margin:14px 0 0;font-size:12px;color:${COLORS.muted};word-break:break-all;">
-            ${meetLink}
-          </p>
         </div>`
     : `
         <div style="background:${COLORS.cream};border-left:3px solid ${COLORS.alert};padding:14px 18px;margin:0 0 24px;border-radius:0 4px 4px 0;">
@@ -422,21 +424,40 @@ function renderEmailConfirmacion(ctx) {
             ${meetBlock}
 
             <h2 style="margin:0 0 12px;font-size:13px;letter-spacing:0.18em;text-transform:uppercase;color:${COLORS.brand};font-weight:600;">
-              Cómo llegar bien preparado/a
+              Antes de la sesión — completa tu diagnóstico en la app
             </h2>
-            <ul style="margin:0 0 24px;padding-left:20px;font-size:14px;line-height:1.7;color:${COLORS.ink};">
-              <li>Ten a mano una idea general de tu patrimonio actual (inmuebles, inversiones, empresa, deudas).</li>
-              <li>Un resumen de tus ingresos y gastos mensuales aproximados.</li>
-              <li>Cualquier decisión patrimonial que estés considerando (compra, herencia, sociedad, jubilación).</li>
-              <li>Preguntas concretas — no hace falta que sean sofisticadas, cuanto más específicas mejor.</li>
+            <p style="margin:0 0 18px;font-size:14px;line-height:1.65;color:${COLORS.ink};">
+              Como parte de esta sesión, tienes acceso al plan gratuito de nuestra app patrimonial. Antes del encuentro, entra y completa los módulos que apliquen a tu situación. Toma 15-20 minutos y define qué tan profundo podemos ir en los 60 minutos.
+            </p>
+
+            ${
+              appUrl
+                ? `<div style="text-align:center;margin:0 0 22px;">
+                     <a href="${appUrl}"
+                        style="display:inline-block;background:${COLORS.brand};color:#ffffff;
+                               text-decoration:none;font-size:15px;font-weight:600;
+                               padding:14px 32px;border-radius:6px;">
+                       Ingresar a la app →
+                     </a>
+                   </div>`
+                : ""
+            }
+
+            <p style="margin:0 0 10px;font-size:13px;letter-spacing:0.14em;text-transform:uppercase;color:${COLORS.brand};font-weight:600;">
+              Módulos más útiles para preparar tu sesión
+            </p>
+            <ul style="margin:0 0 20px;padding-left:20px;font-size:14px;line-height:1.75;color:${COLORS.ink};">
+              <li><strong>Perfil personal y fiscal</strong> — tu situación básica, dependientes, régimen tributario.</li>
+              <li><strong>Ingresos y gastos</strong> — de dónde vienen tus ingresos y en qué se van.</li>
+              <li><strong>Mapa Patrimonial</strong> — inmuebles, empresa, inversiones, ahorros y deudas (si aplica a tu caso).</li>
             </ul>
 
-            <p style="margin:0 0 16px;font-size:14px;line-height:1.65;color:${COLORS.ink};">
-              La sesión es una conversación de trabajo, no un pitch. Sales con un mapa concreto de tu situación y las 2 o 3 palancas que más mueven la aguja en tu caso.
+            <p style="margin:0 0 20px;font-size:14px;line-height:1.65;color:${COLORS.ink};">
+              Con tus datos cargados, Natalia trabaja sobre tu situación real desde el primer minuto — sin gastar tiempo en preguntas básicas. Si no alcanzas a completarlo antes, igualmente nos vemos: solo que avanzamos menos.
             </p>
 
             <p style="margin:0 0 8px;font-size:13px;color:${COLORS.muted};line-height:1.6;">
-              Si necesitás reprogramar o tenés cualquier duda, respondé este correo o escribinos a
+              Si tienes cualquier duda o necesitas reprogramar, responde este correo o escríbenos a
               <a href="mailto:${supportEmail}" style="color:${COLORS.brand};text-decoration:none;">${supportEmail}</a>.
             </p>
           </td>
@@ -466,6 +487,7 @@ function renderEmailConfirmacionText(ctx) {
     sessionStart,
     meetLink = "",
     supportEmail = "hola@abbapatrimonial.com",
+    appUrl = "",
   } = ctx;
 
   return `${clientName}, tu sesión de diagnóstico patrimonial está confirmada.
@@ -477,13 +499,17 @@ FECHA DE LA SESIÓN
 ENLACE DE GOOGLE MEET
   ${meetLink || "(te lo compartimos por separado)"}
 
-CÓMO LLEGAR PREPARADO/A
-  - Ten a mano una idea general de tu patrimonio actual (inmuebles, inversiones, empresa, deudas).
-  - Un resumen de tus ingresos y gastos mensuales aproximados.
-  - Cualquier decisión patrimonial que estés considerando.
-  - Preguntas concretas — cuanto más específicas mejor.
+ANTES DE LA SESIÓN — COMPLETA TU DIAGNÓSTICO EN LA APP
+Como parte de esta sesión, tienes acceso al plan gratuito de nuestra app patrimonial. Antes del encuentro, entra y completa los módulos que apliquen a tu situación. Toma 15-20 minutos.
 
-La sesión es una conversación de trabajo, no un pitch. Sales con un mapa concreto de tu situación y las 2 o 3 palancas que más mueven la aguja en tu caso.
+Ingresar a la app: ${appUrl || "https://abba-finanzas.netlify.app"}
+
+Los módulos más útiles para preparar tu sesión:
+  - Perfil personal y fiscal — tu situación básica, dependientes, régimen tributario.
+  - Ingresos y gastos — de dónde vienen tus ingresos y en qué se van.
+  - Mapa Patrimonial — inmuebles, empresa, inversiones, ahorros y deudas (si aplica).
+
+Con tus datos cargados, Natalia trabaja sobre tu situación real desde el primer minuto. Si no alcanzas a completarlo antes, igualmente nos vemos: solo que avanzamos menos.
 
 Si necesitás reprogramar o tenés dudas, respondé este correo o escribinos a ${supportEmail}.
 
