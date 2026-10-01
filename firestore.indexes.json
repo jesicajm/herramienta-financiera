@@ -4,8 +4,24 @@
       "collectionGroup": "diagnostico_sessions",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "status",           "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "payment_deadline", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "diagnostico_sessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "session_start", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "diagnostico_sessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "session_start", "order": "ASCENDING" }
       ]
     }
   ],

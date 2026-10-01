@@ -66,7 +66,7 @@ const CONFIG = {
   //   2) Cuando el custom domain esté activo: apuntar a "https://app.abbapatrimonial.com"
   //   3) NUNCA apuntar a la URL default de Netlify (abba-finanzas.netlify.app) en producción
   //      hasta que Model B esté mergeado a main.
-  appUrl: "https://feat-reestructura-diagnostico--abba-finanzas.netlify.app",
+  appUrl: "https://abba-finanzas.netlify.app",
 };
 
 // ─────────────────────────────────────────────────────────────────
@@ -111,10 +111,40 @@ async function handleDiagnosticoNatalia(req, res) {
       return res.status(400).send("No payload");
     }
 
+    // ═══ DEBUG: logear señales de reagendamiento para diagnosticar ═══
+    logger.info("🔎 Webhook recibido - señales de reagendamiento", {
+      event,
+      client_email: payload.email,
+      has_rescheduled_flag: typeof payload.rescheduled,
+      rescheduled_value: payload.rescheduled,
+      has_old_invitee: !!payload.old_invitee,
+      old_invitee_value: payload.old_invitee || null,
+      has_new_invitee: !!payload.new_invitee,
+    });
+
     // ═══ ROUTING: ¿es un reagendamiento o una reserva nueva? ═══
-    if (payload.rescheduled === true && payload.old_invitee) {
+    //
+    // Calendly señala un reagendamiento en el payload de invitee.created
+    // mediante CUALQUIERA de estos campos:
+    //   - payload.rescheduled === true
+    //   - payload.old_invitee tiene URI (el invitee viejo que fue reemplazado)
+    //
+    // La presencia de old_invitee es la señal más fuerte, así que la usamos
+    // como condición primaria (sin requerir también rescheduled === true).
+    const oldInviteeUri = payload.old_invitee;
+    const isReschedule =
+      (typeof oldInviteeUri === "string" && oldInviteeUri.length > 0) ||
+      payload.rescheduled === true;
+
+    if (isReschedule) {
+      logger.info(`🔄 Detectado como reagendamiento`, {
+        old_invitee: oldInviteeUri,
+        rescheduled: payload.rescheduled,
+      });
       return await handleRescheduledInvitee(payload, res);
     }
+
+    logger.info(`🆕 Detectado como reserva nueva`);
     return await handleNewInvitee(payload, res);
   } catch (error) {
     logger.error("💥 Error en handleDiagnosticoNatalia:", error);

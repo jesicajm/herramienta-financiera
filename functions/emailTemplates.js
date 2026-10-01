@@ -217,7 +217,7 @@ function renderEmailInstruccionesPago(ctx) {
               Natalia Jaramillo
             </p>
             <p style="margin:4px 0 0;font-size:12px;color:${COLORS.muted};">
-              ABBA · Arquitectura Patrimonial
+              ABBA Patrimonial · Arquitectura de patrimonio
             </p>
           </td>
         </tr>
@@ -587,6 +587,313 @@ function renderEmailNotifSesionConfirmada(ctx) {
 </html>`;
 }
 
+// ─────────────────────────────────────────────────────────────────
+//  EMAIL 5 — RECORDATORIO 12 HORAS ANTES DE LA SESIÓN
+// ─────────────────────────────────────────────────────────────────
+function renderEmailRecordatorio12h(ctx) {
+  const {
+    clientName = "",
+    sessionStart,
+    meetLink = "",
+    appUrl = "",
+    supportEmail = "hola@abbapatrimonial.com",
+  } = ctx;
+
+  const meetBlock = meetLink
+    ? `
+        <div style="text-align:center;margin:0 0 24px;">
+          <a href="${meetLink}"
+             style="display:inline-block;background:${COLORS.brand};color:#ffffff;
+                    text-decoration:none;font-size:15px;font-weight:600;
+                    padding:14px 32px;border-radius:6px;">
+            Entrar a la sesión de Meet →
+          </a>
+        </div>`
+    : "";
+
+  const appBlock = appUrl
+    ? `
+        <div style="background:${COLORS.cream};border:1px solid ${COLORS.border};border-radius:8px;padding:20px 22px;margin:0 0 20px;">
+          <p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:${COLORS.ink};">
+            Si aún no completaste tu diagnóstico en la app, todavía estás a tiempo.
+          </p>
+          <div style="text-align:center;">
+            <a href="${appUrl}"
+               style="display:inline-block;background:transparent;color:${COLORS.brand};
+                      text-decoration:none;font-size:14px;font-weight:600;
+                      padding:11px 26px;border:1px solid ${COLORS.brand};border-radius:6px;">
+              Ir a la app →
+            </a>
+          </div>
+        </div>`
+    : "";
+
+  return `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Recordatorio: tu sesión con Natalia se acerca</title>
+</head>
+<body style="margin:0;padding:0;background:${COLORS.cream};font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;color:${COLORS.ink};">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${COLORS.cream};padding:32px 16px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:1px solid ${COLORS.border};border-radius:8px;overflow:hidden;">
+
+        <tr>
+          <td style="background:${COLORS.navy};padding:32px 32px 24px;text-align:center;">
+            <p style="margin:0 0 8px;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#c9d3e6;">
+              ABBA Patrimonial
+            </p>
+            <h1 style="margin:0;font-size:22px;font-weight:400;color:#ffffff;line-height:1.35;">
+              ${clientName}, tu sesión<br>se acerca
+            </h1>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:32px;">
+            <p style="margin:0 0 16px;font-size:15px;line-height:1.65;color:${COLORS.ink};">
+              Un recordatorio breve: tu sesión de diagnóstico patrimonial con Natalia es dentro de las próximas 12 horas.
+            </p>
+
+            <div style="background:${COLORS.navy};color:#ffffff;padding:20px 24px;border-radius:8px;margin:0 0 24px;text-align:center;">
+              <p style="margin:0 0 4px;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#c9d3e6;">
+                Fecha de la sesión
+              </p>
+              <p style="margin:0;font-size:18px;font-weight:500;color:#ffffff;line-height:1.4;">
+                ${formatBogota(sessionStart)}
+              </p>
+              <p style="margin:8px 0 0;font-size:12px;color:#c9d3e6;">
+                Duración: 60 minutos
+              </p>
+            </div>
+
+            ${meetBlock}
+            ${appBlock}
+
+            <p style="margin:0 0 8px;font-size:13px;color:${COLORS.muted};line-height:1.6;">
+              Si necesitas reprogramar o tienes cualquier duda, responde este correo o escríbenos a
+              <a href="mailto:${supportEmail}" style="color:${COLORS.brand};text-decoration:none;">${supportEmail}</a>.
+            </p>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="background:${COLORS.cream};padding:24px 32px;text-align:center;border-top:1px solid ${COLORS.border};">
+            <p style="margin:0;font-size:13px;color:${COLORS.navy};font-weight:600;">
+              Natalia Jaramillo
+            </p>
+            <p style="margin:4px 0 0;font-size:12px;color:${COLORS.muted};">
+              ABBA Patrimonial · Arquitectura de patrimonio
+            </p>
+          </td>
+        </tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
+function renderEmailRecordatorio12hText(ctx) {
+  const {
+    clientName = "",
+    sessionStart,
+    meetLink = "",
+    appUrl = "",
+    supportEmail = "hola@abbapatrimonial.com",
+  } = ctx;
+
+  return `${clientName}, tu sesión de diagnóstico patrimonial con Natalia se acerca.
+
+FECHA DE LA SESIÓN
+  ${formatBogota(sessionStart)}
+  Duración: 60 minutos. Dentro de las próximas 12 horas.
+
+ENLACE DE GOOGLE MEET
+  ${meetLink || "(te lo compartimos por separado)"}
+
+Si aún no completaste tu diagnóstico en la app, todavía estás a tiempo:
+  ${appUrl || "https://abba-finanzas.netlify.app"}
+
+Si necesitas reprogramar o tienes cualquier duda, responde este correo o escríbenos a ${supportEmail}.
+
+Un abrazo,
+Natalia Jaramillo
+ABBA Patrimonial
+`;
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  EMAIL 6 — REAGENDAMIENTO DE SESIÓN
+// ─────────────────────────────────────────────────────────────────
+function renderEmailReagendamiento(ctx) {
+  const {
+    clientName = "",
+    newSessionStart,
+    originalSessionStart,
+    meetLink = "",
+    appUrl = "",
+    reason = "",
+    supportEmail = "hola@abbapatrimonial.com",
+  } = ctx;
+
+  const meetBlock = meetLink
+    ? `
+        <div style="text-align:center;margin:0 0 20px;">
+          <a href="${meetLink}"
+             style="display:inline-block;background:${COLORS.brand};color:#ffffff;
+                    text-decoration:none;font-size:15px;font-weight:600;
+                    padding:14px 32px;border-radius:6px;">
+            Entrar a la sesión de Meet →
+          </a>
+        </div>`
+    : "";
+
+  const appBlock = appUrl
+    ? `
+        <div style="text-align:center;margin:0 0 20px;">
+          <a href="${appUrl}"
+             style="display:inline-block;background:transparent;color:${COLORS.brand};
+                    text-decoration:none;font-size:14px;font-weight:600;
+                    padding:11px 26px;border:1px solid ${COLORS.brand};border-radius:6px;">
+            Ir a la app →
+          </a>
+        </div>`
+    : "";
+
+  const reasonBlock = reason
+    ? `
+        <p style="margin:0 0 16px;font-size:14px;color:${COLORS.muted};line-height:1.6;font-style:italic;">
+          Motivo: ${reason}
+        </p>`
+    : "";
+
+  return `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tu sesión con Natalia fue reagendada</title>
+</head>
+<body style="margin:0;padding:0;background:${COLORS.cream};font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;color:${COLORS.ink};">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${COLORS.cream};padding:32px 16px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:1px solid ${COLORS.border};border-radius:8px;overflow:hidden;">
+
+        <tr>
+          <td style="background:${COLORS.navy};padding:32px 32px 24px;text-align:center;">
+            <p style="margin:0 0 8px;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#c9d3e6;">
+              ABBA Patrimonial
+            </p>
+            <h1 style="margin:0;font-size:22px;font-weight:400;color:#ffffff;line-height:1.35;">
+              ${clientName}, tu sesión<br>fue reagendada
+            </h1>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:32px;">
+            <p style="margin:0 0 16px;font-size:15px;line-height:1.65;color:${COLORS.ink};">
+              Tu sesión de diagnóstico patrimonial con Natalia tiene una nueva fecha.
+            </p>
+
+            ${originalSessionStart ? `
+              <div style="background:${COLORS.cream};padding:14px 18px;border-radius:6px;margin:0 0 16px;">
+                <p style="margin:0 0 4px;font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:${COLORS.muted};font-weight:600;">
+                  Fecha anterior
+                </p>
+                <p style="margin:0;font-size:14px;color:${COLORS.muted};text-decoration:line-through;">
+                  ${formatBogota(originalSessionStart)}
+                </p>
+              </div>
+            ` : ""}
+
+            <div style="background:${COLORS.navy};color:#ffffff;padding:20px 24px;border-radius:8px;margin:0 0 24px;text-align:center;">
+              <p style="margin:0 0 4px;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#c9d3e6;">
+                Nueva fecha
+              </p>
+              <p style="margin:0;font-size:18px;font-weight:500;color:#ffffff;line-height:1.4;">
+                ${formatBogota(newSessionStart)}
+              </p>
+              <p style="margin:8px 0 0;font-size:12px;color:#c9d3e6;">
+                Duración: 60 minutos
+              </p>
+            </div>
+
+            ${reasonBlock}
+
+            <p style="margin:0 0 12px;font-size:13px;letter-spacing:0.14em;text-transform:uppercase;color:${COLORS.brand};font-weight:600;">
+              Nuevo enlace de Google Meet
+            </p>
+            ${meetBlock}
+
+            <p style="margin:16px 0 12px;font-size:14px;line-height:1.65;color:${COLORS.ink};">
+              Todo lo demás sigue igual: tu diagnóstico en la app y los módulos por completar están tal como los dejaste.
+            </p>
+            ${appBlock}
+
+            <p style="margin:24px 0 0;font-size:13px;color:${COLORS.muted};line-height:1.6;">
+              Si necesitas hacer más cambios o tienes cualquier duda, responde este correo o escríbenos a
+              <a href="mailto:${supportEmail}" style="color:${COLORS.brand};text-decoration:none;">${supportEmail}</a>.
+            </p>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="background:${COLORS.cream};padding:24px 32px;text-align:center;border-top:1px solid ${COLORS.border};">
+            <p style="margin:0;font-size:13px;color:${COLORS.navy};font-weight:600;">
+              Natalia Jaramillo
+            </p>
+            <p style="margin:4px 0 0;font-size:12px;color:${COLORS.muted};">
+              ABBA Patrimonial · Arquitectura de patrimonio
+            </p>
+          </td>
+        </tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
+function renderEmailReagendamientoText(ctx) {
+  const {
+    clientName = "",
+    newSessionStart,
+    originalSessionStart,
+    meetLink = "",
+    appUrl = "",
+    reason = "",
+    supportEmail = "hola@abbapatrimonial.com",
+  } = ctx;
+
+  return `${clientName}, tu sesión de diagnóstico patrimonial con Natalia fue reagendada.
+
+${originalSessionStart ? `FECHA ANTERIOR
+  ${formatBogota(originalSessionStart)}
+
+` : ""}NUEVA FECHA
+  ${formatBogota(newSessionStart)}
+  Duración: 60 minutos
+
+${reason ? `Motivo: ${reason}\n\n` : ""}NUEVO ENLACE DE GOOGLE MEET
+  ${meetLink || "(te lo compartimos por separado)"}
+
+Todo lo demás sigue igual: tu diagnóstico en la app y los módulos por completar están tal como los dejaste.
+  ${appUrl || "https://abba-finanzas.netlify.app"}
+
+Si necesitas hacer más cambios o tienes cualquier duda, responde este correo o escríbenos a ${supportEmail}.
+
+Un abrazo,
+Natalia Jaramillo
+ABBA Patrimonial
+`;
+}
+
 module.exports = {
   renderEmailInstruccionesPago,
   renderEmailInstruccionesPagoText,
@@ -594,4 +901,8 @@ module.exports = {
   renderEmailConfirmacion,
   renderEmailConfirmacionText,
   renderEmailNotifSesionConfirmada,
+  renderEmailRecordatorio12h,
+  renderEmailRecordatorio12hText,
+  renderEmailReagendamiento,
+  renderEmailReagendamientoText,
 };
