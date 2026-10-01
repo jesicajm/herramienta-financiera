@@ -31,6 +31,10 @@ const {
   renderEmailConfirmacion,
   renderEmailConfirmacionText,
   renderEmailNotifSesionConfirmada,
+  renderEmailRecordatorio12h,
+  renderEmailRecordatorio12hText,
+  renderEmailReagendamiento,
+  renderEmailReagendamientoText,
 } = require("./emailTemplates");
 
 admin.initializeApp();
@@ -107,6 +111,19 @@ async function handleDiagnosticoNatalia(req, res) {
       return res.status(400).send("No payload");
     }
 
+    // ═══ ROUTING: ¿es un reagendamiento o una reserva nueva? ═══
+    if (payload.rescheduled === true && payload.old_invitee) {
+      return await handleRescheduledInvitee(payload, res);
+    }
+    return await handleNewInvitee(payload, res);
+  } catch (error) {
+    logger.error("💥 Error en handleDiagnosticoNatalia:", error);
+    return res.status(500).send("Error");
+  }
+}
+
+async function handleNewInvitee(payload, res) {
+  try {
     // ═══ EXTRACCIÓN DEL PAYLOAD DE CALENDLY ═══
     const clientEmail = payload.email || "";
     const clientName =
@@ -117,7 +134,6 @@ async function handleDiagnosticoNatalia(req, res) {
     // Preguntas personalizadas del formulario:
     //   - Si matchea "whatsapp/celular/teléfono/móvil" → clientWhatsapp
     //   - Cualquier otra pregunta con respuesta no vacía → clientMotivo
-    //     (si hay varias, se concatenan con doble salto de línea)
     const qaList = payload.questions_and_answers || [];
     let clientMotivo = "";
     let clientWhatsapp = "";
@@ -144,12 +160,16 @@ async function handleDiagnosticoNatalia(req, res) {
     const sessionStart = scheduledEvent.start_time
       ? new Date(scheduledEvent.start_time)
       : new Date(Date.now() + 24 * 60 * 60 * 1000);
-    // URI del evento en Calendly, para poder cancelarlo si expira sin pago
+    // URI del evento en Calendly (para cancelar si expira sin pago)
     const calendlyEventUri = scheduledEvent.uri || "";
     // Link de Google Meet (Calendly lo genera automáticamente)
     const location = scheduledEvent.location || {};
     const meetLink = location.join_url || "";
     const eventName = scheduledEvent.name || "Diagnóstico patrimonial";
+
+    // URLs de reagendamiento y cancelación (Calendly las provee)
+    const rescheduleUrl = payload.reschedule_url || "";
+    const cancelUrl = payload.cancel_url || "";
 
     // UUID del invitee (última parte del URI)
     const inviteeUri = payload.uri || "";
@@ -163,6 +183,7 @@ async function handleDiagnosticoNatalia(req, res) {
       clientWhatsapp,
       sessionStart: sessionStart.toISOString(),
       inviteeUuid,
+      hasRescheduleUrl: !!rescheduleUrl,
     });
 
     if (!clientEmail) {
@@ -177,6 +198,8 @@ async function handleDiagnosticoNatalia(req, res) {
     const sessionDoc = {
       calendly_invitee_uuid: inviteeUuid,
       calendly_event_uri: calendlyEventUri,
+      calendly_reschedule_url: rescheduleUrl,
+      calendly_cancel_url: cancelUrl,
       client_email: clientEmail,
       client_name: clientName,
       client_motivo: clientMotivo,
@@ -214,7 +237,87 @@ async function handleDiagnosticoNatalia(req, res) {
 
     return res.status(200).send("OK");
   } catch (error) {
-    logger.error("💥 Error en handleDiagnosticoNatalia:", error);
+    logger.error("💥 Error en handleNewInvitee:", error);
+    return res.status(500).send("Error");
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  handleRescheduledInvitee — El cliente reagendó vía Calendly.
+//  Actualiza el doc VIEJO con la nueva fecha/Meet, preservando
+//  la vinculación con la cuenta app (linked_user_uid queda igual).
+// ─────────────────────────────────────────────────────────────────
+async function handleRescheduledInvitee(payload, res) {
+  try {
+    // 1) Extraer UUID del invitee VIEJO (identificador de nuestro doc)
+    const oldInviteeUri = payload.old_invitee || "";
+    const oldInviteeUuid = oldInviteeUri.split("/").pop() || "";
+    if (!oldInviteeUuid) {
+      logger.error("Reschedule sin old_invitee URI válida", { payload });
+      // Fallback: tratar como reserva nueva
+      return await handleNewInvitee(payload, res);
+    }
+
+    // 2) Buscar el doc viejo
+    const oldSessionRef = db.collection("diagnostico_sessions").doc(oldInviteeUuid);
+    const oldSessionSnap = await oldSessionRef.get();
+
+    if (!oldSessionSnap.exists) {
+      logger.warn(
+        `Reschedule: doc viejo no encontrado (${oldInviteeUuid}). Tratando como reserva nueva.`
+      );
+      return await handleNewInvitee(payload, res);
+    }
+
+    const oldSession = oldSessionSnap.data();
+
+    // 3) Extraer datos del NUEVO evento
+    const scheduledEvent = payload.scheduled_event || {};
+    const newSessionStart = scheduledEvent.start_time
+      ? new Date(scheduledEvent.start_time)
+      : null;
+    const newCalendlyEventUri = scheduledEvent.uri || "";
+    const location = scheduledEvent.location || {};
+    const newMeetLink = location.join_url || "";
+    const newRescheduleUrl = payload.reschedule_url || "";
+    const newCancelUrl = payload.cancel_url || "";
+    const newInviteeUri = payload.uri || "";
+    const newInviteeUuid = newInviteeUri.split("/").pop() || "";
+
+    if (!newSessionStart) {
+      logger.error("Reschedule sin nueva fecha", { payload });
+      return res.status(400).send("Missing new session_start");
+    }
+
+    // 4) Actualizar el doc viejo con la nueva info
+    //    Mantenemos el mismo doc ID → el token del deep link sigue funcionando,
+    //    la vinculación con clientes/{uid} se preserva, la cuenta app queda ligada.
+    const oldSessionStart = oldSession.session_start && oldSession.session_start.toDate
+      ? oldSession.session_start.toDate()
+      : oldSession.session_start;
+
+    await oldSessionRef.update({
+      session_start: newSessionStart,
+      meet_link: newMeetLink,
+      calendly_event_uri: newCalendlyEventUri,
+      calendly_reschedule_url: newRescheduleUrl,
+      calendly_cancel_url: newCancelUrl,
+      calendly_new_invitee_uuid: newInviteeUuid, // referencia al nuevo invitee de Calendly
+      original_session_start: oldSessionStart,
+      rescheduled_at: new Date(),
+      rescheduled_by: "client_via_calendly",
+      reschedule_reason: "Cliente reagendó vía Calendly",
+      reminder_12h_sent_at: null,
+    });
+
+    logger.info(
+      `🔄 Sesión reagendada vía Calendly: ${oldInviteeUuid} → nueva fecha ${newSessionStart.toISOString()}`
+    );
+
+    // El trigger onSessionConfirmed detecta rescheduled_at change y envía los emails.
+    return res.status(200).send("OK - rescheduled");
+  } catch (error) {
+    logger.error("💥 Error en handleRescheduledInvitee:", error);
     return res.status(500).send("Error");
   }
 }
@@ -429,42 +532,106 @@ exports.onSessionConfirmed = onDocumentUpdated(
   async (event) => {
     const before = event.data.before.data();
     const after = event.data.after.data();
+    const sessionId = event.params.sessionId;
 
-    // Solo dispara cuando status pasa a "confirmed" (transición, no cualquier update)
-    if (before.status === after.status) return;
-    if (after.status !== "confirmed") return;
+    // ═══ Caso 1: transición pending → confirmed ═══
+    const justConfirmed =
+      before.status !== "confirmed" && after.status === "confirmed";
 
-    logger.info(`🟢 Sesión confirmada: ${event.params.sessionId}`, {
-      client_name: after.client_name,
-      client_email: after.client_email,
-      confirmed_by: after.confirmed_by,
-    });
+    // ═══ Caso 2: reagendamiento (status queda confirmed pero session_start cambió) ═══
+    const beforeRescheduledAt = before.rescheduled_at
+      ? before.rescheduled_at.toDate
+        ? before.rescheduled_at.toDate().getTime()
+        : new Date(before.rescheduled_at).getTime()
+      : 0;
+    const afterRescheduledAt = after.rescheduled_at
+      ? after.rescheduled_at.toDate
+        ? after.rescheduled_at.toDate().getTime()
+        : new Date(after.rescheduled_at).getTime()
+      : 0;
+    const wasRescheduled =
+      before.status === "confirmed" &&
+      after.status === "confirmed" &&
+      afterRescheduledAt > 0 &&
+      afterRescheduledAt !== beforeRescheduledAt;
+
+    if (!justConfirmed && !wasRescheduled) return;
 
     const transporter = makeTransporter();
 
-    const session = {
-      ...after,
-      // session_start / confirmed_at pueden venir como Firestore Timestamps
-      session_start: after.session_start && after.session_start.toDate
-        ? after.session_start.toDate()
-        : after.session_start,
-      confirmed_at: after.confirmed_at && after.confirmed_at.toDate
-        ? after.confirmed_at.toDate()
-        : after.confirmed_at || new Date(),
-    };
+    if (justConfirmed) {
+      logger.info(`🟢 Sesión confirmada: ${sessionId}`, {
+        client_name: after.client_name,
+        client_email: after.client_email,
+        confirmed_by: after.confirmed_by,
+      });
 
-    // 1) Email al cliente con Meet link
-    try {
-      await sendConfirmationEmailToClient(transporter, session);
-    } catch (err) {
-      logger.error("Error email confirmación al cliente:", err);
+      const session = {
+        ...after,
+        session_start:
+          after.session_start && after.session_start.toDate
+            ? after.session_start.toDate()
+            : after.session_start,
+        confirmed_at:
+          after.confirmed_at && after.confirmed_at.toDate
+            ? after.confirmed_at.toDate()
+            : after.confirmed_at || new Date(),
+      };
+
+      try {
+        await sendConfirmationEmailToClient(transporter, session);
+      } catch (err) {
+        logger.error("Error email confirmación al cliente:", err);
+      }
+
+      try {
+        await sendConfirmationEmailToNatalia(transporter, session);
+      } catch (err) {
+        logger.error("Error aviso a Natalia:", err);
+      }
+      return;
     }
 
-    // 2) Aviso a Natalia con datos de la sesión
+    // wasRescheduled === true
+    logger.info(`🔄 Sesión reagendada: ${sessionId}`, {
+      client_name: after.client_name,
+      client_email: after.client_email,
+      rescheduled_by: after.rescheduled_by,
+    });
+
+    // Nota: NO cancelamos el evento viejo en Calendly.
+    // Calendly ya lo canceló automáticamente cuando el cliente usó su link
+    // de reagendamiento (flujo Calendly-driven). El calendly_event_uri
+    // que tenemos ahora es del evento NUEVO.
+
+    // Email al cliente con nueva fecha y nuevo Meet link
+    const rescheduledSession = {
+      ...after,
+      session_start:
+        after.session_start && after.session_start.toDate
+          ? after.session_start.toDate()
+          : after.session_start,
+      original_session_start:
+        after.original_session_start && after.original_session_start.toDate
+          ? after.original_session_start.toDate()
+          : after.original_session_start,
+    };
+
     try {
-      await sendConfirmationEmailToNatalia(transporter, session);
+      await sendReagendamientoEmailToClient(
+        transporter,
+        rescheduledSession,
+        sessionId
+      );
     } catch (err) {
-      logger.error("Error aviso a Natalia:", err);
+      logger.error("Error email reagendamiento al cliente:", err);
+    }
+
+    // 3) Aviso a Natalia con datos actualizados
+    try {
+      await sendReagendamientoEmailToNatalia(transporter, rescheduledSession);
+    } catch (err) {
+      logger.error("Error aviso reagendamiento a Natalia:", err);
     }
   }
 );
@@ -498,6 +665,77 @@ async function sendConfirmationEmailToClient(transporter, session) {
     text,
   });
   logger.info(`✉️  Confirmación enviada al cliente: ${session.client_email}`);
+}
+
+async function sendReagendamientoEmailToClient(transporter, session, sessionId) {
+  const appUrlWithToken = sessionId
+    ? `${CONFIG.appUrl}/?diag_session=${encodeURIComponent(sessionId)}`
+    : CONFIG.appUrl;
+
+  const ctx = {
+    clientName: session.client_name,
+    newSessionStart: session.session_start,
+    originalSessionStart: session.original_session_start,
+    meetLink: session.meet_link || "",
+    appUrl: appUrlWithToken,
+    reason: session.reschedule_reason || "",
+    supportEmail: CONFIG.gmail.user,
+  };
+
+  await transporter.sendMail({
+    from: `"Natalia Jaramillo — ABBA Patrimonial" <${CONFIG.gmail.user}>`,
+    to: session.client_email,
+    subject: "Tu sesión con Natalia fue reagendada",
+    html: renderEmailReagendamiento(ctx),
+    text: renderEmailReagendamientoText(ctx),
+  });
+  logger.info(`✉️  Email de reagendamiento enviado a: ${session.client_email}`);
+}
+
+async function sendReagendamientoEmailToNatalia(transporter, session) {
+  const fmt = (d) => {
+    if (!d) return "—";
+    const date = d.toDate ? d.toDate() : new Date(d);
+    return date.toLocaleString("es-CO", {
+      timeZone: "America/Bogota",
+      dateStyle: "full",
+      timeStyle: "short",
+    }).replace(/\s+a\.\s*m\./gi, " AM").replace(/\s+p\.\s*m\./gi, " PM");
+  };
+
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;">
+      <h3 style="color:#1e2853;margin:0 0 16px;">Sesión reagendada</h3>
+      <table style="font-size:14px;color:#333;border-collapse:collapse;width:100%;">
+        <tr><td style="padding:8px 12px;background:#f6f3ec;font-weight:600;width:180px;">Cliente</td>
+            <td style="padding:8px 12px;">${session.client_name}</td></tr>
+        <tr><td style="padding:8px 12px;background:#f6f3ec;font-weight:600;">Email</td>
+            <td style="padding:8px 12px;"><a href="mailto:${session.client_email}">${session.client_email}</a></td></tr>
+        <tr><td style="padding:8px 12px;background:#f6f3ec;font-weight:600;">Fecha original</td>
+            <td style="padding:8px 12px;text-decoration:line-through;color:#888;">${fmt(session.original_session_start)}</td></tr>
+        <tr><td style="padding:8px 12px;background:#f6f3ec;font-weight:600;">Nueva fecha</td>
+            <td style="padding:8px 12px;color:#16a34a;font-weight:600;">${fmt(session.session_start)}</td></tr>
+        <tr><td style="padding:8px 12px;background:#f6f3ec;font-weight:600;">Nuevo Meet link</td>
+            <td style="padding:8px 12px;"><a href="${session.meet_link}" style="word-break:break-all;">${session.meet_link}</a></td></tr>
+        <tr><td style="padding:8px 12px;background:#f6f3ec;font-weight:600;">Reagendado por</td>
+            <td style="padding:8px 12px;">${session.rescheduled_by || "—"}</td></tr>
+        ${session.reschedule_reason ? `
+        <tr><td style="padding:8px 12px;background:#f6f3ec;font-weight:600;">Motivo</td>
+            <td style="padding:8px 12px;">${session.reschedule_reason}</td></tr>` : ""}
+      </table>
+      <p style="font-size:13px;color:#666;margin:16px 0 0;">
+        El cliente ya recibió el email con la nueva fecha y el nuevo enlace de Meet.
+      </p>
+    </div>`;
+
+  await transporter.sendMail({
+    from: `"Sistema ABBA" <${CONFIG.gmail.user}>`,
+    to: CONFIG.natalia.email,
+    subject: `Sesión reagendada: ${session.client_name}`,
+    html,
+    text: `Sesión de ${session.client_name} reagendada para ${fmt(session.session_start)}. Nuevo Meet: ${session.meet_link}`,
+  });
+  logger.info(`✉️  Aviso reagendamiento a Natalia: ${CONFIG.natalia.email}`);
 }
 
 async function sendConfirmationEmailToNatalia(transporter, session) {
@@ -624,3 +862,174 @@ exports.linkDiagnosticSession = onCall(
     };
   }
 );
+
+// ─────────────────────────────────────────────────────────────────
+//  sendReminders12h — Recordatorio automático 12 horas antes
+//  Corre cada 15 min. Busca sesiones confirmadas cuya session_start
+//  está entre AHORA y AHORA+12h, y les envía un recordatorio.
+//  Idempotente vía reminder_12h_sent_at.
+// ─────────────────────────────────────────────────────────────────
+exports.sendReminders12h = onSchedule(
+  {
+    region: "us-central1",
+    schedule: "every 15 minutes",
+    timeZone: "America/Bogota",
+    secrets: ["GMAIL_PASSWORD"],
+    memory: "256MiB",
+    timeoutSeconds: 120,
+  },
+  async () => {
+    const now = new Date();
+    const in12h = new Date(now.getTime() + 12 * 60 * 60 * 1000);
+
+    const snapshot = await db
+      .collection("diagnostico_sessions")
+      .where("status", "==", "confirmed")
+      .where("session_start", ">", now)
+      .where("session_start", "<=", in12h)
+      .get();
+
+    if (snapshot.empty) {
+      logger.info("⏰ No hay sesiones para recordar en las próximas 12h.");
+      return;
+    }
+
+    const transporter = makeTransporter();
+    let sent = 0;
+    let skipped = 0;
+
+    for (const doc of snapshot.docs) {
+      const data = doc.data();
+
+      // Idempotencia: no re-procesar
+      if (data.reminder_12h_sent_at) {
+        skipped++;
+        continue;
+      }
+
+      // ¿El cliente ya completó su diagnóstico en la app?
+      let hasCompleted = false;
+      try {
+        hasCompleted = await hasCompletedDiagnostico(data);
+      } catch (err) {
+        logger.warn(
+          `No se pudo verificar diagnóstico del cliente para sesión ${doc.id}:`,
+          err
+        );
+      }
+
+      if (hasCompleted) {
+        // Cliente ya hizo la tarea: no enviar recordatorio, pero marcar como procesado
+        await doc.ref.update({
+          reminder_12h_sent_at: new Date(),
+          reminder_12h_skipped_because: "client_completed_app",
+        });
+        logger.info(
+          `✓ ${data.client_email} ya completó su diagnóstico, no se envía recordatorio.`
+        );
+        skipped++;
+        continue;
+      }
+
+      const sessionToken = doc.id;
+      const appUrlWithToken = sessionToken
+        ? `${CONFIG.appUrl}/?diag_session=${encodeURIComponent(sessionToken)}`
+        : CONFIG.appUrl;
+
+      const ctx = {
+        clientName: data.client_name,
+        sessionStart: data.session_start.toDate
+          ? data.session_start.toDate()
+          : data.session_start,
+        meetLink: data.meet_link || "",
+        appUrl: appUrlWithToken,
+        supportEmail: CONFIG.gmail.user,
+      };
+
+      try {
+        await transporter.sendMail({
+          from: `"Natalia Jaramillo — ABBA Patrimonial" <${CONFIG.gmail.user}>`,
+          to: data.client_email,
+          subject: "Recordatorio: tu sesión de diagnóstico se acerca",
+          html: renderEmailRecordatorio12h(ctx),
+          text: renderEmailRecordatorio12hText(ctx),
+        });
+
+        await doc.ref.update({
+          reminder_12h_sent_at: new Date(),
+        });
+
+        logger.info(
+          `⏰ Recordatorio 12h enviado a ${data.client_email} para sesión ${doc.id}`
+        );
+        sent++;
+      } catch (err) {
+        logger.error(`Error enviando recordatorio para ${doc.id}:`, err);
+      }
+    }
+
+    logger.info(
+      `⏰ Recordatorios 12h: ${sent} enviados, ${skipped} saltados.`
+    );
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────
+//  hasCompletedDiagnostico — Verifica si el cliente ya cargó los
+//  módulos mínimos en la app antes de la sesión.
+//
+//  Consideramos que "completó" cuando:
+//    1) linked_user_uid está seteado (vinculó su cuenta)
+//    2) clientes/{uid} tiene perfil (nombre)
+//    3) modulos/ingresos_gastos existe con fuentes_ingreso
+//    4) modulos/activos existe (Mapa Patrimonial)
+//
+//  Si algo falla o no se puede verificar → retorna false y se envía
+//  el recordatorio por precaución (mejor un recordatorio de más que
+//  faltar cuando el cliente no lo hizo).
+// ─────────────────────────────────────────────────────────────────
+async function hasCompletedDiagnostico(sessionData) {
+  const uid = sessionData.linked_user_uid;
+  if (!uid) return false; // ni siquiera entró a la app
+
+  // 1) Perfil básico
+  const perfilSnap = await db.collection("clientes").doc(uid).get();
+  if (!perfilSnap.exists) return false;
+  const perfil = perfilSnap.data();
+  if (!perfil || !perfil.nombre) return false;
+
+  // 2) Módulos: ingresos_gastos + activos
+  const [ingresosSnap, activosSnap] = await Promise.all([
+    db
+      .collection("clientes")
+      .doc(uid)
+      .collection("modulos")
+      .doc("ingresos_gastos")
+      .get(),
+    db
+      .collection("clientes")
+      .doc(uid)
+      .collection("modulos")
+      .doc("activos")
+      .get(),
+  ]);
+
+  if (!ingresosSnap.exists) return false;
+  if (!activosSnap.exists) return false;
+
+  // 3) Verificar que ingresos_gastos tenga al menos una fuente de ingreso
+  //    (según Natalia: basta con que registre sus ingresos para evaluar
+  //    las fuentes desde lo tributario)
+  const ingresos = ingresosSnap.data();
+  if (
+    !ingresos ||
+    !ingresos.fuentes_ingreso ||
+    (Array.isArray(ingresos.fuentes_ingreso)
+      ? ingresos.fuentes_ingreso.length === 0
+      : Object.keys(ingresos.fuentes_ingreso).length === 0)
+  ) {
+    return false;
+  }
+
+  return true;
+}

@@ -275,6 +275,37 @@
     .modal h3 { margin: 0 0 12px; color: var(--navy); font-weight: 500; }
     .modal p { margin: 0 0 20px; color: var(--muted); font-size: 14px; }
     .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+    .modal-lg { max-width: 520px; }
+    .modal label { display: block; font-size: 12px; font-weight: 600; color: var(--ink); margin: 14px 0 6px; letter-spacing: 0.03em; }
+    .modal input[type="datetime-local"],
+    .modal input[type="text"],
+    .modal textarea {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-size: 14px;
+      font-family: inherit;
+      color: var(--ink);
+      background: #fff;
+    }
+    .modal input:focus, .modal textarea:focus {
+      outline: none;
+      border-color: var(--brand);
+    }
+    .modal textarea { resize: vertical; min-height: 60px; }
+    .modal-hint { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
+    .modal-error { color: var(--alert); font-size: 13px; margin: 10px 0 0; display: none; }
+    .modal-info-box {
+      background: var(--cream);
+      border-left: 3px solid var(--brand);
+      padding: 12px 14px;
+      border-radius: 0 4px 4px 0;
+      margin-bottom: 4px;
+      font-size: 13px;
+      color: var(--ink);
+      line-height: 1.5;
+    }
 
     @media (max-width: 640px) {
       .topbar { padding: 12px 16px; }
@@ -350,6 +381,45 @@
       <div class="modal-actions">
         <button class="btn btn-secondary" id="modal-cancel">Cancelar</button>
         <button class="btn btn-primary" id="modal-ok">Sí, confirmar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL reagendar (Calendly-driven) -->
+  <div id="modal-reagendar" class="modal-overlay">
+    <div class="modal modal-lg">
+      <h3>Reagendar sesión</h3>
+      <div class="modal-info-box">
+        Cliente: <strong id="reag-name">—</strong><br>
+        Fecha actual: <span id="reag-current-date">—</span>
+      </div>
+      <p style="margin: 16px 0 14px; font-size: 14px; color: var(--ink); line-height: 1.5;">
+        Envíale al cliente este link de Calendly para que elija una nueva fecha. Calendly va a:
+      </p>
+      <ul style="margin: 0 0 16px; padding-left: 22px; font-size: 13px; color: var(--muted); line-height: 1.7;">
+        <li>Cancelar el evento viejo automáticamente</li>
+        <li>Crear un evento nuevo con nuevo enlace de Google Meet</li>
+        <li>Preservar el pago y la vinculación con la cuenta app del cliente</li>
+      </ul>
+
+      <label for="reag-url" style="display: block; font-size: 12px; font-weight: 600; color: var(--ink); margin: 12px 0 6px; letter-spacing: 0.03em;">
+        Link de reagendamiento
+      </label>
+      <div style="display: flex; gap: 8px; align-items: stretch;">
+        <input type="text" id="reag-url" readonly
+               style="flex: 1; border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; font-size: 12px; font-family: monospace; background: var(--cream); color: var(--ink);">
+        <button class="btn btn-primary" id="reag-copy" type="button" style="white-space: nowrap; padding: 10px 18px;">
+          Copiar
+        </button>
+      </div>
+      <p class="modal-hint" style="margin-top: 8px;" id="reag-url-hint">
+        Pegalo por WhatsApp o email al cliente. Cuando el cliente elija la nueva fecha, nuestro sistema se actualiza automáticamente y le manda el email de confirmación.
+      </p>
+
+      <p class="modal-error" id="reag-error"></p>
+
+      <div class="modal-actions" style="margin-top: 20px;">
+        <button class="btn btn-secondary" id="reag-cancel">Cerrar</button>
       </div>
     </div>
   </div>
@@ -626,6 +696,26 @@
                    </div>`
                 : ""
             }
+            ${
+              isConfirmed && !s.original_session_start
+                ? `<div class="card-actions">
+                     <button class="btn btn-secondary" data-action="reagendar"
+                             data-id="${id}"
+                             data-name="${escapeAttr(s.client_name || "")}"
+                             data-current="${s.session_start && s.session_start.toDate ? s.session_start.toDate().toISOString() : ""}"
+                             data-reschedule-url="${escapeAttr(s.calendly_reschedule_url || "")}">
+                       Reagendar
+                     </button>
+                   </div>`
+                : ""
+            }
+            ${
+              isConfirmed && s.original_session_start
+                ? `<p style="margin: 0; font-size: 12px; color: var(--muted); font-style: italic;">
+                     Ya reagendada (fecha original: ${fmt(s.original_session_start)}). No se puede reagendar de nuevo.
+                   </p>`
+                : ""
+            }
           </div>
         `);
       });
@@ -634,6 +724,14 @@
 
       cardsContainer.querySelectorAll('[data-action="confirm"]').forEach(btn => {
         btn.addEventListener("click", () => openModal(btn.dataset.id, btn.dataset.name));
+      });
+      cardsContainer.querySelectorAll('[data-action="reagendar"]').forEach(btn => {
+        btn.addEventListener("click", () => openReagendarModal(
+          btn.dataset.id,
+          btn.dataset.name,
+          btn.dataset.current,
+          btn.dataset.rescheduleUrl
+        ));
       });
     }
 
@@ -690,6 +788,67 @@
         alert("Error al confirmar: " + err.message);
         modalOk.disabled = false;
         modalOk.textContent = "Sí, confirmar";
+      }
+    });
+
+    // ───── Modal Reagendar (Calendly-driven) ─────
+    const modalReag = document.getElementById("modal-reagendar");
+    const reagName = document.getElementById("reag-name");
+    const reagCurrentDate = document.getElementById("reag-current-date");
+    const reagUrl = document.getElementById("reag-url");
+    const reagCopy = document.getElementById("reag-copy");
+    const reagError = document.getElementById("reag-error");
+    const reagCancel = document.getElementById("reag-cancel");
+    const reagUrlHint = document.getElementById("reag-url-hint");
+
+    function openReagendarModal(id, name, currentIso, rescheduleUrl) {
+      reagName.textContent = name || "—";
+      const originalDate = currentIso ? new Date(currentIso) : null;
+      reagCurrentDate.textContent = originalDate ? fmt(originalDate) : "—";
+      reagError.style.display = "none";
+      reagError.textContent = "";
+      reagCopy.disabled = false;
+      reagCopy.textContent = "Copiar";
+
+      if (rescheduleUrl) {
+        reagUrl.value = rescheduleUrl;
+        reagUrl.disabled = false;
+        reagCopy.disabled = false;
+        reagUrlHint.textContent = "Pegalo por WhatsApp o email al cliente. Cuando el cliente elija la nueva fecha, nuestro sistema se actualiza automáticamente y le manda el email de confirmación.";
+        reagUrlHint.style.color = "var(--muted)";
+      } else {
+        reagUrl.value = "(Esta sesión fue creada antes de que guardáramos el link. Buscala manualmente en Calendly)";
+        reagUrl.disabled = true;
+        reagCopy.disabled = true;
+        reagUrlHint.textContent = "Sesión anterior — el link no está guardado. Entrá al panel de Calendly y buscá el evento por email del cliente para obtener el link de reagendamiento.";
+        reagUrlHint.style.color = "var(--alert)";
+      }
+
+      modalReag.classList.add("open");
+    }
+
+    function closeReagendarModal() {
+      modalReag.classList.remove("open");
+    }
+
+    reagCancel.addEventListener("click", closeReagendarModal);
+    modalReag.addEventListener("click", (e) => {
+      if (e.target === modalReag) closeReagendarModal();
+    });
+
+    reagCopy.addEventListener("click", async () => {
+      const url = reagUrl.value;
+      if (!url) return;
+      try {
+        await navigator.clipboard.writeText(url);
+        reagCopy.textContent = "✓ Copiado";
+        setTimeout(() => { reagCopy.textContent = "Copiar"; }, 2500);
+      } catch (err) {
+        // Fallback para navegadores viejos
+        reagUrl.select();
+        try { document.execCommand("copy"); } catch(_) {}
+        reagCopy.textContent = "✓ Copiado";
+        setTimeout(() => { reagCopy.textContent = "Copiar"; }, 2500);
       }
     });
   </script>
