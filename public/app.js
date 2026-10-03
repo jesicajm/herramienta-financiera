@@ -518,7 +518,82 @@
       return 'Algo salió mal. Revisa tus datos e intenta de nuevo.';
     }
   };
-  
+
+  /* ═══════════════════════════════════════════════════════════
+     FLUJO DE VINCULACIÓN CON SESIÓN DE DIAGNÓSTICO
+     Captura el token (?diag_session=...) al cargar, lo guarda
+     en localStorage, limpia la URL y lo consume después del login.
+     ═══════════════════════════════════════════════════════════ */
+  const diagnosticTokenFlow = (function(){
+    const STORAGE_KEY = 'abba_diag_pending_token';
+    const URL_PARAM = 'diag_session';
+
+    // Captura temprana: si llega ?diag_session=XXX, guarda y limpia URL
+    (function captureFromUrl(){
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const token = params.get(URL_PARAM);
+        if (token && /^[a-zA-Z0-9\-_]{8,}$/.test(token)) {
+          localStorage.setItem(STORAGE_KEY, token);
+          // Limpiar URL para que refresh no re-dispare
+          params.delete(URL_PARAM);
+          const newSearch = params.toString();
+          const newUrl = window.location.pathname + (newSearch ? '?' + newSearch : '') + window.location.hash;
+          window.history.replaceState({}, '', newUrl);
+          console.log('[diag] Token capturado y guardado en localStorage');
+        }
+      } catch(e){ console.warn('[diag] Error capturando token:', e); }
+    })();
+
+    function hasPending(){
+      try { return !!localStorage.getItem(STORAGE_KEY); } catch(e){ return false; }
+    }
+    function getPending(){
+      try { return localStorage.getItem(STORAGE_KEY) || null; } catch(e){ return null; }
+    }
+    function clearPending(){
+      try { localStorage.removeItem(STORAGE_KEY); } catch(e){}
+    }
+
+    // Muestra/oculta el banner de bienvenida en el login-screen
+    function showWelcomeBanner(show){
+      const el = document.getElementById('diag-welcome-banner');
+      if (el) el.style.display = show ? 'block' : 'none';
+    }
+
+    // Llama al callable linkDiagnosticSession
+    async function linkToCurrentUser(){
+      const token = getPending();
+      if (!token) return { skipped: true };
+      if (typeof firebase === 'undefined' || !firebase.functions) {
+        console.warn('[diag] firebase.functions no está disponible — ¿cargaste firebase-functions-compat.js en index.html?');
+        return { skipped: true };
+      }
+      try {
+        const callable = firebase.functions('us-central1').httpsCallable('linkDiagnosticSession');
+        const result = await callable({ sessionToken: token });
+        clearPending();
+        console.log('[diag] Vinculación exitosa:', result.data);
+        return { success: true, data: result.data };
+      } catch(err){
+        console.error('[diag] Error vinculando sesión:', err);
+        if (err.code === 'functions/permission-denied') {
+          // Token ya vinculado a otra cuenta — limpiamos para no reintentar en bucle
+          clearPending();
+          return { success: false, error: 'already-linked-elsewhere', message: err.message };
+        }
+        if (err.code === 'functions/not-found') {
+          clearPending();
+          return { success: false, error: 'not-found', message: err.message };
+        }
+        // Otros errores (red, invalid-argument): no limpiamos — podría reintentarse al próximo login
+        return { success: false, error: err.code || 'unknown', message: err.message };
+      }
+    }
+
+    return { hasPending, getPending, clearPending, showWelcomeBanner, linkToCurrentUser };
+  })();
+
   /* ═══════════════════════════════════════════════════════════
      STATE
      ═══════════════════════════════════════════════════════════ */
@@ -8295,7 +8370,14 @@ function showToast(msg, type) {
       // No hay sesión: mostrar pantalla de login
       document.getElementById('login-screen').style.display = 'flex';
       document.getElementById('app').classList.remove('show');
-      showAuthPane('login');
+      // Si vino con token de diagnóstico, mostrar registro primero + banner de bienvenida
+      if (diagnosticTokenFlow.hasPending()) {
+        diagnosticTokenFlow.showWelcomeBanner(true);
+        showAuthPane('register');
+      } else {
+        diagnosticTokenFlow.showWelcomeBanner(false);
+        showAuthPane('login');
+      }
       return;
     }
     // Usuario autenticado
@@ -8370,8 +8452,27 @@ function showToast(msg, type) {
     document.getElementById('app').classList.add('show');
     await loadAllData();
     try{ migrarDependientesLegacy(); }catch(e){}
+
+    // Si hay token de diagnóstico pendiente, vincular con la cuenta actual (silencioso)
+    if (diagnosticTokenFlow.hasPending()) {
+      const linkResult = await diagnosticTokenFlow.linkToCurrentUser();
+      if (linkResult.success) {
+        const d = linkResult.data || {};
+        if (d.alreadyLinked) {
+          // No molestar al usuario con un toast si ya estaba vinculada
+          console.log('[diag] Sesión ya estaba vinculada');
+        } else {
+          showToast('Tu sesión de diagnóstico quedó vinculada a tu cuenta ✓', 'success');
+        }
+      } else if (linkResult.error === 'already-linked-elsewhere') {
+        showToast('Esta sesión de diagnóstico ya está vinculada a otra cuenta. Si crees que es un error, escríbenos.', 'info');
+      } else if (linkResult.error === 'not-found') {
+        showToast('No encontramos tu sesión de diagnóstico. Escríbenos si necesitas ayuda.', 'info');
+      }
+      // Si fue error de red u otro, no mostramos nada — reintenta al próximo login
+    }
   }
-  
+
   // Helper: valida formato de correo electrónico
   function _emailValido(email){
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
