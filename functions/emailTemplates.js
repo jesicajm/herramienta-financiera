@@ -217,7 +217,7 @@ function renderEmailInstruccionesPago(ctx) {
               Natalia Jaramillo
             </p>
             <p style="margin:4px 0 0;font-size:12px;color:${COLORS.muted};">
-              ABBA Patrimonial · Arquitectura de patrimonio
+              ABBA · Arquitectura Patrimonial
             </p>
           </td>
         </tr>
@@ -599,30 +599,44 @@ function renderEmailRecordatorio12h(ctx) {
     supportEmail = "hola@abbapatrimonial.com",
   } = ctx;
 
-  const meetBlock = meetLink
-    ? `
-        <div style="text-align:center;margin:0 0 24px;">
-          <a href="${meetLink}"
-             style="display:inline-block;background:${COLORS.brand};color:#ffffff;
-                    text-decoration:none;font-size:15px;font-weight:600;
-                    padding:14px 32px;border-radius:6px;">
-            Entrar a la sesión de Meet →
-          </a>
-        </div>`
-    : "";
-
   const appBlock = appUrl
     ? `
-        <div style="background:${COLORS.cream};border:1px solid ${COLORS.border};border-radius:8px;padding:20px 22px;margin:0 0 20px;">
-          <p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:${COLORS.ink};">
-            Si aún no completaste tu diagnóstico en la app, todavía estás a tiempo.
+        <div style="background:${COLORS.cream};border:1px solid ${COLORS.border};border-radius:8px;padding:24px 24px 22px;margin:0 0 24px;">
+          <p style="margin:0 0 10px;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:${COLORS.brand};font-weight:600;">
+            Antes de la sesión
+          </p>
+          <p style="margin:0 0 10px;font-size:16px;font-weight:600;line-height:1.4;color:${COLORS.navy};">
+            Completa tu diagnóstico en la app
+          </p>
+          <p style="margin:0 0 14px;font-size:14px;line-height:1.65;color:${COLORS.ink};">
+            Esos 15 minutos cambian la sesión. Si Natalia llega conociendo tu situación, los 60 minutos son conversación estratégica real: decisiones, estrategia, próximos pasos. Si no, se van en entrevista básica.
+          </p>
+          <p style="margin:0 0 16px;font-size:14px;line-height:1.65;color:${COLORS.ink};">
+            Es tu hora. Aprovéchala.
           </p>
           <div style="text-align:center;">
             <a href="${appUrl}"
+               style="display:inline-block;background:${COLORS.brand};color:#ffffff;
+                      text-decoration:none;font-size:15px;font-weight:600;
+                      padding:14px 32px;border-radius:6px;">
+              Completar diagnóstico →
+            </a>
+          </div>
+        </div>`
+    : "";
+
+  const meetBlock = meetLink
+    ? `
+        <div style="border:1px solid ${COLORS.border};border-radius:8px;padding:18px 22px;margin:0 0 24px;">
+          <p style="margin:0 0 8px;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:${COLORS.muted};font-weight:600;">
+            A la hora de la sesión
+          </p>
+          <div style="text-align:center;margin:6px 0 0;">
+            <a href="${meetLink}"
                style="display:inline-block;background:transparent;color:${COLORS.brand};
                       text-decoration:none;font-size:14px;font-weight:600;
                       padding:11px 26px;border:1px solid ${COLORS.brand};border-radius:6px;">
-              Ir a la app →
+              Entrar a la sesión de Meet →
             </a>
           </div>
         </div>`
@@ -654,7 +668,7 @@ function renderEmailRecordatorio12h(ctx) {
         <tr>
           <td style="padding:32px;">
             <p style="margin:0 0 16px;font-size:15px;line-height:1.65;color:${COLORS.ink};">
-              Un recordatorio breve: tu sesión de diagnóstico patrimonial con Natalia es dentro de las próximas 12 horas.
+              Tu sesión de diagnóstico patrimonial con Natalia es dentro de las próximas 12 horas. Antes de que llegue el momento, hay un paso que marca la diferencia:
             </p>
 
             <div style="background:${COLORS.navy};color:#ffffff;padding:20px 24px;border-radius:8px;margin:0 0 24px;text-align:center;">
@@ -669,8 +683,8 @@ function renderEmailRecordatorio12h(ctx) {
               </p>
             </div>
 
-            ${meetBlock}
             ${appBlock}
+            ${meetBlock}
 
             <p style="margin:0 0 8px;font-size:13px;color:${COLORS.muted};line-height:1.6;">
               Si necesitas reprogramar o tienes cualquier duda, responde este correo o escríbenos a
@@ -706,17 +720,22 @@ function renderEmailRecordatorio12hText(ctx) {
     supportEmail = "hola@abbapatrimonial.com",
   } = ctx;
 
-  return `${clientName}, tu sesión de diagnóstico patrimonial con Natalia se acerca.
+  return `${clientName}, tu sesión de diagnóstico patrimonial con Natalia es dentro de las próximas 12 horas.
 
 FECHA DE LA SESIÓN
   ${formatBogota(sessionStart)}
-  Duración: 60 minutos. Dentro de las próximas 12 horas.
+  Duración: 60 minutos.
 
-ENLACE DE GOOGLE MEET
-  ${meetLink || "(te lo compartimos por separado)"}
+ANTES DE LA SESIÓN — completa tu diagnóstico en la app
+  Esos 15 minutos cambian la sesión. Si Natalia llega conociendo
+  tu situación, los 60 minutos son conversación estratégica real:
+  decisiones, estrategia, próximos pasos. Si no, se van en
+  entrevista básica. Es tu hora. Aprovéchala.
 
-Si aún no completaste tu diagnóstico en la app, todavía estás a tiempo:
   ${appUrl || "https://abba-finanzas.netlify.app"}
+
+A LA HORA DE LA SESIÓN — enlace de Google Meet
+  ${meetLink || "(te lo compartimos por separado)"}
 
 Si necesitas reprogramar o tienes cualquier duda, responde este correo o escríbenos a ${supportEmail}.
 
