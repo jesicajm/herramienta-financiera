@@ -618,9 +618,9 @@
             <p class="prep-sub" id="prep-subtitle">—</p>
           </div>
           <div style="display:flex;gap:10px;align-items:center;">
-            <a id="prep-open-app" style="font-size:13px;color:var(--muted);cursor:pointer;text-decoration:none;"
-               title="Próximamente: modo lectura del app del cliente">
-              Abrir app del cliente (próximamente)
+            <a id="prep-open-app" style="font-size:13px;color:var(--brand);cursor:pointer;text-decoration:none;"
+               title="Abre el app con la vista del cliente en modo solo lectura">
+              👁 Abrir app del cliente (modo lectura)
             </a>
             <button class="btn-back" id="prep-close">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -1097,16 +1097,18 @@
     let currentPrepUid = null;
     let currentPrepModulos = {};
 
+    // URL base del app principal (misma origin que el panel admin, raíz del sitio)
+    const APP_BASE_URL = window.location.origin + "/";
+
     document.getElementById("prep-open-app").addEventListener("click", (e) => {
       e.preventDefault();
-      const uid = currentPrepUid || "";
-      alert(
-        "Modo lectura del app del cliente — PRÓXIMAMENTE\n\n" +
-        "Cuando se habilite, este botón abrirá el app con los datos del cliente en modo solo lectura, " +
-        "para que puedas navegar como si fueras ellos.\n\n" +
-        "Mientras tanto, usá el resumen de esta vista.\n\n" +
-        "UID del cliente: " + uid
-      );
+      const uid = currentPrepUid;
+      if (!uid){
+        alert("No hay cliente vinculado para abrir.");
+        return;
+      }
+      const url = APP_BASE_URL + "?view_as=" + encodeURIComponent(uid);
+      window.open(url, "_blank");
     });
 
     // Nombres bonitos de módulos para mostrar al humano
