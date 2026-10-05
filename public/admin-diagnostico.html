@@ -148,6 +148,123 @@
     .badge-expired { background: #fef2f2; color: var(--alert); }
     .badge-cancelled { background: #f3f4f6; color: var(--muted); }
 
+    /* ─── Chips de vinculación y módulos (Task #5) ─── */
+    .card-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: 10px 0 0;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      font-weight: 500;
+      padding: 4px 10px;
+      border-radius: 10px;
+      white-space: nowrap;
+      line-height: 1.4;
+    }
+    .chip-linked { background: #ecfdf5; color: var(--success); }
+    .chip-unlinked { background: #f3f4f6; color: var(--muted); }
+    .chip-modulos { background: #eef4fb; color: var(--brand); }
+    .chip-modulos-loading { background: #f3f4f6; color: var(--muted); font-style: italic; }
+    .linked-meta {
+      font-size: 12px;
+      color: var(--muted);
+      margin: 6px 0 0;
+      line-height: 1.5;
+    }
+
+    /* ─── Modal de preparación (Task #6) ─── */
+    .modal-xl { max-width: 720px; }
+    .prep-section {
+      margin-bottom: 20px;
+    }
+    .prep-section h4 {
+      margin: 0 0 10px;
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--brand);
+      font-weight: 600;
+    }
+    .prep-perfil-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 12px;
+    }
+    .prep-perfil-grid > div .pl {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 0 0 2px;
+    }
+    .prep-perfil-grid > div .pv {
+      font-size: 14px;
+      color: var(--ink);
+      margin: 0;
+      font-weight: 500;
+    }
+    .prep-totales {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+    }
+    .total-card {
+      background: var(--cream);
+      border-left: 3px solid var(--brand);
+      padding: 12px 14px;
+      border-radius: 0 4px 4px 0;
+    }
+    .total-card .tl {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 0 0 4px;
+    }
+    .total-card .tv {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--navy);
+      margin: 0;
+    }
+    .total-card.tc-negative .tv { color: var(--alert); }
+    .total-card.tc-positive .tv { color: var(--success); }
+    .prep-modulos-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .mod-chip {
+      font-size: 11px;
+      padding: 5px 10px;
+      border-radius: 10px;
+      background: #eef4fb;
+      color: var(--brand);
+      font-weight: 500;
+    }
+    .mod-chip-empty {
+      background: #f3f4f6;
+      color: var(--muted);
+      font-style: italic;
+    }
+    .prep-empty {
+      font-size: 13px;
+      color: var(--muted);
+      font-style: italic;
+      padding: 10px 0;
+    }
+    .prep-loader {
+      text-align: center;
+      color: var(--muted);
+      padding: 40px 0;
+      font-size: 14px;
+    }
+
     .card-details {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -424,6 +541,20 @@
     </div>
   </div>
 
+  <!-- Modal: Preparación de sesión (Task #5 + #6) -->
+  <div id="modal-prep" class="modal-overlay">
+    <div class="modal modal-xl">
+      <h3 id="prep-title">Preparación de sesión</h3>
+      <p id="prep-subtitle" style="margin: 0 0 20px; color: var(--muted); font-size: 13px;">—</p>
+      <div id="prep-body">
+        <div class="prep-loader">Cargando datos del cliente…</div>
+      </div>
+      <div class="modal-actions" style="margin-top: 24px;">
+        <button class="btn btn-secondary" id="prep-close">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
     import {
@@ -431,7 +562,7 @@
     } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
     import {
       getFirestore, collection, query, where, orderBy, onSnapshot,
-      doc, getDoc, updateDoc, serverTimestamp, limit
+      doc, getDoc, getDocs, updateDoc, serverTimestamp, limit
     } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
     // Firebase config del proyecto evaluafinanzas (valores públicos, seguros en el cliente)
@@ -620,14 +751,32 @@
           ? `https://wa.me/${String(s.client_whatsapp).replace(/[^\d]/g, "")}`
           : "";
 
+        const isLinked = !!s.linked_user_uid;
+        const linkedChip = isLinked
+          ? `<span class="chip chip-linked" title="Vinculada con cuenta app">✓ Vinculada</span>`
+          : `<span class="chip chip-unlinked" title="Cliente aún no se registró en la app">○ Sin vincular</span>`;
+        // Chip de módulos: placeholder, se rellena después con fetchModuleCount
+        const modulosChipHtml = isLinked
+          ? `<span class="chip chip-modulos-loading" data-mod-chip="${id}" data-linked-uid="${escapeAttr(s.linked_user_uid)}">… módulos</span>`
+          : "";
+
         html.push(`
-          <div class="card" data-id="${id}">
+          <div class="card" data-id="${id}"${isLinked ? ` data-linked-uid="${escapeAttr(s.linked_user_uid)}"` : ""}>
             <div class="card-head">
               <div>
                 <p class="card-name">${escapeHtml(s.client_name || "—")}</p>
                 <p class="card-email">
                   <a href="mailto:${escapeHtml(s.client_email || "")}">${escapeHtml(s.client_email || "—")}</a>
                 </p>
+                <div class="card-chips">
+                  ${linkedChip}
+                  ${modulosChipHtml}
+                </div>
+                ${
+                  isLinked
+                    ? `<p class="linked-meta">${escapeHtml(s.linked_user_email || "—")}${s.linked_at ? " · vinculada el " + fmt(s.linked_at) : ""}</p>`
+                    : ""
+                }
               </div>
               <span class="badge ${badge.cls}">${badge.text}</span>
             </div>
@@ -699,6 +848,17 @@
             ${
               isConfirmed && !s.original_session_start
                 ? `<div class="card-actions">
+                     ${
+                       isLinked
+                         ? `<button class="btn btn-primary" data-action="prep"
+                                   data-id="${id}"
+                                   data-name="${escapeAttr(s.client_name || "")}"
+                                   data-linked-uid="${escapeAttr(s.linked_user_uid)}"
+                                   data-session-start="${s.session_start && s.session_start.toDate ? s.session_start.toDate().toISOString() : ""}">
+                              Ver preparación
+                            </button>`
+                         : ""
+                     }
                      <button class="btn btn-secondary" data-action="reagendar"
                              data-id="${id}"
                              data-name="${escapeAttr(s.client_name || "")}"
@@ -733,6 +893,34 @@
           btn.dataset.rescheduleUrl
         ));
       });
+      cardsContainer.querySelectorAll('[data-action="prep"]').forEach(btn => {
+        btn.addEventListener("click", () => openPrepModal(
+          btn.dataset.id,
+          btn.dataset.name,
+          btn.dataset.linkedUid,
+          btn.dataset.sessionStart
+        ));
+      });
+
+      // Enriquecer: contar módulos iniciados en paralelo para cada card vinculada
+      cardsContainer.querySelectorAll('[data-mod-chip]').forEach(async (chip) => {
+        const uid = chip.dataset.linkedUid;
+        if (!uid) return;
+        try {
+          const modsSnap = await getDocs(collection(db, "clientes", uid, "modulos"));
+          const count = modsSnap.size;
+          chip.classList.remove("chip-modulos-loading");
+          chip.classList.add("chip-modulos");
+          chip.textContent = count === 0
+            ? "0 módulos iniciados"
+            : (count === 1 ? "1 módulo iniciado" : `${count} módulos iniciados`);
+        } catch(e){
+          console.warn("[prep] No se pudo contar módulos de", uid, e);
+          chip.classList.remove("chip-modulos-loading");
+          chip.classList.add("chip-unlinked");
+          chip.textContent = "módulos: sin lectura";
+        }
+      });
     }
 
     function statusBadge(status) {
@@ -751,6 +939,202 @@
         .replace(/"/g, "&quot;").replace(/'/g, "&#039;");
     }
     function escapeAttr(s) { return escapeHtml(s); }
+
+    // ─── Preparación de sesión (Task #5 + #6) ─────────────────
+    const prepModal = document.getElementById("modal-prep");
+    const prepTitle = document.getElementById("prep-title");
+    const prepSubtitle = document.getElementById("prep-subtitle");
+    const prepBody = document.getElementById("prep-body");
+    document.getElementById("prep-close").addEventListener("click", () => prepModal.classList.remove("open"));
+    prepModal.addEventListener("click", (e) => { if (e.target === prepModal) prepModal.classList.remove("open"); });
+
+    // Nombres bonitos de módulos para mostrar al humano
+    const MODULE_LABELS = {
+      ingresos_gastos: "Ingresos y gastos",
+      endeudamiento: "Endeudamiento",
+      activos: "Mapa patrimonial",
+      ahorro: "Ahorro",
+      presupuesto_anual: "Presupuesto anual",
+      tablero: "Tablero",
+      simulador_deuda: "Simulador de deuda",
+      metas: "Metas",
+      ingresos_variables: "Ingresos variables",
+      fiscal: "Perfil fiscal",
+      presupuesto: "Presupuesto",
+    };
+
+    // Formato de moneda COP (sin decimales, con separadores)
+    function fmtCOP(n) {
+      if (n == null || isNaN(n)) return "—";
+      return "$" + Math.round(n).toLocaleString("es-CO");
+    }
+
+    async function openPrepModal(sessionId, clientName, linkedUid, sessionStartIso) {
+      prepTitle.textContent = `Preparación · ${clientName || "cliente"}`;
+      prepSubtitle.textContent = sessionStartIso
+        ? "Sesión programada para " + fmt({ toDate: () => new Date(sessionStartIso) })
+        : "";
+      prepBody.innerHTML = `<div class="prep-loader">Cargando datos del cliente…</div>`;
+      prepModal.classList.add("open");
+
+      try {
+        // Leer perfil + lista de módulos en paralelo
+        const [perfilSnap, modulosSnap] = await Promise.all([
+          getDoc(doc(db, "clientes", linkedUid)),
+          getDocs(collection(db, "clientes", linkedUid, "modulos")),
+        ]);
+        const perfil = perfilSnap.exists() ? perfilSnap.data() : {};
+        const modulos = {};
+        modulosSnap.forEach(m => { modulos[m.id] = m.data(); });
+
+        prepBody.innerHTML = buildPrepHtml(perfil, modulos);
+      } catch(err){
+        console.error("[prep] Error cargando datos:", err);
+        prepBody.innerHTML = `<p class="prep-empty" style="color:var(--alert);">
+          No pudimos cargar los datos del cliente. ${escapeHtml(err.message || "")}
+        </p>`;
+      }
+    }
+
+    function buildPrepHtml(perfil, modulos) {
+      const parts = [];
+
+      // ── Perfil del cliente
+      const perfilRows = [
+        ["Nombre", perfil.nombre || "—"],
+        ["Tipo de ingreso", perfil.tipoIngreso || "—"],
+        ["Edad", perfil.edad != null ? perfil.edad + " años" : "—"],
+        ["Moneda", perfil.moneda || "COP"],
+      ];
+      parts.push(`
+        <section class="prep-section">
+          <h4>Perfil</h4>
+          <div class="prep-perfil-grid">
+            ${perfilRows.map(([l,v]) => `
+              <div>
+                <p class="pl">${escapeHtml(l)}</p>
+                <p class="pv">${escapeHtml(v)}</p>
+              </div>
+            `).join("")}
+          </div>
+        </section>
+      `);
+
+      // ── Totales clave (si tiene datos)
+      const ig = modulos.ingresos_gastos;
+      const act = modulos.activos;
+      const deu = modulos.endeudamiento;
+
+      const totalIng = ig && typeof ig.total_ingresos === "number" ? ig.total_ingresos : null;
+      const totalGas = ig && typeof ig.total_gastos === "number" ? ig.total_gastos : null;
+      const flujo = (totalIng != null && totalGas != null) ? (totalIng - totalGas) : null;
+
+      // Suma de activos (si están disponibles)
+      let totalActivos = null;
+      if (act && Array.isArray(act.activos)) {
+        totalActivos = act.activos.reduce((s, a) => s + (typeof a.value === "number" ? a.value : 0), 0);
+      }
+
+      // Total de deudas
+      let totalDeudas = null;
+      if (deu && Array.isArray(deu.deudas)) {
+        totalDeudas = deu.deudas.reduce((s, d) => s + (typeof d.saldo === "number" ? d.saldo : (typeof d.monto === "number" ? d.monto : 0)), 0);
+      }
+
+      const patrimonioNeto = (totalActivos != null || totalDeudas != null)
+        ? (totalActivos || 0) - (totalDeudas || 0)
+        : null;
+
+      const totalCards = [];
+      if (totalIng != null) totalCards.push(`
+        <div class="total-card tc-positive">
+          <p class="tl">Ingresos mensuales</p>
+          <p class="tv">${fmtCOP(totalIng)}</p>
+        </div>`);
+      if (totalGas != null) totalCards.push(`
+        <div class="total-card">
+          <p class="tl">Gastos mensuales</p>
+          <p class="tv">${fmtCOP(totalGas)}</p>
+        </div>`);
+      if (flujo != null) totalCards.push(`
+        <div class="total-card ${flujo >= 0 ? 'tc-positive' : 'tc-negative'}">
+          <p class="tl">Flujo mensual</p>
+          <p class="tv">${fmtCOP(flujo)}</p>
+        </div>`);
+      if (totalActivos != null) totalCards.push(`
+        <div class="total-card">
+          <p class="tl">Activos (${(act.activos || []).length})</p>
+          <p class="tv">${fmtCOP(totalActivos)}</p>
+        </div>`);
+      if (totalDeudas != null) totalCards.push(`
+        <div class="total-card tc-negative">
+          <p class="tl">Deudas (${(deu.deudas || []).length})</p>
+          <p class="tv">${fmtCOP(totalDeudas)}</p>
+        </div>`);
+      if (patrimonioNeto != null) totalCards.push(`
+        <div class="total-card ${patrimonioNeto >= 0 ? 'tc-positive' : 'tc-negative'}">
+          <p class="tl">Patrimonio neto</p>
+          <p class="tv">${fmtCOP(patrimonioNeto)}</p>
+        </div>`);
+
+      if (totalCards.length > 0) {
+        parts.push(`
+          <section class="prep-section">
+            <h4>Resumen financiero</h4>
+            <div class="prep-totales">${totalCards.join("")}</div>
+          </section>
+        `);
+      }
+
+      // ── Perfil fiscal (si existe)
+      const fiscal = modulos.fiscal;
+      if (fiscal) {
+        const tipoCont = fiscal.tipoContribuyente || fiscal.tipo || null;
+        const declRenta = fiscal.declaraRenta != null ? (fiscal.declaraRenta ? "Sí" : "No") : null;
+        const fiscalRows = [];
+        if (tipoCont) fiscalRows.push(["Tipo contribuyente", tipoCont]);
+        if (declRenta) fiscalRows.push(["Declara renta", declRenta]);
+        if (fiscalRows.length > 0) {
+          parts.push(`
+            <section class="prep-section">
+              <h4>Situación fiscal</h4>
+              <div class="prep-perfil-grid">
+                ${fiscalRows.map(([l,v]) => `
+                  <div>
+                    <p class="pl">${escapeHtml(l)}</p>
+                    <p class="pv">${escapeHtml(v)}</p>
+                  </div>
+                `).join("")}
+              </div>
+            </section>
+          `);
+        }
+      }
+
+      // ── Módulos diligenciados (chips)
+      const modKeys = Object.keys(modulos);
+      if (modKeys.length === 0) {
+        parts.push(`
+          <section class="prep-section">
+            <h4>Módulos</h4>
+            <p class="prep-empty">El cliente aún no ha diligenciado ningún módulo en la app.</p>
+          </section>
+        `);
+      } else {
+        const chips = modKeys.map(k =>
+          `<span class="mod-chip">${escapeHtml(MODULE_LABELS[k] || k)}</span>`
+        ).join("");
+        parts.push(`
+          <section class="prep-section">
+            <h4>Módulos diligenciados (${modKeys.length})</h4>
+            <div class="prep-modulos-list">${chips}</div>
+          </section>
+        `);
+      }
+
+      return parts.join("");
+    }
+    // ──────────────────────────────────────────────────────────
 
     // ───── Modal & confirm ─────
     let pendingId = null;
