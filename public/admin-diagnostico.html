@@ -177,8 +177,41 @@
       line-height: 1.5;
     }
 
-    /* ─── Modal de preparación (Task #6) ─── */
-    .modal-xl { max-width: 720px; }
+    /* ─── Vista completa de preparación (Task #6) ─── */
+    .prep-view-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .prep-view-header h2 {
+      margin: 0;
+      font-size: 20px;
+      color: var(--navy);
+      font-weight: 500;
+    }
+    .prep-view-header .prep-sub {
+      margin: 4px 0 0;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .btn-back {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--brand);
+      font-size: 13px;
+      font-weight: 500;
+      padding: 8px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .btn-back:hover { background: var(--cream); }
     .prep-section {
       margin-bottom: 20px;
     }
@@ -234,6 +267,13 @@
     }
     .total-card.tc-negative .tv { color: var(--alert); }
     .total-card.tc-positive .tv { color: var(--success); }
+    .total-card .tfoot-mini {
+      font-size: 10px;
+      color: var(--muted);
+      margin: 4px 0 0;
+      line-height: 1.4;
+      font-style: italic;
+    }
     .prep-modulos-list {
       display: flex;
       flex-wrap: wrap;
@@ -569,6 +609,31 @@
 
       <div id="msg-container"></div>
       <div id="cards" class="cards"></div>
+
+      <!-- Vista completa de preparación (reemplaza al modal) -->
+      <div id="prep-view" style="display:none">
+        <div class="prep-view-header">
+          <div>
+            <h2 id="prep-title">Preparación de sesión</h2>
+            <p class="prep-sub" id="prep-subtitle">—</p>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <a id="prep-open-app" style="font-size:13px;color:var(--muted);cursor:pointer;text-decoration:none;"
+               title="Próximamente: modo lectura del app del cliente">
+              Abrir app del cliente (próximamente)
+            </a>
+            <button class="btn-back" id="prep-close">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <polyline points="15 18 9 12 15 6"/>
+              </svg>
+              Volver al panel
+            </button>
+          </div>
+        </div>
+        <div id="prep-body">
+          <div class="prep-loader">Cargando datos del cliente…</div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -619,25 +684,6 @@
 
       <div class="modal-actions" style="margin-top: 20px;">
         <button class="btn btn-secondary" id="reag-cancel">Cerrar</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Modal: Preparación de sesión (Task #5 + #6) -->
-  <div id="modal-prep" class="modal-overlay">
-    <div class="modal modal-xl">
-      <h3 id="prep-title">Preparación de sesión</h3>
-      <p id="prep-subtitle" style="margin: 0 0 20px; color: var(--muted); font-size: 13px;">—</p>
-      <div id="prep-body">
-        <div class="prep-loader">Cargando datos del cliente…</div>
-      </div>
-      <div class="modal-actions" style="margin-top: 24px; align-items: center;">
-        <p class="prep-stub-link">
-          <a id="prep-open-app" title="Próximamente: modo lectura del app del cliente">
-            Abrir app del cliente (próximamente)
-          </a>
-        </p>
-        <button class="btn btn-secondary" id="prep-close">Cerrar</button>
       </div>
     </div>
   </div>
@@ -981,7 +1027,7 @@
         ));
       });
       cardsContainer.querySelectorAll('[data-action="prep"]').forEach(btn => {
-        btn.addEventListener("click", () => openPrepModal(
+        btn.addEventListener("click", () => openPrepView(
           btn.dataset.id,
           btn.dataset.name,
           btn.dataset.linkedUid,
@@ -1028,24 +1074,37 @@
     function escapeAttr(s) { return escapeHtml(s); }
 
     // ─── Preparación de sesión (Task #5 + #6) ─────────────────
-    const prepModal = document.getElementById("modal-prep");
+    const prepView = document.getElementById("prep-view");
     const prepTitle = document.getElementById("prep-title");
     const prepSubtitle = document.getElementById("prep-subtitle");
     const prepBody = document.getElementById("prep-body");
-    document.getElementById("prep-close").addEventListener("click", () => prepModal.classList.remove("open"));
-    prepModal.addEventListener("click", (e) => { if (e.target === prepModal) prepModal.classList.remove("open"); });
+    const panelListEls = [
+      document.querySelector(".tabs"),
+      document.getElementById("msg-container"),
+      document.getElementById("cards"),
+    ];
+
+    function showPrepView(show){
+      prepView.style.display = show ? "block" : "none";
+      panelListEls.forEach(el => { if (el) el.style.display = show ? "none" : ""; });
+      // Scroll al tope cuando se cambia de vista
+      window.scrollTo({ top: 0, behavior: "instant" });
+    }
+
+    document.getElementById("prep-close").addEventListener("click", () => showPrepView(false));
 
     // Guardado temporal del uid y módulos del cliente actualmente abierto (para los detalles y el stub)
     let currentPrepUid = null;
     let currentPrepModulos = {};
 
-    document.getElementById("prep-open-app").addEventListener("click", () => {
+    document.getElementById("prep-open-app").addEventListener("click", (e) => {
+      e.preventDefault();
       const uid = currentPrepUid || "";
       alert(
         "Modo lectura del app del cliente — PRÓXIMAMENTE\n\n" +
         "Cuando se habilite, este botón abrirá el app con los datos del cliente en modo solo lectura, " +
         "para que puedas navegar como si fueras ellos.\n\n" +
-        "Mientras tanto, usá el resumen de este panel.\n\n" +
+        "Mientras tanto, usá el resumen de esta vista.\n\n" +
         "UID del cliente: " + uid
       );
     });
@@ -1071,13 +1130,13 @@
       return "$" + Math.round(n).toLocaleString("es-CO");
     }
 
-    async function openPrepModal(sessionId, clientName, linkedUid, sessionStartIso) {
+    async function openPrepView(sessionId, clientName, linkedUid, sessionStartIso) {
       prepTitle.textContent = `Preparación · ${clientName || "cliente"}`;
       prepSubtitle.textContent = sessionStartIso
         ? "Sesión programada para " + fmt({ toDate: () => new Date(sessionStartIso) })
         : "";
       prepBody.innerHTML = `<div class="prep-loader">Cargando datos del cliente…</div>`;
-      prepModal.classList.add("open");
+      showPrepView(true);
       currentPrepUid = linkedUid;
       currentPrepModulos = {};
 
@@ -1148,24 +1207,55 @@
         </section>
       `);
 
-      // ── Totales clave (si tiene datos)
+      // ── Totales clave (combinando varias fuentes)
       const ig = modulos.ingresos_gastos;
       const act = modulos.activos;
       const deu = modulos.endeudamiento;
+      const varInc = modulos.ingresos_variables;
+      const pres = modulos.presupuesto_anual;
 
-      const totalIng = ig && typeof ig.total_ingresos === "number" ? ig.total_ingresos : null;
+      // INGRESOS: combinar ingresos_gastos.fuentes_ingreso + ingresos_variables (promedio mensual) + presupuesto_anual.ingMensual como fallback
+      let totalIngFijos = null;
+      let totalIngVariables = null;
+      let fuenteIng = []; // qué módulos aportaron, para diagnóstico
+      if (ig && typeof ig.total_ingresos === "number"){
+        totalIngFijos = ig.total_ingresos;
+        fuenteIng.push("ingresos_gastos");
+      }
+      if (varInc && varInc.active && typeof varInc.salarioPersonal === "number" && varInc.salarioPersonal > 0){
+        // Usar el "Salario personal mensual" que la app ya calcula/el cliente estableció
+        totalIngVariables = varInc.salarioPersonal;
+        fuenteIng.push(
+          varInc.salarioOverride
+            ? "ingresos_variables (salario personal fijado por el cliente)"
+            : "ingresos_variables (salario personal sugerido por el sistema)"
+        );
+      }
+      let totalIng = null;
+      if (totalIngFijos != null || totalIngVariables != null){
+        totalIng = (totalIngFijos || 0) + (totalIngVariables || 0);
+      } else if (pres && typeof pres.ingMensual === "number" && pres.ingMensual > 0){
+        totalIng = pres.ingMensual;
+        fuenteIng.push("presupuesto_anual.ingMensual (fallback)");
+      }
+
+      // GASTOS: ingresos_gastos.total_gastos
       const totalGas = ig && typeof ig.total_gastos === "number" ? ig.total_gastos : null;
       const flujo = (totalIng != null && totalGas != null) ? (totalIng - totalGas) : null;
 
-      // Suma de activos (si están disponibles)
+      // ACTIVOS: mostrar siempre si el módulo existe (aunque esté vacío)
       let totalActivos = null;
-      if (act && Array.isArray(act.activos)) {
+      let nActivos = null;
+      if (act && Array.isArray(act.activos)){
+        nActivos = act.activos.length;
         totalActivos = act.activos.reduce((s, a) => s + (typeof a.value === "number" ? a.value : 0), 0);
       }
 
-      // Total de deudas
+      // DEUDAS
       let totalDeudas = null;
-      if (deu && Array.isArray(deu.deudas)) {
+      let nDeudas = null;
+      if (deu && Array.isArray(deu.deudas)){
+        nDeudas = deu.deudas.length;
         totalDeudas = deu.deudas.reduce((s, d) => s + (typeof d.saldo === "number" ? d.saldo : (typeof d.monto === "number" ? d.monto : 0)), 0);
       }
 
@@ -1178,6 +1268,7 @@
         <div class="total-card tc-positive">
           <p class="tl">Ingresos mensuales</p>
           <p class="tv">${fmtCOP(totalIng)}</p>
+          ${fuenteIng.length > 0 ? `<p class="tfoot-mini">de: ${escapeHtml(fuenteIng.join(" + "))}</p>` : ""}
         </div>`);
       if (totalGas != null) totalCards.push(`
         <div class="total-card">
@@ -1189,15 +1280,16 @@
           <p class="tl">Flujo mensual</p>
           <p class="tv">${fmtCOP(flujo)}</p>
         </div>`);
-      if (totalActivos != null) totalCards.push(`
+      // Activos: card siempre que el módulo exista, incluso con 0
+      if (act != null) totalCards.push(`
         <div class="total-card">
-          <p class="tl">Activos (${(act.activos || []).length})</p>
-          <p class="tv">${fmtCOP(totalActivos)}</p>
+          <p class="tl">Activos${nActivos != null ? ' ('+nActivos+')' : ''}</p>
+          <p class="tv">${nActivos === 0 ? '<span style="color:var(--muted);font-size:13px;font-weight:400;">Abrió el módulo, sin activos</span>' : fmtCOP(totalActivos)}</p>
         </div>`);
       if (totalDeudas != null) totalCards.push(`
         <div class="total-card tc-negative">
-          <p class="tl">Deudas (${(deu.deudas || []).length})</p>
-          <p class="tv">${fmtCOP(totalDeudas)}</p>
+          <p class="tl">Deudas (${nDeudas || 0})</p>
+          <p class="tv">${nDeudas === 0 ? '<span style="color:var(--muted);font-size:13px;font-weight:400;">Sin deudas</span>' : fmtCOP(totalDeudas)}</p>
         </div>`);
       if (patrimonioNeto != null) totalCards.push(`
         <div class="total-card ${patrimonioNeto >= 0 ? 'tc-positive' : 'tc-negative'}">
@@ -1274,11 +1366,13 @@
       try {
         switch (key){
           case "ingresos_gastos":   return renderIngresosGastos(label, data);
+          case "ingresos_variables":return renderIngresosVariables(label, data);
           case "activos":           return renderActivos(label, data);
           case "endeudamiento":     return renderEndeudamiento(label, data);
           case "fiscal":            return renderFiscal(label, data);
           case "metas":             return renderMetas(label, data);
           case "ahorro":            return renderAhorro(label, data);
+          case "presupuesto_anual": return renderPresupuestoAnual(label, data);
           default:                  return renderGenerico(label, data);
         }
       } catch(e){
@@ -1296,24 +1390,40 @@
       const gastosLabels = (data.gastosLabels && typeof data.gastosLabels === "object") ? data.gastosLabels : {};
       const totalIng = data.total_ingresos || fuentes.reduce((s,f)=>s+(f.monto||0),0);
       const totalGas = data.total_gastos || Object.values(gastosObj).reduce((a,b)=>a+(b||0),0);
+      const tipoIngreso = data.tipoIngreso || null;
 
       let html = `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>`;
 
+      if (tipoIngreso){
+        html += `<p style="font-size:13px;margin:0 0 10px;">
+          Tipo de ingreso declarado: <strong>${escapeHtml(tipoIngreso)}</strong>
+          ${data.tieneEmpleadosArt336 ? ' · <span class="cat-tag">Tiene empleados (art. 336)</span>' : ''}
+        </p>`;
+      }
+
       // Fuentes de ingreso
       if (fuentes.length > 0){
-        html += `<p style="font-size:12px;color:var(--muted);margin:12px 0 6px;">Fuentes de ingreso</p>
-          <table><thead><tr><th>Fuente</th><th class="num">Monto mensual</th></tr></thead><tbody>`;
+        html += `<p style="font-size:12px;color:var(--muted);margin:12px 0 6px;">Fuentes de ingreso fijo (${fuentes.length})</p>
+          <table><thead><tr><th>Fuente</th><th>Clase</th><th class="num">Monto mensual</th></tr></thead><tbody>`;
         fuentes.forEach(f => {
-          html += `<tr><td>${escapeHtml(f.nombre || "—")}${f.claseIngreso ? ' <span class="cat-tag">'+escapeHtml(f.claseIngreso)+'</span>' : ''}</td>
-                   <td class="num">${fmtCOP(f.monto)}</td></tr>`;
+          html += `<tr>
+            <td>${escapeHtml(f.nombre || "—")}</td>
+            <td>${f.claseIngreso ? '<span class="cat-tag">'+escapeHtml(f.claseIngreso)+'</span>' : '<span style="color:var(--muted);">—</span>'}</td>
+            <td class="num">${fmtCOP(f.monto)}</td>
+          </tr>`;
         });
-        html += `<tfoot><tr><td>Total ingresos</td><td class="num">${fmtCOP(totalIng)}</td></tr></tfoot></tbody></table>`;
+        html += `<tfoot><tr><td colspan="2">Total ingresos fijos</td><td class="num">${fmtCOP(totalIng)}</td></tr></tfoot></tbody></table>`;
+      } else {
+        html += `<p style="font-size:13px;margin:12px 0;color:var(--muted);">
+          <strong>Sin fuentes de ingreso fijo registradas.</strong><br>
+          Si el cliente tiene ingresos variables, revisá el módulo "Ingresos variables".
+        </p>`;
       }
 
       // Gastos
       const gastoKeys = Object.keys(gastosObj).filter(k => (gastosObj[k]||0) > 0);
       if (gastoKeys.length > 0){
-        html += `<p style="font-size:12px;color:var(--muted);margin:16px 0 6px;">Gastos mensuales</p>
+        html += `<p style="font-size:12px;color:var(--muted);margin:16px 0 6px;">Gastos mensuales por categoría</p>
           <table><thead><tr><th>Categoría</th><th class="num">Monto</th></tr></thead><tbody>`;
         gastoKeys.sort((a,b) => (gastosObj[b]||0) - (gastosObj[a]||0));
         gastoKeys.forEach(k => {
@@ -1323,10 +1433,98 @@
         html += `<tfoot><tr><td>Total gastos</td><td class="num">${fmtCOP(totalGas)}</td></tr></tfoot></tbody></table>`;
       }
 
-      if (fuentes.length === 0 && gastoKeys.length === 0){
-        html += `<p class="prep-empty">El cliente abrió el módulo pero aún no ingresó datos.</p>`;
+      html += `</div>`;
+      return html;
+    }
+
+    function renderIngresosVariables(label, data){
+      if (!data || !data.active){
+        return `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>
+          <p class="prep-empty">El cliente abrió el módulo pero no activó el módulo de ingresos variables (no corresponde a su perfil o aún no lo configuró).</p></div>`;
+      }
+      const contratos = Array.isArray(data.contratos) ? data.contratos : [];
+      let html = `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>`;
+
+      // Salario personal mensual — el dato clave que usa la app
+      if (typeof data.salarioPersonal === "number" && data.salarioPersonal > 0){
+        const origen = data.salarioOverride
+          ? "definido manualmente por el cliente"
+          : "sugerido automáticamente por el sistema (P25 de netos históricos)";
+        html += `<div style="background:var(--cream);border-left:3px solid var(--brand);padding:12px 14px;border-radius:0 4px 4px 0;margin:0 0 14px;">
+          <p style="margin:0 0 4px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;">Salario personal mensual</p>
+          <p style="margin:0;font-size:18px;font-weight:600;color:var(--navy);">${fmtCOP(data.salarioPersonal)}</p>
+          <p style="margin:4px 0 0;font-size:11px;color:var(--muted);font-style:italic;">${escapeHtml(origen)}</p>
+        </div>`;
       }
 
+      if (data.fondoActual != null){
+        html += `<p style="font-size:13px;margin:0 0 12px;">Fondo de estabilización actual: <strong>${fmtCOP(data.fondoActual)}</strong></p>`;
+      }
+
+      if (contratos.length === 0){
+        html += `<p class="prep-empty">Módulo activado pero sin contratos registrados.</p>`;
+      } else {
+        html += `<p style="font-size:12px;color:var(--muted);margin:0 0 6px;">Contratos registrados (${contratos.length}) — contexto histórico</p>
+          <table><thead><tr><th>Contrato</th><th class="num">Promedio ingresos</th><th class="num">Promedio costos</th><th class="num">Flujo neto promedio</th></tr></thead><tbody>`;
+        let totalProm = 0;
+        contratos.forEach(c => {
+          const meses = Array.isArray(c.meses) ? c.meses : [];
+          const mesesConDatos = meses.filter(m => (+m.ingresos || 0) > 0 || (+m.costos || 0) > 0);
+          const sumIng = mesesConDatos.reduce((s,m)=>s+(+m.ingresos||0),0);
+          const sumCos = mesesConDatos.reduce((s,m)=>s+(+m.costos||0),0);
+          const promIng = mesesConDatos.length > 0 ? sumIng / mesesConDatos.length : 0;
+          const promCos = mesesConDatos.length > 0 ? sumCos / mesesConDatos.length : 0;
+          totalProm += (promIng - promCos);
+          html += `<tr>
+            <td>${escapeHtml(c.nombre || c.cliente || "Contrato")}</td>
+            <td class="num">${fmtCOP(promIng)}</td>
+            <td class="num">${fmtCOP(promCos)}</td>
+            <td class="num">${fmtCOP(promIng - promCos)}</td>
+          </tr>`;
+        });
+        html += `<tfoot><tr><td colspan="3">Flujo neto promedio total (todos los contratos)</td><td class="num">${fmtCOP(totalProm)}</td></tr></tfoot></tbody></table>
+          <p style="font-size:11px;color:var(--muted);margin:8px 0 0;font-style:italic;">El salario personal (arriba) es el ingreso efectivo mensual del cliente; los promedios de contratos son contexto histórico.</p>`;
+      }
+      html += `</div>`;
+      return html;
+    }
+
+    function renderPresupuestoAnual(label, data){
+      let html = `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>`;
+      const campos = [];
+      if (data.ingMensual != null) campos.push(["Ingreso mensual", fmtCOP(data.ingMensual)]);
+      if (data.deuMensual != null) campos.push(["Cuota de deuda mensual", fmtCOP(data.deuMensual)]);
+      if (data.fondoProvisiones != null) campos.push(["Fondo de provisiones", fmtCOP(data.fondoProvisiones)]);
+      if (data.socio1) campos.push(["Socio 1", data.socio1]);
+      if (campos.length > 0){
+        html += `<table><tbody>`;
+        campos.forEach(([l,v]) => {
+          html += `<tr><td style="color:var(--muted);width:40%;">${escapeHtml(l)}</td><td>${escapeHtml(v)}</td></tr>`;
+        });
+        html += `</tbody></table>`;
+      }
+      // Gastos por categoría (presupuesto anual tiene estructura {gastos: {categoria: [items]}})
+      const gastosObj = data.gastos || {};
+      const catKeys = Object.keys(gastosObj);
+      if (catKeys.length > 0){
+        html += `<p style="font-size:12px;color:var(--muted);margin:16px 0 6px;">Gastos anuales por categoría</p>
+          <table><thead><tr><th>Categoría</th><th class="num">Items</th><th class="num">Total anual</th></tr></thead><tbody>`;
+        let totalAnual = 0;
+        catKeys.forEach(cat => {
+          const items = Array.isArray(gastosObj[cat]) ? gastosObj[cat] : [];
+          const sum = items.reduce((s,i)=>s+((+i.monto||0) * (i.frec === "TODOS LOS MESES" ? 12 : 1)), 0);
+          totalAnual += sum;
+          html += `<tr><td>${escapeHtml(cat)}</td><td class="num">${items.length}</td><td class="num">${fmtCOP(sum)}</td></tr>`;
+        });
+        html += `<tfoot><tr><td colspan="2">Total gasto anual (estimado)</td><td class="num">${fmtCOP(totalAnual)}</td></tr></tfoot></tbody></table>`;
+      }
+      // Ahorros y deudas listas
+      if (Array.isArray(data.ahorro) && data.ahorro.length > 0){
+        html += `<p style="font-size:12px;color:var(--muted);margin:16px 0 6px;">Ahorros programados (${data.ahorro.length})</p>`;
+      }
+      if (Array.isArray(data.deudas) && data.deudas.length > 0){
+        html += `<p style="font-size:12px;color:var(--muted);margin:16px 0 6px;">Deudas en presupuesto (${data.deudas.length})</p>`;
+      }
       html += `</div>`;
       return html;
     }
@@ -1335,7 +1533,7 @@
       const activos = Array.isArray(data.activos) ? data.activos : [];
       if (activos.length === 0){
         return `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>
-          <p class="prep-empty">El cliente abrió el módulo pero aún no ingresó activos.</p></div>`;
+          <p class="prep-empty">El cliente abrió el módulo <strong>pero no registró activos</strong>. Puede significar que no tiene activos, o que todavía no los cargó.</p></div>`;
       }
       // Agrupar por categoría
       const byCat = {};
