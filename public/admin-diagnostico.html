@@ -1214,16 +1214,20 @@
       const varInc = modulos.ingresos_variables;
       const pres = modulos.presupuesto_anual;
 
-      // INGRESOS: combinar ingresos_gastos.fuentes_ingreso + ingresos_variables (promedio mensual) + presupuesto_anual.ingMensual como fallback
+      // INGRESOS: ingresos_gastos.total_ingresos YA incluye el salario personal del módulo variable
+      // (la app agrega internamente un item linkedToMVar al total). Entonces NO sumamos el salario
+      // personal otra vez. Pero sí lo exponemos como "variable" para mostrar la composición.
       let totalIngFijos = null;
       let totalIngVariables = null;
       let fuenteIng = []; // qué módulos aportaron, para diagnóstico
-      if (ig && typeof ig.total_ingresos === "number"){
-        totalIngFijos = ig.total_ingresos;
-        fuenteIng.push("ingresos_gastos");
+
+      // Fijos: sumar fuentes_ingreso (NO total_ingresos, que incluye el variable)
+      if (ig && Array.isArray(ig.fuentes_ingreso)){
+        totalIngFijos = ig.fuentes_ingreso.reduce((s, f) => s + (+f.monto || 0), 0);
+        if (ig.fuentes_ingreso.length > 0) fuenteIng.push("ingresos_gastos.fuentes_ingreso");
       }
+      // Variable: salario personal del módulo variable
       if (varInc && varInc.active && typeof varInc.salarioPersonal === "number" && varInc.salarioPersonal > 0){
-        // Usar el "Salario personal mensual" que la app ya calcula/el cliente estableció
         totalIngVariables = varInc.salarioPersonal;
         fuenteIng.push(
           varInc.salarioOverride
@@ -1234,6 +1238,10 @@
       let totalIng = null;
       if (totalIngFijos != null || totalIngVariables != null){
         totalIng = (totalIngFijos || 0) + (totalIngVariables || 0);
+      } else if (ig && typeof ig.total_ingresos === "number" && ig.total_ingresos > 0){
+        // Fallback: si no pude discriminar, usar el total_ingresos del módulo 1
+        totalIng = ig.total_ingresos;
+        fuenteIng.push("ingresos_gastos.total_ingresos (sin discriminar)");
       } else if (pres && typeof pres.ingMensual === "number" && pres.ingMensual > 0){
         totalIng = pres.ingMensual;
         fuenteIng.push("presupuesto_anual.ingMensual (fallback)");
@@ -1388,9 +1396,15 @@
       const fuentes = Array.isArray(data.fuentes_ingreso) ? data.fuentes_ingreso : [];
       const gastosObj = (data.gastos && typeof data.gastos === "object") ? data.gastos : {};
       const gastosLabels = (data.gastosLabels && typeof data.gastosLabels === "object") ? data.gastosLabels : {};
-      const totalIng = data.total_ingresos || fuentes.reduce((s,f)=>s+(f.monto||0),0);
+      const totalIngFijos = fuentes.reduce((s,f)=>s+(+f.monto||0),0); // suma solo las fijas
       const totalGas = data.total_gastos || Object.values(gastosObj).reduce((a,b)=>a+(b||0),0);
       const tipoIngreso = data.tipoIngreso || null;
+
+      // Traer el módulo de ingresos variables (si existe) para mostrar el salario personal + clases
+      const varInc = currentPrepModulos.ingresos_variables;
+      const hasVar = varInc && varInc.active && typeof varInc.salarioPersonal === "number" && varInc.salarioPersonal > 0;
+      const salarioPersonal = hasVar ? varInc.salarioPersonal : 0;
+      const totalIngGeneral = totalIngFijos + salarioPersonal;
 
       let html = `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>`;
 
@@ -1401,22 +1415,46 @@
         </p>`;
       }
 
-      // Fuentes de ingreso
-      if (fuentes.length > 0){
-        html += `<p style="font-size:12px;color:var(--muted);margin:12px 0 6px;">Fuentes de ingreso fijo (${fuentes.length})</p>
-          <table><thead><tr><th>Fuente</th><th>Clase</th><th class="num">Monto mensual</th></tr></thead><tbody>`;
-        fuentes.forEach(f => {
-          html += `<tr>
-            <td>${escapeHtml(f.nombre || "—")}</td>
-            <td>${f.claseIngreso ? '<span class="cat-tag">'+escapeHtml(f.claseIngreso)+'</span>' : '<span style="color:var(--muted);">—</span>'}</td>
-            <td class="num">${fmtCOP(f.monto)}</td>
-          </tr>`;
-        });
-        html += `<tfoot><tr><td colspan="2">Total ingresos fijos</td><td class="num">${fmtCOP(totalIng)}</td></tr></tfoot></tbody></table>`;
-      } else {
+      // Fuentes de ingreso FIJO + variable integrado abajo
+      html += `<p style="font-size:12px;color:var(--muted);margin:12px 0 6px;">Composición del ingreso mensual (${fuentes.length}${hasVar ? ' + 1 variable' : ''})</p>
+        <table><thead><tr><th>Fuente</th><th>Origen</th><th>Clase fiscal</th><th class="num">Monto mensual</th></tr></thead><tbody>`;
+
+      fuentes.forEach(f => {
+        html += `<tr>
+          <td>${escapeHtml(f.nombre || "—")}</td>
+          <td><span style="font-size:11px;color:var(--muted);">Fijo (módulo 1)</span></td>
+          <td>${f.claseIngreso ? '<span class="cat-tag">'+escapeHtml(f.claseIngreso)+'</span>' : '<span style="color:var(--warning);font-size:11px;font-style:italic;">sin clasificar</span>'}</td>
+          <td class="num">${fmtCOP(f.monto)}</td>
+        </tr>`;
+      });
+
+      // Fila(s) de ingreso variable, con clase de cada contrato
+      if (hasVar){
+        const contratos = Array.isArray(varInc.contratos) ? varInc.contratos : [];
+        const clasesUnicas = Array.from(new Set(contratos.map(c => c.claseIngreso).filter(Boolean)));
+        const sinClasificar = contratos.filter(c => !c.claseIngreso).length;
+        const clasesHtml = clasesUnicas.length > 0
+          ? clasesUnicas.map(c => '<span class="cat-tag">'+escapeHtml(c)+'</span>').join(' ')
+          : '<span style="color:var(--warning);font-size:11px;font-style:italic;">sin clasificar</span>';
+        html += `<tr style="background:#fafbfd;">
+          <td><strong>Ingreso variable (salario personal)</strong>
+            <br><span style="font-size:11px;color:var(--muted);">${contratos.length} contrato${contratos.length>1?'s':''}${sinClasificar>0 ? ', '+sinClasificar+' sin clasificar' : ''}</span>
+          </td>
+          <td><span style="font-size:11px;color:var(--muted);">Variable (módulo Ingresos variables)</span></td>
+          <td>${clasesHtml}</td>
+          <td class="num">${fmtCOP(salarioPersonal)}</td>
+        </tr>`;
+      }
+
+      html += `<tfoot>
+        <tr><td colspan="3">Subtotal ingresos fijos</td><td class="num">${fmtCOP(totalIngFijos)}</td></tr>`;
+      if (hasVar) html += `<tr><td colspan="3">Subtotal ingreso variable (salario personal)</td><td class="num">${fmtCOP(salarioPersonal)}</td></tr>`;
+      html += `<tr><td colspan="3"><strong>Total ingresos mensuales</strong></td><td class="num"><strong>${fmtCOP(totalIngGeneral)}</strong></td></tr>
+        </tfoot></tbody></table>`;
+
+      if (fuentes.length === 0 && !hasVar){
         html += `<p style="font-size:13px;margin:12px 0;color:var(--muted);">
-          <strong>Sin fuentes de ingreso fijo registradas.</strong><br>
-          Si el cliente tiene ingresos variables, revisá el módulo "Ingresos variables".
+          <strong>Sin fuentes de ingreso registradas.</strong>
         </p>`;
       }
 
