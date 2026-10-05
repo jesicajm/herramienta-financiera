@@ -246,11 +246,75 @@
       background: #eef4fb;
       color: var(--brand);
       font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+      user-select: none;
+      border: none;
+    }
+    .mod-chip:hover { background: #d7e5f3; }
+    .mod-chip.active {
+      background: var(--brand);
+      color: #fff;
     }
     .mod-chip-empty {
       background: #f3f4f6;
       color: var(--muted);
       font-style: italic;
+      cursor: default;
+    }
+    .mod-detail {
+      margin-top: 14px;
+      background: #fafbfd;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 16px 18px;
+    }
+    .mod-detail h5 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      color: var(--navy);
+      font-weight: 600;
+    }
+    .mod-detail table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .mod-detail th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .mod-detail td {
+      padding: 7px 8px;
+      border-bottom: 1px solid #f0f2f6;
+      color: var(--ink);
+    }
+    .mod-detail td.num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .mod-detail tr:last-child td { border-bottom: none; }
+    .mod-detail tfoot td {
+      font-weight: 600;
+      color: var(--navy);
+      border-top: 2px solid var(--border);
+      border-bottom: none;
+    }
+    .mod-detail .cat-tag {
+      display: inline-block;
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 8px;
+      background: #eef4fb;
+      color: var(--brand);
+      font-weight: 500;
     }
     .prep-empty {
       font-size: 13px;
@@ -264,6 +328,24 @@
       padding: 40px 0;
       font-size: 14px;
     }
+    /* Modal con scroll si el contenido se pasa de alto */
+    .modal.modal-xl {
+      max-height: 85vh;
+      overflow-y: auto;
+    }
+    .prep-stub-link {
+      font-size: 13px;
+      color: var(--muted);
+      margin: 0;
+      text-align: left;
+      flex: 1;
+    }
+    .prep-stub-link a {
+      color: var(--brand);
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .prep-stub-link a:hover { text-decoration: underline; }
 
     .card-details {
       display: grid;
@@ -549,7 +631,12 @@
       <div id="prep-body">
         <div class="prep-loader">Cargando datos del cliente…</div>
       </div>
-      <div class="modal-actions" style="margin-top: 24px;">
+      <div class="modal-actions" style="margin-top: 24px; align-items: center;">
+        <p class="prep-stub-link">
+          <a id="prep-open-app" title="Próximamente: modo lectura del app del cliente">
+            Abrir app del cliente (próximamente)
+          </a>
+        </p>
         <button class="btn btn-secondary" id="prep-close">Cerrar</button>
       </div>
     </div>
@@ -948,6 +1035,21 @@
     document.getElementById("prep-close").addEventListener("click", () => prepModal.classList.remove("open"));
     prepModal.addEventListener("click", (e) => { if (e.target === prepModal) prepModal.classList.remove("open"); });
 
+    // Guardado temporal del uid y módulos del cliente actualmente abierto (para los detalles y el stub)
+    let currentPrepUid = null;
+    let currentPrepModulos = {};
+
+    document.getElementById("prep-open-app").addEventListener("click", () => {
+      const uid = currentPrepUid || "";
+      alert(
+        "Modo lectura del app del cliente — PRÓXIMAMENTE\n\n" +
+        "Cuando se habilite, este botón abrirá el app con los datos del cliente en modo solo lectura, " +
+        "para que puedas navegar como si fueras ellos.\n\n" +
+        "Mientras tanto, usá el resumen de este panel.\n\n" +
+        "UID del cliente: " + uid
+      );
+    });
+
     // Nombres bonitos de módulos para mostrar al humano
     const MODULE_LABELS = {
       ingresos_gastos: "Ingresos y gastos",
@@ -976,6 +1078,8 @@
         : "";
       prepBody.innerHTML = `<div class="prep-loader">Cargando datos del cliente…</div>`;
       prepModal.classList.add("open");
+      currentPrepUid = linkedUid;
+      currentPrepModulos = {};
 
       try {
         // Leer perfil + lista de módulos en paralelo
@@ -986,14 +1090,38 @@
         const perfil = perfilSnap.exists() ? perfilSnap.data() : {};
         const modulos = {};
         modulosSnap.forEach(m => { modulos[m.id] = m.data(); });
+        currentPrepModulos = modulos;
 
         prepBody.innerHTML = buildPrepHtml(perfil, modulos);
+        bindModChipClicks();
       } catch(err){
         console.error("[prep] Error cargando datos:", err);
         prepBody.innerHTML = `<p class="prep-empty" style="color:var(--alert);">
           No pudimos cargar los datos del cliente. ${escapeHtml(err.message || "")}
         </p>`;
       }
+    }
+
+    // Chips clickeables → expanden detalle del módulo abajo
+    function bindModChipClicks(){
+      const chips = prepBody.querySelectorAll(".mod-chip[data-mod]");
+      const detailBox = prepBody.querySelector("#mod-detail-box");
+      if (!detailBox) return;
+      chips.forEach(chip => {
+        chip.addEventListener("click", () => {
+          const key = chip.dataset.mod;
+          // Toggle: si ya está activo, cerrar
+          if (chip.classList.contains("active")){
+            chip.classList.remove("active");
+            detailBox.innerHTML = "";
+            return;
+          }
+          chips.forEach(c => c.classList.remove("active"));
+          chip.classList.add("active");
+          detailBox.innerHTML = renderModuleDetail(key, currentPrepModulos[key]);
+          detailBox.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        });
+      });
     }
 
     function buildPrepHtml(perfil, modulos) {
@@ -1111,7 +1239,7 @@
         }
       }
 
-      // ── Módulos diligenciados (chips)
+      // ── Módulos diligenciados (chips clickeables)
       const modKeys = Object.keys(modulos);
       if (modKeys.length === 0) {
         parts.push(`
@@ -1122,17 +1250,219 @@
         `);
       } else {
         const chips = modKeys.map(k =>
-          `<span class="mod-chip">${escapeHtml(MODULE_LABELS[k] || k)}</span>`
+          `<button type="button" class="mod-chip" data-mod="${escapeAttr(k)}" title="Clic para ver detalle">
+             ${escapeHtml(MODULE_LABELS[k] || k)}
+           </button>`
         ).join("");
         parts.push(`
           <section class="prep-section">
             <h4>Módulos diligenciados (${modKeys.length})</h4>
+            <p style="font-size:12px;color:var(--muted);margin:0 0 10px;">Clic en un módulo para ver el detalle.</p>
             <div class="prep-modulos-list">${chips}</div>
+            <div id="mod-detail-box"></div>
           </section>
         `);
       }
 
       return parts.join("");
+    }
+
+    // ─── Renderers de detalle por módulo ──────────────────────
+    function renderModuleDetail(key, data){
+      if (!data) return `<div class="mod-detail"><p class="prep-empty">Sin datos para este módulo.</p></div>`;
+      const label = MODULE_LABELS[key] || key;
+      try {
+        switch (key){
+          case "ingresos_gastos":   return renderIngresosGastos(label, data);
+          case "activos":           return renderActivos(label, data);
+          case "endeudamiento":     return renderEndeudamiento(label, data);
+          case "fiscal":            return renderFiscal(label, data);
+          case "metas":             return renderMetas(label, data);
+          case "ahorro":            return renderAhorro(label, data);
+          default:                  return renderGenerico(label, data);
+        }
+      } catch(e){
+        console.error("[prep] Error renderizando", key, e);
+        return `<div class="mod-detail">
+          <h5>${escapeHtml(label)}</h5>
+          <p class="prep-empty">No se pudo renderizar este módulo.</p>
+        </div>`;
+      }
+    }
+
+    function renderIngresosGastos(label, data){
+      const fuentes = Array.isArray(data.fuentes_ingreso) ? data.fuentes_ingreso : [];
+      const gastosObj = (data.gastos && typeof data.gastos === "object") ? data.gastos : {};
+      const gastosLabels = (data.gastosLabels && typeof data.gastosLabels === "object") ? data.gastosLabels : {};
+      const totalIng = data.total_ingresos || fuentes.reduce((s,f)=>s+(f.monto||0),0);
+      const totalGas = data.total_gastos || Object.values(gastosObj).reduce((a,b)=>a+(b||0),0);
+
+      let html = `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>`;
+
+      // Fuentes de ingreso
+      if (fuentes.length > 0){
+        html += `<p style="font-size:12px;color:var(--muted);margin:12px 0 6px;">Fuentes de ingreso</p>
+          <table><thead><tr><th>Fuente</th><th class="num">Monto mensual</th></tr></thead><tbody>`;
+        fuentes.forEach(f => {
+          html += `<tr><td>${escapeHtml(f.nombre || "—")}${f.claseIngreso ? ' <span class="cat-tag">'+escapeHtml(f.claseIngreso)+'</span>' : ''}</td>
+                   <td class="num">${fmtCOP(f.monto)}</td></tr>`;
+        });
+        html += `<tfoot><tr><td>Total ingresos</td><td class="num">${fmtCOP(totalIng)}</td></tr></tfoot></tbody></table>`;
+      }
+
+      // Gastos
+      const gastoKeys = Object.keys(gastosObj).filter(k => (gastosObj[k]||0) > 0);
+      if (gastoKeys.length > 0){
+        html += `<p style="font-size:12px;color:var(--muted);margin:16px 0 6px;">Gastos mensuales</p>
+          <table><thead><tr><th>Categoría</th><th class="num">Monto</th></tr></thead><tbody>`;
+        gastoKeys.sort((a,b) => (gastosObj[b]||0) - (gastosObj[a]||0));
+        gastoKeys.forEach(k => {
+          const lbl = gastosLabels[k] || k;
+          html += `<tr><td>${escapeHtml(lbl)}</td><td class="num">${fmtCOP(gastosObj[k])}</td></tr>`;
+        });
+        html += `<tfoot><tr><td>Total gastos</td><td class="num">${fmtCOP(totalGas)}</td></tr></tfoot></tbody></table>`;
+      }
+
+      if (fuentes.length === 0 && gastoKeys.length === 0){
+        html += `<p class="prep-empty">El cliente abrió el módulo pero aún no ingresó datos.</p>`;
+      }
+
+      html += `</div>`;
+      return html;
+    }
+
+    function renderActivos(label, data){
+      const activos = Array.isArray(data.activos) ? data.activos : [];
+      if (activos.length === 0){
+        return `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>
+          <p class="prep-empty">El cliente abrió el módulo pero aún no ingresó activos.</p></div>`;
+      }
+      // Agrupar por categoría
+      const byCat = {};
+      activos.forEach(a => {
+        const cat = a.category || "Otros";
+        (byCat[cat] = byCat[cat] || []).push(a);
+      });
+      let html = `<div class="mod-detail"><h5>${escapeHtml(label)} (${activos.length})</h5>`;
+      let totalGeneral = 0;
+      Object.keys(byCat).forEach(cat => {
+        const items = byCat[cat];
+        const sub = items.reduce((s,a)=>s+(a.value||0),0);
+        totalGeneral += sub;
+        html += `<p style="font-size:12px;color:var(--muted);margin:12px 0 6px;">${escapeHtml(cat)} (${items.length})</p>
+          <table><thead><tr><th>Nombre</th><th>Subtipo</th><th class="num">Valor</th></tr></thead><tbody>`;
+        items.forEach(a => {
+          html += `<tr>
+            <td>${escapeHtml(a.name || a.nombre || "—")}</td>
+            <td><span class="cat-tag">${escapeHtml(a.subtype || "—")}</span></td>
+            <td class="num">${fmtCOP(a.value)}</td>
+          </tr>`;
+        });
+        html += `<tfoot><tr><td colspan="2">Subtotal ${escapeHtml(cat)}</td><td class="num">${fmtCOP(sub)}</td></tr></tfoot></tbody></table>`;
+      });
+      html += `<p style="margin-top:14px;text-align:right;font-weight:600;color:var(--navy);">Total patrimonial: ${fmtCOP(totalGeneral)}</p></div>`;
+      return html;
+    }
+
+    function renderEndeudamiento(label, data){
+      const deudas = Array.isArray(data.deudas) ? data.deudas : [];
+      if (deudas.length === 0){
+        return `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>
+          <p class="prep-empty">El cliente no registró deudas.</p></div>`;
+      }
+      let total = 0;
+      let html = `<div class="mod-detail"><h5>${escapeHtml(label)} (${deudas.length})</h5>
+        <table><thead><tr><th>Deuda</th><th>Tipo</th><th class="num">Saldo</th><th class="num">Cuota</th></tr></thead><tbody>`;
+      deudas.forEach(d => {
+        const saldo = d.saldo || d.monto || 0;
+        total += saldo;
+        html += `<tr>
+          <td>${escapeHtml(d.nombre || d.name || "—")}</td>
+          <td><span class="cat-tag">${escapeHtml(d.tipo || d.type || "—")}</span></td>
+          <td class="num">${fmtCOP(saldo)}</td>
+          <td class="num">${d.cuota != null ? fmtCOP(d.cuota) : "—"}</td>
+        </tr>`;
+      });
+      html += `<tfoot><tr><td colspan="2">Total deuda</td><td class="num">${fmtCOP(total)}</td><td></td></tr></tfoot></tbody></table></div>`;
+      return html;
+    }
+
+    function renderFiscal(label, data){
+      // El módulo fiscal tiene estructura variable; mostramos los campos top-level legibles
+      const rows = [];
+      const human = {
+        tipoContribuyente: "Tipo contribuyente",
+        tipo: "Tipo",
+        declaraRenta: "¿Declara renta?",
+        regimen: "Régimen",
+        actividad: "Actividad económica",
+        dependientes: "Dependientes a cargo",
+      };
+      Object.keys(data).forEach(k => {
+        const v = data[k];
+        if (v == null || typeof v === "object") return;
+        const lbl = human[k] || k;
+        const valStr = typeof v === "boolean" ? (v ? "Sí" : "No") : String(v);
+        rows.push([lbl, valStr]);
+      });
+      if (rows.length === 0){
+        return `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>
+          <p class="prep-empty">El cliente abrió el módulo pero aún no ingresó datos planos. Revisá en Firestore si necesitás ver estructuras complejas.</p></div>`;
+      }
+      let html = `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>
+        <table><tbody>`;
+      rows.forEach(([l,v]) => {
+        html += `<tr><td style="color:var(--muted);width:40%;">${escapeHtml(l)}</td><td>${escapeHtml(v)}</td></tr>`;
+      });
+      html += `</tbody></table></div>`;
+      return html;
+    }
+
+    function renderMetas(label, data){
+      const metas = Array.isArray(data) ? data : (Array.isArray(data.metas) ? data.metas : []);
+      if (metas.length === 0){
+        return `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>
+          <p class="prep-empty">El cliente no registró metas.</p></div>`;
+      }
+      let html = `<div class="mod-detail"><h5>${escapeHtml(label)} (${metas.length})</h5>
+        <table><thead><tr><th>Meta</th><th>Plazo</th><th class="num">Monto</th></tr></thead><tbody>`;
+      metas.forEach(m => {
+        html += `<tr>
+          <td>${escapeHtml(m.nombre || m.name || "—")}</td>
+          <td>${escapeHtml(m.plazo || m.anio || m.year || "—")}</td>
+          <td class="num">${m.monto != null ? fmtCOP(m.monto) : "—"}</td>
+        </tr>`;
+      });
+      html += `</tbody></table></div>`;
+      return html;
+    }
+
+    function renderAhorro(label, data){
+      const objetivos = Array.isArray(data.objetivos_ahorro) ? data.objetivos_ahorro : (Array.isArray(data) ? data : []);
+      let html = `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>`;
+      if (data.cupos_disponibles != null){
+        html += `<p style="margin:0 0 10px;">Cupos disponibles: <strong>${fmtCOP(data.cupos_disponibles)}</strong></p>`;
+      }
+      if (objetivos.length > 0){
+        html += `<table><thead><tr><th>Objetivo</th><th class="num">Monto</th></tr></thead><tbody>`;
+        objetivos.forEach(o => {
+          html += `<tr><td>${escapeHtml(o.nombre || o.name || "—")}</td><td class="num">${fmtCOP(o.monto || o.valor || 0)}</td></tr>`;
+        });
+        html += `</tbody></table>`;
+      } else if (data.cupos_disponibles == null){
+        html += `<p class="prep-empty">Sin datos.</p>`;
+      }
+      html += `</div>`;
+      return html;
+    }
+
+    function renderGenerico(label, data){
+      // Fallback: mostrar JSON formateado
+      return `<div class="mod-detail">
+        <h5>${escapeHtml(label)}</h5>
+        <p style="font-size:12px;color:var(--muted);margin:0 0 8px;">Vista genérica (sin renderer dedicado para este módulo).</p>
+        <pre style="font-size:12px;background:#fff;padding:12px;border:1px solid var(--border);border-radius:4px;overflow:auto;max-height:300px;">${escapeHtml(JSON.stringify(data, null, 2))}</pre>
+      </div>`;
     }
     // ──────────────────────────────────────────────────────────
 
