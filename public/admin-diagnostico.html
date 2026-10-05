@@ -1464,8 +1464,16 @@
       if (contratos.length === 0){
         html += `<p class="prep-empty">Módulo activado pero sin contratos registrados.</p>`;
       } else {
+        // Chequear si algún contrato está sin clasificar
+        const sinClasificar = contratos.filter(c => !c.claseIngreso).length;
+        if (sinClasificar > 0){
+          html += `<p style="background:#fff7ed;border-left:3px solid var(--warning);padding:10px 12px;border-radius:0 4px 4px 0;font-size:12px;color:var(--ink);margin:0 0 12px;">
+            ⚠ <strong>${sinClasificar} contrato${sinClasificar>1?'s':''} sin clasificar fiscalmente.</strong> El cliente debe asignar una clase de ingreso (honorarios, servicios, rentas de trabajo, etc.) para que el perfil fiscal sea correcto.
+          </p>`;
+        }
+
         html += `<p style="font-size:12px;color:var(--muted);margin:0 0 6px;">Contratos registrados (${contratos.length}) — contexto histórico</p>
-          <table><thead><tr><th>Contrato</th><th class="num">Promedio ingresos</th><th class="num">Promedio costos</th><th class="num">Flujo neto promedio</th></tr></thead><tbody>`;
+          <table><thead><tr><th>Contrato</th><th>Clase fiscal</th><th class="num">Promedio ingresos</th><th class="num">Promedio costos</th><th class="num">Flujo neto promedio</th></tr></thead><tbody>`;
         let totalProm = 0;
         contratos.forEach(c => {
           const meses = Array.isArray(c.meses) ? c.meses : [];
@@ -1475,14 +1483,18 @@
           const promIng = mesesConDatos.length > 0 ? sumIng / mesesConDatos.length : 0;
           const promCos = mesesConDatos.length > 0 ? sumCos / mesesConDatos.length : 0;
           totalProm += (promIng - promCos);
+          const clase = c.claseIngreso
+            ? `<span class="cat-tag">${escapeHtml(c.claseIngreso)}</span>`
+            : `<span style="color:var(--warning);font-size:11px;font-style:italic;">sin clasificar</span>`;
           html += `<tr>
             <td>${escapeHtml(c.nombre || c.cliente || "Contrato")}</td>
+            <td>${clase}</td>
             <td class="num">${fmtCOP(promIng)}</td>
             <td class="num">${fmtCOP(promCos)}</td>
             <td class="num">${fmtCOP(promIng - promCos)}</td>
           </tr>`;
         });
-        html += `<tfoot><tr><td colspan="3">Flujo neto promedio total (todos los contratos)</td><td class="num">${fmtCOP(totalProm)}</td></tr></tfoot></tbody></table>
+        html += `<tfoot><tr><td colspan="4">Flujo neto promedio total (todos los contratos)</td><td class="num">${fmtCOP(totalProm)}</td></tr></tfoot></tbody></table>
           <p style="font-size:11px;color:var(--muted);margin:8px 0 0;font-style:italic;">El salario personal (arriba) es el ingreso efectivo mensual del cliente; los promedios de contratos son contexto histórico.</p>`;
       }
       html += `</div>`;
@@ -1617,18 +1629,41 @@
     }
 
     function renderMetas(label, data){
-      const metas = Array.isArray(data) ? data : (Array.isArray(data.metas) ? data.metas : []);
-      if (metas.length === 0){
-        return `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>
-          <p class="prep-empty">El cliente no registró metas.</p></div>`;
+      // La estructura real es {seeded, items: [...], proy: {...}}
+      // Cada item: {nombre, objetivo, fecha(YYYY-MM), fuente, saldoManual, aporte}
+      const items = Array.isArray(data.items) ? data.items
+                  : Array.isArray(data) ? data
+                  : (Array.isArray(data.metas) ? data.metas : []);
+      let html = `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>`;
+
+      // Parámetros de proyección (si existen)
+      if (data.proy && typeof data.proy === "object"){
+        const p = data.proy;
+        const proyLines = [];
+        if (p.rendimiento != null) proyLines.push("Rendimiento esperado: <strong>" + p.rendimiento + "%</strong>");
+        if (p.anios != null) proyLines.push("Horizonte: <strong>" + p.anios + " años</strong>");
+        if (p.inicialOverride != null) proyLines.push("Capital inicial: <strong>" + fmtCOP(p.inicialOverride) + "</strong>");
+        if (p.aporteOverride != null) proyLines.push("Aporte mensual: <strong>" + fmtCOP(p.aporteOverride) + "</strong>");
+        if (proyLines.length > 0){
+          html += `<p style="font-size:13px;margin:0 0 12px;">${proyLines.join(" · ")}</p>`;
+        }
       }
-      let html = `<div class="mod-detail"><h5>${escapeHtml(label)} (${metas.length})</h5>
-        <table><thead><tr><th>Meta</th><th>Plazo</th><th class="num">Monto</th></tr></thead><tbody>`;
-      metas.forEach(m => {
+
+      if (items.length === 0){
+        html += `<p class="prep-empty">El cliente no registró metas puntuales.</p></div>`;
+        return html;
+      }
+
+      html += `<p style="font-size:12px;color:var(--muted);margin:12px 0 6px;">Metas registradas (${items.length})</p>
+        <table><thead><tr><th>Meta</th><th>Fecha objetivo</th><th>Fuente</th><th class="num">Objetivo</th><th class="num">Saldo actual</th><th class="num">Aporte mensual</th></tr></thead><tbody>`;
+      items.forEach(m => {
         html += `<tr>
-          <td>${escapeHtml(m.nombre || m.name || "—")}</td>
-          <td>${escapeHtml(m.plazo || m.anio || m.year || "—")}</td>
-          <td class="num">${m.monto != null ? fmtCOP(m.monto) : "—"}</td>
+          <td>${escapeHtml(m.nombre || "—")}</td>
+          <td>${escapeHtml(m.fecha || "—")}</td>
+          <td>${m.fuente ? '<span class="cat-tag">'+escapeHtml(m.fuente)+'</span>' : '<span style="color:var(--muted);">—</span>'}</td>
+          <td class="num">${m.objetivo != null ? fmtCOP(m.objetivo) : "—"}</td>
+          <td class="num">${m.saldoManual != null ? fmtCOP(m.saldoManual) : "—"}</td>
+          <td class="num">${m.aporte != null ? fmtCOP(m.aporte) : "—"}</td>
         </tr>`;
       });
       html += `</tbody></table></div>`;
@@ -1636,19 +1671,33 @@
     }
 
     function renderAhorro(label, data){
-      const objetivos = Array.isArray(data.objetivos_ahorro) ? data.objetivos_ahorro : (Array.isArray(data) ? data : []);
+      // La estructura real es {objetivos_ahorro: [...], cupos_disponibles}
+      // Cada objetivo: {nombre, monto_mensual, precaucion}
+      const objetivos = Array.isArray(data.objetivos_ahorro) ? data.objetivos_ahorro
+                      : (Array.isArray(data) ? data : []);
       let html = `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>`;
       if (data.cupos_disponibles != null){
-        html += `<p style="margin:0 0 10px;">Cupos disponibles: <strong>${fmtCOP(data.cupos_disponibles)}</strong></p>`;
+        html += `<p style="margin:0 0 10px;font-size:13px;">Cupos de crédito disponibles (respaldo de emergencia): <strong>${fmtCOP(data.cupos_disponibles)}</strong></p>`;
       }
       if (objetivos.length > 0){
-        html += `<table><thead><tr><th>Objetivo</th><th class="num">Monto</th></tr></thead><tbody>`;
+        html += `<p style="font-size:12px;color:var(--muted);margin:12px 0 6px;">Objetivos de ahorro mensual (${objetivos.length})</p>
+          <table><thead><tr><th>Objetivo</th><th class="num">Aporte mensual</th><th class="num">Sugerido</th><th>Marcado como precaución</th></tr></thead><tbody>`;
+        let total = 0;
         objetivos.forEach(o => {
-          html += `<tr><td>${escapeHtml(o.nombre || o.name || "—")}</td><td class="num">${fmtCOP(o.monto || o.valor || 0)}</td></tr>`;
+          const m = o.monto_mensual != null ? o.monto_mensual : (o.monto || o.valor || 0);
+          total += m;
+          html += `<tr>
+            <td>${escapeHtml(o.nombre || "—")}</td>
+            <td class="num">${fmtCOP(m)}</td>
+            <td class="num">${o.sugerido != null ? fmtCOP(o.sugerido) : "—"}</td>
+            <td>${o.precaucion ? '<span class="cat-tag">Sí</span>' : '<span style="color:var(--muted);">—</span>'}</td>
+          </tr>`;
         });
-        html += `</tbody></table>`;
+        html += `<tfoot><tr><td>Total ahorro mensual</td><td class="num">${fmtCOP(total)}</td><td colspan="2"></td></tr></tfoot></tbody></table>`;
       } else if (data.cupos_disponibles == null){
         html += `<p class="prep-empty">Sin datos.</p>`;
+      } else {
+        html += `<p class="prep-empty">El cliente registró cupos pero no definió objetivos de ahorro mensual.</p>`;
       }
       html += `</div>`;
       return html;
