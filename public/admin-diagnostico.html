@@ -1307,10 +1307,25 @@ Preguntas que Natalia puede hacer para validar o profundizar lo que ves en los d
             totalGeneral += sub;
             L.push(``, `### ${cat} (${items.length}) · ${fmtCOP(sub)}`);
             items.forEach(a => {
-              L.push(`- ${a.name || a.nombre || "—"} · ${a.subtype || "—"} · ${fmtCOP(a.value)}`);
+              const legal = a.legalStructure || "Propiedad Directa";
+              const legalTexto = (legal === "Otro" && a.legalStructureOtro) ? `Otro: ${a.legalStructureOtro}` : legal;
+              L.push(`- ${a.name || a.nombre || "—"} · ${a.subtype || "—"} · estructura legal: **${legalTexto}** · ${fmtCOP(a.value)}`);
             });
           });
           L.push(``, `**Total patrimonial: ${fmtCOP(totalGeneral)}**`);
+
+          // Resumen por estructura legal (clave para análisis sucesoral/fiscal)
+          const byLegal = {};
+          activos.forEach(a => {
+            const legal = a.legalStructure || "Propiedad Directa";
+            const key = (legal === "Otro" && a.legalStructureOtro) ? `Otro: ${a.legalStructureOtro}` : legal;
+            byLegal[key] = (byLegal[key] || 0) + (a.value || 0);
+          });
+          L.push(``, `### Resumen por estructura legal`);
+          Object.keys(byLegal).sort((a,b) => byLegal[b] - byLegal[a]).forEach(key => {
+            const pct = totalGeneral > 0 ? ((byLegal[key] / totalGeneral) * 100).toFixed(1) : "0";
+            L.push(`- **${key}**: ${fmtCOP(byLegal[key])} (${pct}% del patrimonio)`);
+          });
         }
       }
 
@@ -1983,17 +1998,43 @@ Preguntas que Natalia puede hacer para validar o profundizar lo que ves en los d
         const sub = items.reduce((s,a)=>s+(a.value||0),0);
         totalGeneral += sub;
         html += `<p style="font-size:12px;color:var(--muted);margin:12px 0 6px;">${escapeHtml(cat)} (${items.length})</p>
-          <table><thead><tr><th>Nombre</th><th>Subtipo</th><th class="num">Valor</th></tr></thead><tbody>`;
+          <table><thead><tr><th>Nombre</th><th>Subtipo</th><th>Estructura legal</th><th class="num">Valor</th></tr></thead><tbody>`;
         items.forEach(a => {
+          const legal = a.legalStructure || "Propiedad Directa";
+          const legalTexto = (legal === "Otro" && a.legalStructureOtro) ? `Otro: ${a.legalStructureOtro}` : legal;
+          const legalClass = legal === "Propiedad Directa" ? "cat-tag" : "cat-tag";
+          const legalStyle = legal !== "Propiedad Directa"
+            ? 'background:#eef4fb;color:var(--brand);font-weight:600;'
+            : 'background:#f3f4f6;color:var(--muted);';
           html += `<tr>
             <td>${escapeHtml(a.name || a.nombre || "—")}</td>
             <td><span class="cat-tag">${escapeHtml(a.subtype || "—")}</span></td>
+            <td><span class="${legalClass}" style="${legalStyle}">${escapeHtml(legalTexto)}</span></td>
             <td class="num">${fmtCOP(a.value)}</td>
           </tr>`;
         });
-        html += `<tfoot><tr><td colspan="2">Subtotal ${escapeHtml(cat)}</td><td class="num">${fmtCOP(sub)}</td></tr></tfoot></tbody></table>`;
+        html += `<tfoot><tr><td colspan="3">Subtotal ${escapeHtml(cat)}</td><td class="num">${fmtCOP(sub)}</td></tr></tfoot></tbody></table>`;
       });
-      html += `<p style="margin-top:14px;text-align:right;font-weight:600;color:var(--navy);">Total patrimonial: ${fmtCOP(totalGeneral)}</p></div>`;
+      html += `<p style="margin-top:14px;text-align:right;font-weight:600;color:var(--navy);">Total patrimonial: ${fmtCOP(totalGeneral)}</p>`;
+
+      // Resumen por estructura legal
+      const byLegal = {};
+      activos.forEach(a => {
+        const legal = a.legalStructure || "Propiedad Directa";
+        const key = (legal === "Otro" && a.legalStructureOtro) ? `Otro: ${a.legalStructureOtro}` : legal;
+        byLegal[key] = (byLegal[key] || 0) + (a.value || 0);
+      });
+      const legalKeys = Object.keys(byLegal).sort((a,b) => byLegal[b] - byLegal[a]);
+      if (legalKeys.length > 1 || (legalKeys.length === 1 && legalKeys[0] !== "Propiedad Directa")){
+        html += `<p style="font-size:12px;color:var(--muted);margin:16px 0 6px;">Resumen por estructura legal</p>
+          <table><thead><tr><th>Estructura</th><th class="num">Monto</th><th class="num">% del patrimonio</th></tr></thead><tbody>`;
+        legalKeys.forEach(k => {
+          const pct = totalGeneral > 0 ? ((byLegal[k] / totalGeneral) * 100).toFixed(1) : "0";
+          html += `<tr><td><strong>${escapeHtml(k)}</strong></td><td class="num">${fmtCOP(byLegal[k])}</td><td class="num">${pct}%</td></tr>`;
+        });
+        html += `</tbody></table>`;
+      }
+      html += `</div>`;
       return html;
     }
 
