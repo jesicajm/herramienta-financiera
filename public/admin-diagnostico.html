@@ -387,6 +387,87 @@
     }
     .prep-stub-link a:hover { text-decoration: underline; }
 
+    /* ─── Bloque IA Claude.ai (pre-sesión) ─── */
+    .ai-helper {
+      background: linear-gradient(135deg, #faf6ef 0%, #f6f3ec 100%);
+      border: 1px solid #e8dfc9;
+      border-radius: 8px;
+      padding: 18px 20px;
+      margin: 0 0 20px;
+    }
+    .ai-helper h4 {
+      margin: 0 0 6px;
+      font-size: 13px;
+      color: var(--navy);
+      font-weight: 600;
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .ai-helper .ai-desc {
+      font-size: 13px;
+      color: var(--ink);
+      margin: 0 0 14px;
+      line-height: 1.5;
+    }
+    .ai-helper .ai-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .ai-helper button {
+      background: #fff;
+      border: 1px solid var(--brand);
+      color: var(--brand);
+      padding: 9px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background 0.15s;
+    }
+    .ai-helper button:hover { background: var(--cream); }
+    .ai-helper button.btn-primary-ai {
+      background: var(--brand);
+      color: #fff;
+    }
+    .ai-helper button.btn-primary-ai:hover { background: var(--navy); }
+    .ai-helper details {
+      margin-top: 14px;
+      font-size: 12px;
+    }
+    .ai-helper summary {
+      cursor: pointer;
+      color: var(--muted);
+      user-select: none;
+      padding: 4px 0;
+    }
+    .ai-helper summary:hover { color: var(--brand); }
+    .ai-helper pre {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 12px;
+      font-size: 11px;
+      line-height: 1.5;
+      max-height: 320px;
+      overflow: auto;
+      white-space: pre-wrap;
+      margin: 8px 0 0;
+      color: var(--ink);
+      font-family: 'SF Mono', Monaco, 'Cascadia Mono', monospace;
+    }
+    .ai-helper .ai-toast {
+      display: inline-block;
+      margin-left: 10px;
+      font-size: 12px;
+      color: var(--success);
+      font-weight: 500;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .ai-helper .ai-toast.show { opacity: 1; }
+
     .card-details {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -1111,6 +1192,244 @@
       window.open(url, "_blank");
     });
 
+    // ═══ Prompt pre-sesión para Claude.ai ═══════════════════════
+    const PROMPT_PRE_SESION = `# Rol
+Sos Claude, asistiendo a Jessica, operadora de ABBA Patrimonial (Colombia). Te paso los datos de un cliente que acaba de pagar su sesión de diagnóstico patrimonial con Natalia Jaramillo. Tu tarea es armar el DOCUMENTO DE PREPARACIÓN que Natalia leerá 10 minutos antes de la reunión.
+
+# Objetivo del documento
+Que Natalia llegue a la reunión con los riesgos cuantificados, preguntas afiladas y un plan de acción tentativo alineado a los servicios de ABBA. Natalia profundiza y ajusta durante la reunión; este documento le baja la carga cognitiva, no la reemplaza.
+
+# Tono y estilo
+- Español colombiano, tuteo cercano profesional.
+- Directo, sin relleno. Natalia tiene 10 minutos para leer.
+- Datos SIEMPRE cuantificados en pesos colombianos (COP).
+- Sin consejos genéricos de educación financiera.
+
+# Secciones requeridas (en este orden exacto)
+
+## 1. Lectura rápida de la situación (máx 5 líneas)
+Resumen de quién es el cliente, su situación actual y lo que trae a la sesión (su motivo).
+
+## 2. Riesgos cuantificados (3 a 5)
+Formato por riesgo: **[Nombre del riesgo] — $X** · Explicación en 1-2 líneas de por qué y cómo lo detectaste de los datos.
+Ejemplos de riesgos típicos a buscar: UGPP, concentración patrimonial, falta de liquidez, exposición cambiaria, protección sucesoral, carga fiscal subóptima, mezcla personal-empresarial, dependencia de un solo cliente/contrato, sin fondo de emergencia suficiente.
+
+## 3. Preguntas sugeridas para profundizar (3 a 5)
+Preguntas que Natalia puede hacer para validar o profundizar lo que ves en los datos. Específicas, no genéricas.
+
+## 4. Plan de acción tentativo alineado a servicios de ABBA
+3 a 5 pasos recomendados en orden de prioridad, cada uno con una línea de justificación. Si aplica, mencioná qué servicio de ABBA encaja (estructuración patrimonial, optimización fiscal, protección sucesoral, planeación de retiro, estructura de ingresos, etc.).
+
+# Datos del cliente
+<PEGÁ EL CONTEXTO DESCARGADO DEL PANEL A CONTINUACIÓN>`;
+
+    // ═══ Generador de contexto markdown para Claude.ai ═══════════
+    function generarContextoMarkdown(clientName, perfil, modulos, sessionMeta){
+      const L = [];
+      L.push(`# Contexto del cliente: ${clientName || "—"}`);
+      if (sessionMeta && sessionMeta.sessionStart){
+        L.push(`Sesión programada: ${fmt({ toDate: () => new Date(sessionMeta.sessionStart) })}`);
+      }
+      if (sessionMeta && sessionMeta.motivo){
+        L.push(``);
+        L.push(`## Motivo del cliente (texto escrito al reservar)`);
+        L.push(`> ${sessionMeta.motivo}`);
+      }
+
+      // Perfil
+      L.push(``, `## Perfil`);
+      L.push(`- Nombre: ${perfil.nombre || "—"}`);
+      L.push(`- Email: ${perfil.email || "—"}`);
+      L.push(`- Edad: ${perfil.edad != null ? perfil.edad + " años" : "—"}`);
+      L.push(`- Edad de retiro deseada: ${perfil.edadRetiro != null ? perfil.edadRetiro + " años" : "—"}`);
+      L.push(`- Tipo de ingreso declarado: ${perfil.tipoIngreso || "—"}`);
+      L.push(`- Moneda: ${perfil.moneda || "COP"}`);
+      if (perfil.dependientes != null) L.push(`- Dependientes: ${perfil.dependientes}`);
+
+      // Ingresos y gastos
+      const ig = modulos.ingresos_gastos;
+      const varInc = modulos.ingresos_variables;
+      if (ig){
+        L.push(``, `## Ingresos y gastos (módulo 1)`);
+        if (ig.tipoIngreso) L.push(`- Tipo de ingreso en M1: ${ig.tipoIngreso}`);
+        if (ig.tieneEmpleadosArt336) L.push(`- Tiene empleados (art. 336): sí`);
+        const fuentes = Array.isArray(ig.fuentes_ingreso) ? ig.fuentes_ingreso : [];
+        if (fuentes.length > 0){
+          L.push(``, `### Fuentes de ingreso fijo`);
+          fuentes.forEach(f => {
+            L.push(`- ${f.nombre || "—"}: ${fmtCOP(f.monto)}/mes${f.claseIngreso ? ' · clase fiscal: **' + f.claseIngreso + '**' : ' · *sin clasificar*'}`);
+          });
+          const totalFijos = fuentes.reduce((s,f)=>s+(+f.monto||0),0);
+          L.push(`- **Total ingresos fijos: ${fmtCOP(totalFijos)}/mes**`);
+        }
+        const gastos = ig.gastos || {};
+        const labels = ig.gastosLabels || {};
+        const gKeys = Object.keys(gastos).filter(k => (gastos[k]||0) > 0);
+        if (gKeys.length > 0){
+          L.push(``, `### Gastos mensuales por categoría`);
+          gKeys.sort((a,b) => (gastos[b]||0) - (gastos[a]||0));
+          gKeys.forEach(k => L.push(`- ${labels[k] || k}: ${fmtCOP(gastos[k])}`));
+          L.push(`- **Total gastos: ${fmtCOP(ig.total_gastos || gKeys.reduce((s,k)=>s+(gastos[k]||0),0))}/mes**`);
+        }
+      }
+      if (varInc && varInc.active){
+        L.push(``, `## Ingresos variables (módulo propio)`);
+        if (varInc.salarioPersonal > 0){
+          L.push(`- **Salario personal mensual: ${fmtCOP(varInc.salarioPersonal)}** (${varInc.salarioOverride ? 'fijado por el cliente' : 'sugerido por el sistema'})`);
+        }
+        if (varInc.fondoActual != null) L.push(`- Fondo de estabilización actual: ${fmtCOP(varInc.fondoActual)}`);
+        const contratos = Array.isArray(varInc.contratos) ? varInc.contratos : [];
+        if (contratos.length > 0){
+          L.push(`- Contratos registrados: ${contratos.length}`);
+          contratos.forEach((c, i) => {
+            const meses = Array.isArray(c.meses) ? c.meses.filter(m => (+m.ingresos||0)>0 || (+m.costos||0)>0) : [];
+            const promIng = meses.length > 0 ? meses.reduce((s,m)=>s+(+m.ingresos||0),0)/meses.length : 0;
+            const promCos = meses.length > 0 ? meses.reduce((s,m)=>s+(+m.costos||0),0)/meses.length : 0;
+            L.push(`  - Contrato ${i+1}: ${c.nombre || c.cliente || "s/n"} · clase fiscal: **${c.claseIngreso || 'SIN CLASIFICAR'}** · promedio ingresos ${fmtCOP(promIng)}/mes · promedio costos ${fmtCOP(promCos)}/mes`);
+          });
+        }
+      }
+
+      // Mapa patrimonial
+      const act = modulos.activos;
+      if (act){
+        const activos = Array.isArray(act.activos) ? act.activos : [];
+        L.push(``, `## Mapa patrimonial (${activos.length} activos)`);
+        if (activos.length === 0){
+          L.push(`- *El cliente abrió el módulo pero no registró activos.*`);
+        } else {
+          const byCat = {};
+          activos.forEach(a => { const c = a.category || "Otros"; (byCat[c] = byCat[c] || []).push(a); });
+          let totalGeneral = 0;
+          Object.keys(byCat).forEach(cat => {
+            const items = byCat[cat];
+            const sub = items.reduce((s,a)=>s+(a.value||0),0);
+            totalGeneral += sub;
+            L.push(``, `### ${cat} (${items.length}) · ${fmtCOP(sub)}`);
+            items.forEach(a => {
+              L.push(`- ${a.name || a.nombre || "—"} · ${a.subtype || "—"} · ${fmtCOP(a.value)}`);
+            });
+          });
+          L.push(``, `**Total patrimonial: ${fmtCOP(totalGeneral)}**`);
+        }
+      }
+
+      // Deudas
+      const deu = modulos.endeudamiento;
+      if (deu){
+        const deudas = Array.isArray(deu.deudas) ? deu.deudas : [];
+        L.push(``, `## Endeudamiento (${deudas.length} deudas)`);
+        if (deudas.length === 0){
+          L.push(`- El cliente no tiene deudas registradas.`);
+        } else {
+          let total = 0;
+          deudas.forEach(d => {
+            const saldo = d.saldo || d.monto || 0;
+            total += saldo;
+            L.push(`- ${d.nombre || d.name || "—"} · ${d.tipo || d.type || "—"} · saldo ${fmtCOP(saldo)}${d.cuota ? ' · cuota mensual ' + fmtCOP(d.cuota) : ''}`);
+          });
+          L.push(``, `**Total deuda: ${fmtCOP(total)}**`);
+        }
+      }
+
+      // Ahorro
+      const aho = modulos.ahorro;
+      if (aho){
+        const objetivos = Array.isArray(aho.objetivos_ahorro) ? aho.objetivos_ahorro : [];
+        L.push(``, `## Ahorro`);
+        if (aho.cupos_disponibles != null) L.push(`- Cupos de crédito disponibles (respaldo): ${fmtCOP(aho.cupos_disponibles)}`);
+        if (objetivos.length > 0){
+          objetivos.forEach(o => {
+            const m = o.monto_mensual != null ? o.monto_mensual : (o.monto || o.valor || 0);
+            L.push(`- ${o.nombre || "—"}: ${fmtCOP(m)}/mes${o.precaucion ? ' · marcado como precaución' : ''}`);
+          });
+        }
+      }
+
+      // Metas
+      const metas = modulos.metas;
+      if (metas){
+        const items = Array.isArray(metas.items) ? metas.items : [];
+        L.push(``, `## Metas`);
+        if (metas.proy){
+          const p = metas.proy;
+          L.push(`- Rendimiento esperado: ${p.rendimiento || "—"}% · horizonte: ${p.anios || "—"} años`);
+        }
+        if (items.length === 0){
+          L.push(`- *El cliente no registró metas puntuales.*`);
+        } else {
+          items.forEach(m => {
+            L.push(`- ${m.nombre || "—"} · fecha: ${m.fecha || "—"} · fuente: ${m.fuente || "—"} · objetivo: ${m.objetivo != null ? fmtCOP(m.objetivo) : "—"} · saldo actual: ${m.saldoManual != null ? fmtCOP(m.saldoManual) : "—"} · aporte mensual: ${m.aporte != null ? fmtCOP(m.aporte) : "—"}`);
+          });
+        }
+      }
+
+      // Fiscal
+      const fis = modulos.fiscal;
+      if (fis){
+        L.push(``, `## Perfil fiscal`);
+        Object.keys(fis).forEach(k => {
+          const v = fis[k];
+          if (v == null || typeof v === "object") return;
+          const vs = typeof v === "boolean" ? (v ? "sí" : "no") : String(v);
+          L.push(`- ${k}: ${vs}`);
+        });
+      }
+
+      // Presupuesto anual (resumido)
+      const pres = modulos.presupuesto_anual;
+      if (pres){
+        L.push(``, `## Presupuesto anual (resumido)`);
+        if (pres.ingMensual != null) L.push(`- Ingreso mensual declarado: ${fmtCOP(pres.ingMensual)}`);
+        if (pres.deuMensual != null) L.push(`- Cuota de deuda mensual: ${fmtCOP(pres.deuMensual)}`);
+        if (pres.fondoProvisiones != null) L.push(`- Fondo de provisiones: ${fmtCOP(pres.fondoProvisiones)}`);
+      }
+
+      L.push(``, `---`, `*Generado automáticamente desde el panel admin de ABBA Patrimonial · ${new Date().toLocaleString('es-CO', {timeZone:'America/Bogota'})}*`);
+      return L.join("\n");
+    }
+
+    function descargarArchivo(nombre, contenido, mime){
+      const blob = new Blob([contenido], { type: (mime || 'text/plain') + ';charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = nombre;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    async function copiarAlClipboard(texto){
+      try {
+        await navigator.clipboard.writeText(texto);
+        return true;
+      } catch(e){
+        // Fallback para navegadores sin permiso de clipboard
+        const t = document.createElement('textarea');
+        t.value = texto;
+        t.style.position = 'fixed';
+        t.style.opacity = '0';
+        document.body.appendChild(t);
+        t.select();
+        try { document.execCommand('copy'); } catch(_){}
+        document.body.removeChild(t);
+        return true;
+      }
+    }
+
+    function flashAiToast(id, texto){
+      const t = document.getElementById(id);
+      if (!t) return;
+      t.textContent = texto || "✓ Copiado";
+      t.classList.add("show");
+      setTimeout(() => t.classList.remove("show"), 1800);
+    }
+
+    // Datos actuales para los botones de IA (perfil, modulos, nombre, meta)
+    let currentPrepData = { clientName: '', perfil: {}, modulos: {}, sessionMeta: {} };
+
     // Nombres bonitos de módulos para mostrar al humano
     const MODULE_LABELS = {
       ingresos_gastos: "Ingresos y gastos",
@@ -1143,24 +1462,58 @@
       currentPrepModulos = {};
 
       try {
-        // Leer perfil + lista de módulos en paralelo
-        const [perfilSnap, modulosSnap] = await Promise.all([
+        // Leer sesión + perfil + lista de módulos en paralelo
+        const [sessionSnap, perfilSnap, modulosSnap] = await Promise.all([
+          getDoc(doc(db, "diagnostico_sessions", sessionId)),
           getDoc(doc(db, "clientes", linkedUid)),
           getDocs(collection(db, "clientes", linkedUid, "modulos")),
         ]);
         const perfil = perfilSnap.exists() ? perfilSnap.data() : {};
+        const sessionData = sessionSnap.exists() ? sessionSnap.data() : {};
         const modulos = {};
         modulosSnap.forEach(m => { modulos[m.id] = m.data(); });
         currentPrepModulos = modulos;
+        currentPrepData = {
+          clientName: clientName || perfil.nombre || "cliente",
+          perfil: perfil,
+          modulos: modulos,
+          sessionMeta: {
+            sessionStart: sessionStartIso,
+            motivo: sessionData.client_motivo || "",
+            sessionId: sessionId,
+          },
+        };
 
         prepBody.innerHTML = buildPrepHtml(perfil, modulos);
         bindModChipClicks();
+        bindAiHelperButtons();
       } catch(err){
         console.error("[prep] Error cargando datos:", err);
         prepBody.innerHTML = `<p class="prep-empty" style="color:var(--alert);">
           No pudimos cargar los datos del cliente. ${escapeHtml(err.message || "")}
         </p>`;
       }
+    }
+
+    function bindAiHelperButtons(){
+      const btnDl = document.getElementById("btn-download-prep-context");
+      const btnCopyPrompt = document.getElementById("btn-copy-prep-prompt");
+      const btnCopyAll = document.getElementById("btn-copy-prep-all");
+      if (btnDl) btnDl.addEventListener("click", () => {
+        const md = generarContextoMarkdown(currentPrepData.clientName, currentPrepData.perfil, currentPrepData.modulos, currentPrepData.sessionMeta);
+        const safeName = (currentPrepData.clientName || "cliente").replace(/[^a-zA-Z0-9]+/g, "_").toLowerCase();
+        descargarArchivo(`contexto_${safeName}.md`, md, "text/markdown");
+        flashAiToast("ai-toast-dl", "✓ Descargado");
+      });
+      if (btnCopyPrompt) btnCopyPrompt.addEventListener("click", async () => {
+        await copiarAlClipboard(PROMPT_PRE_SESION);
+        flashAiToast("ai-toast-prompt", "✓ Prompt copiado");
+      });
+      if (btnCopyAll) btnCopyAll.addEventListener("click", async () => {
+        const md = generarContextoMarkdown(currentPrepData.clientName, currentPrepData.perfil, currentPrepData.modulos, currentPrepData.sessionMeta);
+        await copiarAlClipboard(PROMPT_PRE_SESION.replace("<PEGÁ EL CONTEXTO DESCARGADO DEL PANEL A CONTINUACIÓN>", md));
+        flashAiToast("ai-toast-all", "✓ Prompt + contexto copiados");
+      });
     }
 
     // Chips clickeables → expanden detalle del módulo abajo
@@ -1187,6 +1540,36 @@
 
     function buildPrepHtml(perfil, modulos) {
       const parts = [];
+
+      // ── Bloque helper para Claude.ai (pre-sesión)
+      parts.push(`
+        <section class="ai-helper">
+          <h4>🤖 Preparar documento de sesión con Claude.ai</h4>
+          <p class="ai-desc">
+            Jessica: descargá el contexto estructurado del cliente y copiá el prompt. Pegalos en <a href="https://claude.ai" target="_blank" style="color:var(--brand);">claude.ai</a> para que Claude arme el documento que Natalia leerá antes de la reunión (lectura rápida, riesgos cuantificados, preguntas sugeridas, plan de acción).
+          </p>
+          <div class="ai-actions">
+            <button type="button" id="btn-copy-prep-all" class="btn-primary-ai">
+              ⚡ Copiar prompt + contexto en 1 clic
+            </button>
+            <span class="ai-toast" id="ai-toast-all"></span>
+          </div>
+          <div class="ai-actions" style="margin-top:10px;">
+            <button type="button" id="btn-download-prep-context">
+              📥 Descargar contexto (.md)
+            </button>
+            <span class="ai-toast" id="ai-toast-dl"></span>
+            <button type="button" id="btn-copy-prep-prompt">
+              📋 Copiar solo el prompt
+            </button>
+            <span class="ai-toast" id="ai-toast-prompt"></span>
+          </div>
+          <details>
+            <summary>Ver prompt completo</summary>
+            <pre>${escapeHtml(PROMPT_PRE_SESION)}</pre>
+          </details>
+        </section>
+      `);
 
       // ── Perfil del cliente
       const perfilRows = [
