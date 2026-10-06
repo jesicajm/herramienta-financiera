@@ -1068,17 +1068,17 @@ async function hasCompletedDiagnostico(sessionData) {
 //  onClientModulesWritten — Trigger de notificación a Jessica
 //
 //  Se dispara cuando el cliente escribe en clientes/{uid}/modulos/{nombre}.
-//  Si tiene los 3 módulos mínimos (ingresos_gastos + fiscal + activos),
-//  busca una sesión confirmada vinculada que todavía NO haya recibido
-//  la notificación, envía email a Jessica y marca el campo para no
-//  re-enviar.
+//  Si tiene los 2 módulos mínimos (ingresos_gastos + fiscal), busca
+//  una sesión confirmada vinculada que todavía NO haya recibido la
+//  notificación, envía email a Jessica y marca el campo para no re-enviar.
 //
 //  Módulos mínimos: ingresos_gastos (perfil de ingresos y gastos),
-//    fiscal (perfil tributario), activos (donde se declara estructura
-//    legal por activo). No dependen de si el cliente tiene o no
-//    activos/deudas — basta con que haya abierto y guardado el módulo.
+//    fiscal (perfil tributario, incluye el bloque LEGAL — estado civil,
+//    régimen conyugal, hijos, cónyuge). "Activos" NO es mínimo porque
+//    el cliente puede no tener activos registrables (si tiene, la
+//    estructura legal se declara por activo adentro del módulo).
 // ─────────────────────────────────────────────────────────────────
-const MODULOS_MINIMOS = ["ingresos_gastos", "fiscal", "activos"];
+const MODULOS_MINIMOS = ["ingresos_gastos", "fiscal"];
 
 exports.onClientModulesWritten = onDocumentWritten(
   {
@@ -1165,7 +1165,7 @@ exports.onClientModulesWritten = onDocumentWritten(
           </div>
           <div style="background:#fff;border:1px solid #e5e7eb;border-top:0;padding:24px;border-radius:0 0 8px 8px;">
             <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">
-              <strong>${sesion.client_name}</strong> completó los módulos mínimos en la app (ingresos y gastos, fiscal y mapa patrimonial con estructura legal).
+              <strong>${sesion.client_name}</strong> completó los módulos mínimos en la app (ingresos y gastos + perfil fiscal con estructura legal).
             </p>
             <table style="width:100%;border-collapse:collapse;font-size:14px;margin:0 0 20px;">
               <tr><td style="padding:8px 12px;background:#f6f3ec;font-weight:600;">Cliente</td>

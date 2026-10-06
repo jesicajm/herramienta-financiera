@@ -1420,7 +1420,7 @@ Ejemplo del formato esperado:
         }
       }
 
-      // Fiscal
+      // Fiscal (incluye legal)
       const fis = modulos.fiscal;
       if (fis){
         L.push(``, `## Perfil fiscal`);
@@ -1430,6 +1430,21 @@ Ejemplo del formato esperado:
           const vs = typeof v === "boolean" ? (v ? "sí" : "no") : String(v);
           L.push(`- ${k}: ${vs}`);
         });
+        // Bloque LEGAL (estado civil, régimen conyugal, hijos, cónyuge, gasto familiar)
+        const legal = fis.legal;
+        if (legal && typeof legal === "object"){
+          L.push(``, `### Estructura legal (sucesoral)`);
+          if (legal.estadoCivil) L.push(`- Estado civil: **${legal.estadoCivil}**`);
+          if (legal.regimenConyugal) L.push(`- Régimen conyugal: ${legal.regimenConyugal}`);
+          if (legal.anioMatrimonioUnion) L.push(`- Año matrimonio/unión: ${legal.anioMatrimonioUnion}`);
+          if (legal.nombreConyuge) L.push(`- Nombre cónyuge: ${legal.nombreConyuge}`);
+          const totalDep = (+legal.hijosMenores||0) + (+legal.hijosMayoresDependientes||0) + (+legal.otrosDependientes||0);
+          if (legal.hijosMenores != null) L.push(`- Hijos menores: ${legal.hijosMenores}`);
+          if (legal.hijosMayoresDependientes != null) L.push(`- Hijos mayores dependientes: ${legal.hijosMayoresDependientes}`);
+          if (legal.otrosDependientes != null) L.push(`- Otros dependientes: ${legal.otrosDependientes}`);
+          if (totalDep > 0) L.push(`- **Total dependientes: ${totalDep}**`);
+          if (legal.gastoMensualFamilia != null) L.push(`- Gasto mensual familia: ${fmtCOP(legal.gastoMensualFamilia)}`);
+        }
       }
 
       // Presupuesto anual (resumido)
@@ -2104,6 +2119,7 @@ Ejemplo del formato esperado:
 
     function renderFiscal(label, data){
       // El módulo fiscal tiene estructura variable; mostramos los campos top-level legibles
+      // + un bloque dedicado para fiscal.legal (estado civil, régimen, dependientes, cónyuge).
       const rows = [];
       const human = {
         tipoContribuyente: "Tipo contribuyente",
@@ -2120,16 +2136,46 @@ Ejemplo del formato esperado:
         const valStr = typeof v === "boolean" ? (v ? "Sí" : "No") : String(v);
         rows.push([lbl, valStr]);
       });
-      if (rows.length === 0){
-        return `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>
-          <p class="prep-empty">El cliente abrió el módulo pero aún no ingresó datos planos. Revisá en Firestore si necesitás ver estructuras complejas.</p></div>`;
+
+      let html = `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>`;
+
+      // Campos planos (si existen)
+      if (rows.length > 0){
+        html += `<p style="font-size:12px;color:var(--muted);margin:0 0 6px;">Perfil tributario</p><table><tbody>`;
+        rows.forEach(([l,v]) => {
+          html += `<tr><td style="color:var(--muted);width:40%;">${escapeHtml(l)}</td><td>${escapeHtml(v)}</td></tr>`;
+        });
+        html += `</tbody></table>`;
       }
-      let html = `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>
-        <table><tbody>`;
-      rows.forEach(([l,v]) => {
-        html += `<tr><td style="color:var(--muted);width:40%;">${escapeHtml(l)}</td><td>${escapeHtml(v)}</td></tr>`;
-      });
-      html += `</tbody></table></div>`;
+
+      // Bloque LEGAL (si existe)
+      const legal = data.legal;
+      if (legal && typeof legal === "object"){
+        const legalRows = [];
+        if (legal.estadoCivil) legalRows.push(["Estado civil", legal.estadoCivil]);
+        if (legal.regimenConyugal) legalRows.push(["Régimen conyugal", legal.regimenConyugal]);
+        if (legal.anioMatrimonioUnion) legalRows.push(["Año matrimonio/unión", legal.anioMatrimonioUnion]);
+        if (legal.nombreConyuge) legalRows.push(["Nombre cónyuge", legal.nombreConyuge]);
+        const totalDep = (+legal.hijosMenores||0) + (+legal.hijosMayoresDependientes||0) + (+legal.otrosDependientes||0);
+        if (legal.hijosMenores != null) legalRows.push(["Hijos menores", legal.hijosMenores]);
+        if (legal.hijosMayoresDependientes != null) legalRows.push(["Hijos mayores dependientes", legal.hijosMayoresDependientes]);
+        if (legal.otrosDependientes != null) legalRows.push(["Otros dependientes", legal.otrosDependientes]);
+        if (totalDep > 0) legalRows.push(["Total dependientes", totalDep]);
+        if (legal.gastoMensualFamilia != null) legalRows.push(["Gasto mensual familia", fmtCOP(legal.gastoMensualFamilia)]);
+
+        if (legalRows.length > 0){
+          html += `<p style="font-size:12px;color:var(--muted);margin:16px 0 6px;">Estructura legal (sucesoral)</p><table><tbody>`;
+          legalRows.forEach(([l,v]) => {
+            html += `<tr><td style="color:var(--muted);width:40%;">${escapeHtml(l)}</td><td>${escapeHtml(v)}</td></tr>`;
+          });
+          html += `</tbody></table>`;
+        }
+      }
+
+      if (rows.length === 0 && (!legal || Object.keys(legal).length === 0)){
+        html += `<p class="prep-empty">El cliente abrió el módulo pero aún no ingresó datos planos.</p>`;
+      }
+      html += `</div>`;
       return html;
     }
 
