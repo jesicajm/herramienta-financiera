@@ -468,6 +468,108 @@
     }
     .ai-helper .ai-toast.show { opacity: 1; }
 
+    /* ─── Formulario post-sesión ─── */
+    .post-section {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px 22px;
+      margin: 0 0 18px;
+    }
+    .post-section h4 {
+      margin: 0 0 4px;
+      font-size: 13px;
+      color: var(--navy);
+      font-weight: 600;
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .post-section .section-hint {
+      margin: 0 0 14px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .post-field {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--ink);
+      margin: 14px 0 6px;
+      letter-spacing: 0.03em;
+    }
+    .post-input, .post-textarea, .post-select {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-size: 14px;
+      font-family: inherit;
+      color: var(--ink);
+      background: #fff;
+      box-sizing: border-box;
+    }
+    .post-textarea { resize: vertical; min-height: 70px; }
+    .post-input:focus, .post-textarea:focus, .post-select:focus {
+      outline: none;
+      border-color: var(--brand);
+    }
+    .post-punto {
+      background: #fafbfd;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 14px 16px;
+      margin: 10px 0;
+    }
+    .post-punto .punto-num {
+      display: inline-block;
+      width: 24px;
+      height: 24px;
+      line-height: 24px;
+      text-align: center;
+      background: var(--brand);
+      color: #fff;
+      border-radius: 50%;
+      font-size: 12px;
+      font-weight: 600;
+      margin-right: 8px;
+    }
+    .post-punto .punto-head {
+      font-size: 13px;
+      color: var(--navy);
+      font-weight: 600;
+      margin: 0 0 6px;
+    }
+    .post-save-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 20px;
+      background: var(--cream);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-top: 20px;
+    }
+    .post-save-status {
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .post-save-status.saved { color: var(--success); }
+    .post-save-status.error { color: var(--alert); }
+    .post-estado-badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      border-radius: 10px;
+      margin-left: 10px;
+    }
+    .post-estado-badge.borrador { background: #fff7ed; color: var(--warning); }
+    .post-estado-badge.enviado { background: #ecfdf5; color: var(--success); }
+
     .card-details {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -690,6 +792,27 @@
 
       <div id="msg-container"></div>
       <div id="cards" class="cards"></div>
+
+      <!-- Vista completa de POST-SESIÓN -->
+      <div id="post-view" style="display:none">
+        <div class="prep-view-header">
+          <div>
+            <h2 id="post-title">Post-sesión</h2>
+            <p class="prep-sub" id="post-subtitle">—</p>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <button class="btn-back" id="post-close">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <polyline points="15 18 9 12 15 6"/>
+              </svg>
+              Volver al panel
+            </button>
+          </div>
+        </div>
+        <div id="post-body">
+          <div class="prep-loader">Cargando…</div>
+        </div>
+      </div>
 
       <!-- Vista completa de preparación (reemplaza al modal) -->
       <div id="prep-view" style="display:none">
@@ -1061,26 +1184,48 @@
             }
             ${
               isConfirmed && !s.original_session_start
-                ? `<div class="card-actions">
+                ? (function(){
+                    const sessionStartMs = s.session_start && s.session_start.toDate ? s.session_start.toDate().getTime() : 0;
+                    const yaPasoLaSesion = sessionStartMs > 0 && sessionStartMs < Date.now();
+                    const sessionStartIso = s.session_start && s.session_start.toDate ? s.session_start.toDate().toISOString() : "";
+                    const postEstado = s.postSesion && s.postSesion.estado ? s.postSesion.estado : null;
+                    const postBtnLabel = postEstado === "enviado"
+                      ? "📝 Post-sesión (enviada)"
+                      : postEstado === "borrador"
+                        ? "📝 Post-sesión (borrador)"
+                        : "📝 Post-sesión";
+                    return `<div class="card-actions">
                      ${
                        isLinked
                          ? `<button class="btn btn-primary" data-action="prep"
                                    data-id="${id}"
                                    data-name="${escapeAttr(s.client_name || "")}"
                                    data-linked-uid="${escapeAttr(s.linked_user_uid)}"
-                                   data-session-start="${s.session_start && s.session_start.toDate ? s.session_start.toDate().toISOString() : ""}">
+                                   data-session-start="${sessionStartIso}">
                               Ver preparación
+                            </button>`
+                         : ""
+                     }
+                     ${
+                       isLinked && yaPasoLaSesion
+                         ? `<button class="btn btn-secondary" data-action="post"
+                                   data-id="${id}"
+                                   data-name="${escapeAttr(s.client_name || "")}"
+                                   data-linked-uid="${escapeAttr(s.linked_user_uid)}"
+                                   data-session-start="${sessionStartIso}">
+                              ${postBtnLabel}
                             </button>`
                          : ""
                      }
                      <button class="btn btn-secondary" data-action="reagendar"
                              data-id="${id}"
                              data-name="${escapeAttr(s.client_name || "")}"
-                             data-current="${s.session_start && s.session_start.toDate ? s.session_start.toDate().toISOString() : ""}"
+                             data-current="${sessionStartIso}"
                              data-reschedule-url="${escapeAttr(s.calendly_reschedule_url || "")}">
                        Reagendar
                      </button>
-                   </div>`
+                   </div>`;
+                  })()
                 : ""
             }
             ${
@@ -1109,6 +1254,14 @@
       });
       cardsContainer.querySelectorAll('[data-action="prep"]').forEach(btn => {
         btn.addEventListener("click", () => openPrepView(
+          btn.dataset.id,
+          btn.dataset.name,
+          btn.dataset.linkedUid,
+          btn.dataset.sessionStart
+        ));
+      });
+      cardsContainer.querySelectorAll('[data-action="post"]').forEach(btn => {
+        btn.addEventListener("click", () => openPostView(
           btn.dataset.id,
           btn.dataset.name,
           btn.dataset.linkedUid,
@@ -1263,6 +1416,62 @@ Ejemplo del formato esperado:
 
 # Datos del cliente
 <PEGÁ EL CONTEXTO DESCARGADO DEL PANEL A CONTINUACIÓN>`;
+
+    // ═══ Prompt post-sesión para Claude.ai ═══════════════════════
+    const PROMPT_POST_SESION = `# Rol
+Sos Claude, asistiendo a Jessica (ABBA Patrimonial, Colombia). Natalia Jaramillo acaba de terminar una sesión de diagnóstico patrimonial con un cliente. Te paso la TRANSCRIPCIÓN de la reunión + el CONTEXTO del cliente (datos de la app). Tu tarea es generar el borrador del correo post-sesión que Jessica revisará y mandará al cliente firmado por Natalia.
+
+# Objetivo
+Que el cliente reciba un correo que (1) demuestra que fue escuchado, (2) le entrega 3 hallazgos accionables de alto valor, (3) le propone un camino concreto con precio para seguir trabajando con ABBA.
+
+# Tono y estilo
+- Español colombiano, tuteo cercano profesional (tú/tienes/puedes, no vos).
+- Sin em-dashes (—). Usá punto, coma, dos puntos.
+- Directo, honesto. Nada de relleno motivacional genérico.
+- Montos SIEMPRE en pesos colombianos (COP).
+- Mantener la voz de Natalia: sabe lo que hace, no sobrevende.
+
+# Menú de servicios de ABBA (recordatorio de precios)
+
+- **Camino A — Diseño Patrimonial autogenerado · $480.000 COP**
+- **Camino B — Diseño Patrimonial validado con Natalia · $2.000.000-$4.000.000 COP**
+- **Camino C — Consulta tributaria específica · $350.000-$3.500.000 COP** (hora simple $350K, factibilidad SAS $850K, asesoría completa $1.450K, internacional desde $3.350K)
+- **Camino D — Asesoría financiera personal continua · $600.000-$1.000.000 COP/mes** (mínimo 3 meses)
+- **Camino E — Ejecución de estructura · cotización aparte**
+
+# Formato de salida esperado — EXACTAMENTE ESTOS BLOQUES CON SUS HEADERS
+
+Devolveme la respuesta en MARKDOWN con esta estructura exacta (Jessica va a copy-pegar cada bloque a un campo del panel):
+
+## LECTURA DE LA SITUACIÓN
+
+<Un párrafo de 3-5 líneas que resume lo que viste. Primera persona plural "vemos", "notamos". Que el cliente se sienta leído, no analizado.>
+
+## PUNTO 1
+**Título**: <frase de 3-7 palabras, lo más concreto posible>
+**Diagnóstico**: <2-3 líneas con el hallazgo cuantificado. Por qué importa.>
+**Acción**: <qué hacer, en 1-2 líneas accionables, no genéricas>
+
+## PUNTO 2
+**Título**: <...>
+**Diagnóstico**: <...>
+**Acción**: <...>
+
+## PUNTO 3
+**Título**: <...>
+**Diagnóstico**: <...>
+**Acción**: <...>
+
+## CAMINO RECOMENDADO
+**Camino**: <Camino A | B | C | D | E — nombre del servicio>
+**Precio**: <monto en COP o rango o "cotización aparte">
+**Detalle**: <2-4 líneas explicando qué incluye este camino para ESTE cliente, por qué encaja según lo que vieron en la sesión, cuáles son los próximos pasos operativos (ej. "agendamos una sesión con Natalia la próxima semana para...").>
+
+# Datos del cliente (de la app)
+<AQUÍ VA EL CONTEXTO DESCARGADO>
+
+# Transcripción de la sesión
+<AQUÍ VA LA TRANSCRIPCIÓN DE LA REUNIÓN>`;
 
     // ═══ Generador de contexto markdown para Claude.ai ═══════════
     function generarContextoMarkdown(clientName, perfil, modulos, sessionMeta){
@@ -1564,6 +1773,237 @@ Ejemplo del formato esperado:
           No pudimos cargar los datos del cliente. ${escapeHtml(err.message || "")}
         </p>`;
       }
+    }
+
+    // ═══ Vista Post-sesión ═══════════════════════════════════════
+    const postView = document.getElementById("post-view");
+    const postTitle = document.getElementById("post-title");
+    const postSubtitle = document.getElementById("post-subtitle");
+    const postBody = document.getElementById("post-body");
+    document.getElementById("post-close").addEventListener("click", () => showPostView(false));
+
+    function showPostView(show){
+      postView.style.display = show ? "block" : "none";
+      panelListEls.forEach(el => { if (el) el.style.display = show ? "none" : ""; });
+      if (show){
+        prepView.style.display = "none"; // asegurar que no se vean las dos vistas
+      }
+      window.scrollTo({ top: 0, behavior: "instant" });
+    }
+
+    let currentPostSessionId = null;
+    let currentPostLinkedUid = null;
+
+    async function openPostView(sessionId, clientName, linkedUid, sessionStartIso){
+      postTitle.textContent = `Post-sesión · ${clientName || "cliente"}`;
+      postSubtitle.textContent = sessionStartIso
+        ? "Sesión realizada: " + fmt({ toDate: () => new Date(sessionStartIso) })
+        : "";
+      postBody.innerHTML = `<div class="prep-loader">Cargando datos del cliente…</div>`;
+      showPostView(true);
+      currentPostSessionId = sessionId;
+      currentPostLinkedUid = linkedUid;
+
+      try {
+        // Leer sesión + perfil + módulos del cliente en paralelo (para el prompt)
+        const [sessionSnap, perfilSnap, modulosSnap] = await Promise.all([
+          getDoc(doc(db, "diagnostico_sessions", sessionId)),
+          getDoc(doc(db, "clientes", linkedUid)),
+          getDocs(collection(db, "clientes", linkedUid, "modulos")),
+        ]);
+        const sessionData = sessionSnap.exists() ? sessionSnap.data() : {};
+        const perfil = perfilSnap.exists() ? perfilSnap.data() : {};
+        const modulos = {};
+        modulosSnap.forEach(m => { modulos[m.id] = m.data(); });
+
+        // Datos para el prompt (compartidos con pre-sesión)
+        currentPrepData = {
+          clientName: clientName || perfil.nombre || "cliente",
+          perfil,
+          modulos,
+          sessionMeta: {
+            sessionStart: sessionStartIso,
+            motivo: sessionData.client_motivo || "",
+            sessionId,
+          },
+        };
+
+        // Cargar borrador previo si existe
+        const borrador = sessionData.postSesion || {};
+        postBody.innerHTML = buildPostHtml(borrador, currentPrepData.clientName, sessionData);
+        bindPostHandlers();
+      } catch(err){
+        console.error("[post] Error cargando datos:", err);
+        postBody.innerHTML = `<p class="prep-empty" style="color:var(--alert);">
+          No pudimos cargar los datos. ${escapeHtml(err.message || "")}
+        </p>`;
+      }
+    }
+
+    function buildPostHtml(borrador, clientName, sessionData){
+      const puntos = Array.isArray(borrador.puntos) ? borrador.puntos : [];
+      const p1 = puntos[0] || {};
+      const p2 = puntos[1] || {};
+      const p3 = puntos[2] || {};
+      const camino = borrador.camino || {};
+      const estado = borrador.estado || null;
+      const estadoBadge = estado === "enviado"
+        ? '<span class="post-estado-badge enviado">Enviado</span>'
+        : estado === "borrador"
+          ? '<span class="post-estado-badge borrador">Borrador</span>'
+          : '';
+      const updatedBy = borrador.updated_by_name ? ' por ' + escapeHtml(borrador.updated_by_name) : '';
+      const updatedAt = borrador.updated_at && borrador.updated_at.toDate
+        ? ' · guardado ' + fmt(borrador.updated_at)
+        : '';
+      return `
+        <!-- Bloque IA Claude.ai post-sesión -->
+        <section class="ai-helper">
+          <h4>🤖 Generar borrador del correo con Claude.ai</h4>
+          <p class="ai-desc">
+            Pegá la transcripción de la sesión en el campo de abajo. Luego presioná "Copiar prompt + contexto + transcripción" y pegalo en <a href="https://claude.ai" target="_blank" style="color:var(--brand);">claude.ai</a>. Claude te devuelve los 4 bloques en formato markdown — copiás cada uno al campo correspondiente del formulario de abajo.
+          </p>
+          <label class="post-field" for="post-transcripcion">Transcripción de la sesión</label>
+          <textarea id="post-transcripcion" class="post-textarea" rows="6" placeholder="Pegá acá la transcripción de la reunión (Google Meet, Otter, etc.)."></textarea>
+          <div class="ai-actions" style="margin-top:12px;">
+            <button type="button" id="btn-copy-post-all" class="btn-primary-ai">
+              ⚡ Copiar prompt + contexto + transcripción
+            </button>
+            <span class="ai-toast" id="ai-toast-post-all"></span>
+          </div>
+          <div class="ai-actions" style="margin-top:10px;">
+            <button type="button" id="btn-copy-post-prompt">
+              📋 Copiar solo el prompt
+            </button>
+            <span class="ai-toast" id="ai-toast-post-prompt"></span>
+          </div>
+          <details>
+            <summary>Ver prompt completo</summary>
+            <pre>${escapeHtml(PROMPT_POST_SESION)}</pre>
+          </details>
+        </section>
+
+        <!-- Formulario de los 4 bloques -->
+        <section class="post-section">
+          <h4>📝 Borrador del correo post-sesión ${estadoBadge}</h4>
+          <p class="section-hint">
+            Copiá cada bloque desde la respuesta de Claude.ai y pegalo acá. Cuando esté todo, apretá "Guardar borrador".${updatedAt}${updatedBy}
+          </p>
+
+          <label class="post-field" for="post-lectura">Lectura de la situación</label>
+          <textarea id="post-lectura" class="post-textarea" rows="4" placeholder="Un párrafo de 3-5 líneas donde el cliente se sienta leído.">${escapeHtml(borrador.lectura_situacion || "")}</textarea>
+        </section>
+
+        <section class="post-section">
+          <h4>Los 3 puntos priorizados</h4>
+          <p class="section-hint">Cada punto tiene título, diagnóstico (qué viste y por qué importa) y acción (qué hacer).</p>
+
+          ${[1,2,3].map(n => {
+            const p = [p1,p2,p3][n-1] || {};
+            return `
+              <div class="post-punto">
+                <p class="punto-head"><span class="punto-num">${n}</span>Punto ${n}</p>
+                <label class="post-field" for="post-p${n}-titulo">Título</label>
+                <input type="text" id="post-p${n}-titulo" class="post-input" placeholder="Frase corta de 3-7 palabras" value="${escapeAttr(p.titulo || "")}">
+                <label class="post-field" for="post-p${n}-diagnostico">Diagnóstico</label>
+                <textarea id="post-p${n}-diagnostico" class="post-textarea" rows="2" placeholder="2-3 líneas cuantificando el hallazgo">${escapeHtml(p.diagnostico || "")}</textarea>
+                <label class="post-field" for="post-p${n}-accion">Acción</label>
+                <textarea id="post-p${n}-accion" class="post-textarea" rows="2" placeholder="1-2 líneas accionables">${escapeHtml(p.accion || "")}</textarea>
+              </div>
+            `;
+          }).join("")}
+        </section>
+
+        <section class="post-section">
+          <h4>Camino recomendado con precio</h4>
+          <p class="section-hint">Elegí uno de los 5 Caminos (o "Otro") + detalle + precio.</p>
+
+          <label class="post-field" for="post-camino-nombre">Camino</label>
+          <select id="post-camino-nombre" class="post-select">
+            <option value="">— elegir —</option>
+            <option value="A - Diseño Patrimonial autogenerado"${(camino.nombre==="A - Diseño Patrimonial autogenerado")?" selected":""}>Camino A — Diseño Patrimonial autogenerado</option>
+            <option value="B - Diseño Patrimonial validado con Natalia"${(camino.nombre==="B - Diseño Patrimonial validado con Natalia")?" selected":""}>Camino B — Diseño Patrimonial validado con Natalia</option>
+            <option value="C - Consulta tributaria específica"${(camino.nombre==="C - Consulta tributaria específica")?" selected":""}>Camino C — Consulta tributaria específica</option>
+            <option value="D - Asesoría financiera personal continua"${(camino.nombre==="D - Asesoría financiera personal continua")?" selected":""}>Camino D — Asesoría financiera personal continua</option>
+            <option value="E - Ejecución de estructura"${(camino.nombre==="E - Ejecución de estructura")?" selected":""}>Camino E — Ejecución de estructura</option>
+            <option value="Otro"${(camino.nombre==="Otro")?" selected":""}>Otro</option>
+          </select>
+
+          <label class="post-field" for="post-camino-precio">Precio</label>
+          <input type="text" id="post-camino-precio" class="post-input" placeholder="Ej. $2.500.000 COP o 'cotización aparte'" value="${escapeAttr(camino.precio || "")}">
+
+          <label class="post-field" for="post-camino-detalle">Detalle</label>
+          <textarea id="post-camino-detalle" class="post-textarea" rows="4" placeholder="2-4 líneas: qué incluye, por qué encaja para este cliente, próximos pasos.">${escapeHtml(camino.detalle || "")}</textarea>
+        </section>
+
+        <div class="post-save-bar">
+          <span class="post-save-status" id="post-save-status">${estado ? 'Último estado: ' + estado : 'Sin borrador guardado'}</span>
+          <div style="display:flex;gap:10px;">
+            <button type="button" class="btn btn-secondary" id="btn-post-save">💾 Guardar borrador</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function bindPostHandlers(){
+      // Botones IA
+      const btnPostAll = document.getElementById("btn-copy-post-all");
+      const btnPostPrompt = document.getElementById("btn-copy-post-prompt");
+      if (btnPostAll) btnPostAll.addEventListener("click", async () => {
+        const transcripcion = (document.getElementById("post-transcripcion") || {value:""}).value.trim();
+        const md = generarContextoMarkdown(currentPrepData.clientName, currentPrepData.perfil, currentPrepData.modulos, currentPrepData.sessionMeta);
+        const texto = PROMPT_POST_SESION
+          .replace("<AQUÍ VA EL CONTEXTO DESCARGADO>", md)
+          .replace("<AQUÍ VA LA TRANSCRIPCIÓN DE LA REUNIÓN>", transcripcion || "(sin transcripción)");
+        await copiarAlClipboard(texto);
+        flashAiToast("ai-toast-post-all", "✓ Copiado");
+      });
+      if (btnPostPrompt) btnPostPrompt.addEventListener("click", async () => {
+        await copiarAlClipboard(PROMPT_POST_SESION);
+        flashAiToast("ai-toast-post-prompt", "✓ Prompt copiado");
+      });
+
+      // Guardar borrador
+      const btnSave = document.getElementById("btn-post-save");
+      const statusEl = document.getElementById("post-save-status");
+      if (btnSave) btnSave.addEventListener("click", async () => {
+        if (!currentPostSessionId) return;
+        btnSave.disabled = true;
+        btnSave.textContent = "Guardando…";
+        statusEl.className = "post-save-status";
+        statusEl.textContent = "Guardando…";
+        try {
+          const payload = {
+            postSesion: {
+              lectura_situacion: (document.getElementById("post-lectura").value || "").trim(),
+              puntos: [1,2,3].map(n => ({
+                titulo: (document.getElementById(`post-p${n}-titulo`).value || "").trim(),
+                diagnostico: (document.getElementById(`post-p${n}-diagnostico`).value || "").trim(),
+                accion: (document.getElementById(`post-p${n}-accion`).value || "").trim(),
+              })),
+              camino: {
+                nombre: document.getElementById("post-camino-nombre").value || "",
+                precio: (document.getElementById("post-camino-precio").value || "").trim(),
+                detalle: (document.getElementById("post-camino-detalle").value || "").trim(),
+              },
+              estado: "borrador",
+              updated_at: serverTimestamp(),
+              updated_by: currentUser.uid,
+              updated_by_name: (asesorData && asesorData.nombre) || currentUser.displayName || currentUser.email,
+            },
+          };
+          await updateDoc(doc(db, "diagnostico_sessions", currentPostSessionId), payload);
+          statusEl.className = "post-save-status saved";
+          statusEl.textContent = "✓ Borrador guardado";
+        } catch(err){
+          console.error("[post] Error guardando:", err);
+          statusEl.className = "post-save-status error";
+          statusEl.textContent = "✗ Error: " + (err.message || "desconocido");
+        } finally {
+          btnSave.disabled = false;
+          btnSave.textContent = "💾 Guardar borrador";
+        }
+      });
     }
 
     function bindAiHelperButtons(){
