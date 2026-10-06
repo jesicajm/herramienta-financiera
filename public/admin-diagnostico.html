@@ -901,6 +901,9 @@
       getFirestore, collection, query, where, orderBy, onSnapshot,
       doc, getDoc, getDocs, updateDoc, serverTimestamp, limit
     } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+    import {
+      getFunctions, httpsCallable
+    } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-functions.js";
 
     // Firebase config del proyecto evaluafinanzas (valores públicos, seguros en el cliente)
     const firebaseConfig = {
@@ -916,6 +919,7 @@
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const db = getFirestore(app);
+    const functions = getFunctions(app, "us-central1");
     const provider = new GoogleAuthProvider();
 
     // ───── DOM refs ─────
@@ -1937,9 +1941,16 @@ Devolveme la respuesta en MARKDOWN con esta estructura exacta (Jessica va a copy
         </section>
 
         <div class="post-save-bar">
-          <span class="post-save-status" id="post-save-status">${estado ? 'Último estado: ' + estado : 'Sin borrador guardado'}</span>
+          <span class="post-save-status ${estado==='enviado'?'saved':''}" id="post-save-status">${
+            estado === 'enviado'
+              ? '✉ Correo ya enviado al cliente' + (borrador.enviado_at && borrador.enviado_at.toDate ? ' · ' + fmt(borrador.enviado_at) : '')
+              : (estado ? 'Último estado: ' + estado : 'Sin borrador guardado')
+          }</span>
           <div style="display:flex;gap:10px;">
             <button type="button" class="btn btn-secondary" id="btn-post-save">💾 Guardar borrador</button>
+            <button type="button" class="btn btn-primary" id="btn-post-send" ${estado==='enviado'?'disabled title="Ya se envió este correo"':''}>
+              ${estado==='enviado' ? '✓ Enviado' : '📤 Enviar correo al cliente'}
+            </button>
           </div>
         </div>
       `;
@@ -1961,6 +1972,58 @@ Devolveme la respuesta en MARKDOWN con esta estructura exacta (Jessica va a copy
       if (btnPostPrompt) btnPostPrompt.addEventListener("click", async () => {
         await copiarAlClipboard(PROMPT_POST_SESION);
         flashAiToast("ai-toast-post-prompt", "✓ Prompt copiado");
+      });
+
+      // Enviar correo al cliente
+      const btnSend = document.getElementById("btn-post-send");
+      if (btnSend) btnSend.addEventListener("click", async () => {
+        if (!currentPostSessionId) return;
+        if (btnSend.disabled) return;
+        // Validación básica antes de enviar
+        const lectura = (document.getElementById("post-lectura").value || "").trim();
+        const p1Titulo = (document.getElementById("post-p1-titulo").value || "").trim();
+        const caminoNombre = document.getElementById("post-camino-nombre").value;
+        if (!lectura){ alert("La lectura de la situación está vacía."); return; }
+        if (!p1Titulo){ alert("El punto 1 no tiene título."); return; }
+        if (!caminoNombre){ alert("No elegiste camino recomendado."); return; }
+        // Confirmación
+        const clientName = currentPrepData.clientName || "el cliente";
+        const confirmar = confirm(
+          `¿Enviar el correo post-sesión a ${clientName}?\n\n` +
+          "Antes de enviar, asegurate de haber guardado el borrador con los últimos cambios.\n\n" +
+          "Esta acción:\n" +
+          "• Enviará el correo al email del cliente firmado por Natalia.\n" +
+          "• Marcará esta sesión como 'enviada' (no se puede re-enviar).\n\n" +
+          "¿Continuar?"
+        );
+        if (!confirmar) return;
+
+        btnSend.disabled = true;
+        btnSend.textContent = "Enviando…";
+        const statusEl = document.getElementById("post-save-status");
+        statusEl.className = "post-save-status";
+        statusEl.textContent = "Enviando correo…";
+        try {
+          const call = httpsCallable(functions, "sendPostSessionEmail");
+          const res = await call({ sessionId: currentPostSessionId });
+          if (res && res.data && res.data.success){
+            statusEl.className = "post-save-status saved";
+            statusEl.textContent = "✓ Correo enviado a " + res.data.enviadoA;
+            btnSend.textContent = "✓ Enviado";
+            btnSend.title = "Ya se envió este correo";
+            // deshabilitar también el botón de guardar (ya no tiene sentido)
+            const btnSaveLocal = document.getElementById("btn-post-save");
+            if (btnSaveLocal) btnSaveLocal.disabled = true;
+          }
+        } catch(err){
+          console.error("[post] Error enviando correo:", err);
+          statusEl.className = "post-save-status error";
+          const msg = (err && err.message) ? err.message : "Error desconocido";
+          statusEl.textContent = "✗ No se pudo enviar: " + msg;
+          btnSend.disabled = false;
+          btnSend.textContent = "📤 Enviar correo al cliente";
+          alert("No se pudo enviar el correo:\n" + msg);
+        }
       });
 
       // Guardar borrador

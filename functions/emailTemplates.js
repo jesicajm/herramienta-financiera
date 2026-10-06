@@ -599,30 +599,44 @@ function renderEmailRecordatorio12h(ctx) {
     supportEmail = "hola@abbapatrimonial.com",
   } = ctx;
 
-  const meetBlock = meetLink
-    ? `
-        <div style="text-align:center;margin:0 0 24px;">
-          <a href="${meetLink}"
-             style="display:inline-block;background:${COLORS.brand};color:#ffffff;
-                    text-decoration:none;font-size:15px;font-weight:600;
-                    padding:14px 32px;border-radius:6px;">
-            Entrar a la sesión de Meet →
-          </a>
-        </div>`
-    : "";
-
   const appBlock = appUrl
     ? `
-        <div style="background:${COLORS.cream};border:1px solid ${COLORS.border};border-radius:8px;padding:20px 22px;margin:0 0 20px;">
-          <p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:${COLORS.ink};">
-            Si aún no completaste tu diagnóstico en la app, todavía estás a tiempo.
+        <div style="background:${COLORS.cream};border:1px solid ${COLORS.border};border-radius:8px;padding:24px 24px 22px;margin:0 0 24px;">
+          <p style="margin:0 0 10px;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:${COLORS.brand};font-weight:600;">
+            Antes de la sesión
+          </p>
+          <p style="margin:0 0 10px;font-size:16px;font-weight:600;line-height:1.4;color:${COLORS.navy};">
+            Completa tu diagnóstico en la app
+          </p>
+          <p style="margin:0 0 14px;font-size:14px;line-height:1.65;color:${COLORS.ink};">
+            Esos 15 minutos cambian la sesión. Si Natalia llega conociendo tu situación, los 60 minutos son conversación estratégica real: decisiones, estrategia, próximos pasos. Si no, se van en entrevista básica.
+          </p>
+          <p style="margin:0 0 16px;font-size:14px;line-height:1.65;color:${COLORS.ink};">
+            Es tu hora. Aprovéchala.
           </p>
           <div style="text-align:center;">
             <a href="${appUrl}"
+               style="display:inline-block;background:${COLORS.brand};color:#ffffff;
+                      text-decoration:none;font-size:15px;font-weight:600;
+                      padding:14px 32px;border-radius:6px;">
+              Completar diagnóstico →
+            </a>
+          </div>
+        </div>`
+    : "";
+
+  const meetBlock = meetLink
+    ? `
+        <div style="border:1px solid ${COLORS.border};border-radius:8px;padding:18px 22px;margin:0 0 24px;">
+          <p style="margin:0 0 8px;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:${COLORS.muted};font-weight:600;">
+            A la hora de la sesión
+          </p>
+          <div style="text-align:center;margin:6px 0 0;">
+            <a href="${meetLink}"
                style="display:inline-block;background:transparent;color:${COLORS.brand};
                       text-decoration:none;font-size:14px;font-weight:600;
                       padding:11px 26px;border:1px solid ${COLORS.brand};border-radius:6px;">
-              Ir a la app →
+              Entrar a la sesión de Meet →
             </a>
           </div>
         </div>`
@@ -654,7 +668,7 @@ function renderEmailRecordatorio12h(ctx) {
         <tr>
           <td style="padding:32px;">
             <p style="margin:0 0 16px;font-size:15px;line-height:1.65;color:${COLORS.ink};">
-              Un recordatorio breve: tu sesión de diagnóstico patrimonial con Natalia es dentro de las próximas 12 horas.
+              Tu sesión de diagnóstico patrimonial con Natalia es dentro de las próximas 12 horas. Antes de que llegue el momento, hay un paso que marca la diferencia:
             </p>
 
             <div style="background:${COLORS.navy};color:#ffffff;padding:20px 24px;border-radius:8px;margin:0 0 24px;text-align:center;">
@@ -669,8 +683,8 @@ function renderEmailRecordatorio12h(ctx) {
               </p>
             </div>
 
-            ${meetBlock}
             ${appBlock}
+            ${meetBlock}
 
             <p style="margin:0 0 8px;font-size:13px;color:${COLORS.muted};line-height:1.6;">
               Si necesitas reprogramar o tienes cualquier duda, responde este correo o escríbenos a
@@ -706,17 +720,22 @@ function renderEmailRecordatorio12hText(ctx) {
     supportEmail = "hola@abbapatrimonial.com",
   } = ctx;
 
-  return `${clientName}, tu sesión de diagnóstico patrimonial con Natalia se acerca.
+  return `${clientName}, tu sesión de diagnóstico patrimonial con Natalia es dentro de las próximas 12 horas.
 
 FECHA DE LA SESIÓN
   ${formatBogota(sessionStart)}
-  Duración: 60 minutos. Dentro de las próximas 12 horas.
+  Duración: 60 minutos.
 
-ENLACE DE GOOGLE MEET
-  ${meetLink || "(te lo compartimos por separado)"}
+ANTES DE LA SESIÓN — completa tu diagnóstico en la app
+  Esos 15 minutos cambian la sesión. Si Natalia llega conociendo
+  tu situación, los 60 minutos son conversación estratégica real:
+  decisiones, estrategia, próximos pasos. Si no, se van en
+  entrevista básica. Es tu hora. Aprovéchala.
 
-Si aún no completaste tu diagnóstico en la app, todavía estás a tiempo:
   ${appUrl || "https://abba-finanzas.netlify.app"}
+
+A LA HORA DE LA SESIÓN — enlace de Google Meet
+  ${meetLink || "(te lo compartimos por separado)"}
 
 Si necesitas reprogramar o tienes cualquier duda, responde este correo o escríbenos a ${supportEmail}.
 
@@ -894,6 +913,210 @@ ABBA Patrimonial
 `;
 }
 
+// ─────────────────────────────────────────────────────────────────
+//  POST-SESIÓN — Diagnóstico entregado al cliente
+//  ctx esperado:
+//    - clientName:        string (primer nombre)
+//    - sessionDate:       Date (fecha de la sesión)
+//    - lecturaSituacion:  string (párrafo 3-5 líneas)
+//    - puntos:            [{titulo, diagnostico, accion}, {...}, {...}]
+//    - caminoNombre:      string ("Camino B — Diseño Patrimonial validado")
+//    - caminoPrecio:      string ("$3.000.000 COP" o "cotización aparte")
+//    - caminoDetalle:     string (2-4 líneas)
+//    - supportEmail:      string
+// ─────────────────────────────────────────────────────────────────
+function renderEmailPostSesion(ctx) {
+  const {
+    clientName = "",
+    sessionDate,
+    lecturaSituacion = "",
+    puntos = [],
+    caminoNombre = "",
+    caminoPrecio = "",
+    caminoDetalle = "",
+    supportEmail = "natalia.jaramillo@abbapatrimonial.com",
+  } = ctx;
+
+  const firstName = (clientName || "").split(" ")[0] || "";
+
+  // Convierte texto plano a párrafos HTML (respeta saltos de línea dobles)
+  function parrafos(txt) {
+    if (!txt) return "";
+    return txt
+      .split(/\n\s*\n/)
+      .map(p => `<p style="margin:0 0 10px;font-size:14px;line-height:1.65;color:${COLORS.ink};">${escapeTextToHtml(p)}</p>`)
+      .join("");
+  }
+  function escapeTextToHtml(s){
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\n/g, "<br>");
+  }
+
+  const puntosHtml = (puntos || [])
+    .filter(p => p && (p.titulo || p.diagnostico || p.accion))
+    .map((p, i) => `
+      <div style="background:${COLORS.cream};border-left:3px solid ${COLORS.brand};padding:16px 18px;border-radius:0 6px 6px 0;margin:0 0 14px;">
+        <p style="margin:0 0 10px;font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:${COLORS.brand};font-weight:600;">
+          Punto ${i+1}
+        </p>
+        <p style="margin:0 0 10px;font-size:16px;font-weight:600;color:${COLORS.navy};line-height:1.4;">
+          ${escapeTextToHtml(p.titulo || "")}
+        </p>
+        <p style="margin:0 0 10px;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:${COLORS.muted};font-weight:600;">
+          Diagnóstico
+        </p>
+        <p style="margin:0 0 14px;font-size:14px;line-height:1.6;color:${COLORS.ink};">
+          ${escapeTextToHtml(p.diagnostico || "")}
+        </p>
+        <p style="margin:0 0 10px;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:${COLORS.muted};font-weight:600;">
+          Acción
+        </p>
+        <p style="margin:0;font-size:14px;line-height:1.6;color:${COLORS.ink};">
+          ${escapeTextToHtml(p.accion || "")}
+        </p>
+      </div>
+    `)
+    .join("");
+
+  const caminoHtml = (caminoNombre || caminoDetalle || caminoPrecio) ? `
+    <div style="background:${COLORS.navy};color:#ffffff;padding:24px;border-radius:8px;margin:0 0 24px;">
+      <p style="margin:0 0 8px;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#c9d3e6;font-weight:600;">
+        Camino recomendado
+      </p>
+      <p style="margin:0 0 6px;font-size:18px;font-weight:600;color:#ffffff;line-height:1.35;">
+        ${escapeTextToHtml(caminoNombre || "—")}
+      </p>
+      ${caminoPrecio ? `
+        <p style="margin:0 0 14px;font-size:14px;color:#c9d3e6;">
+          Inversión: <strong style="color:#ffffff;">${escapeTextToHtml(caminoPrecio)}</strong>
+        </p>` : ''}
+      ${caminoDetalle ? `
+        <div style="padding-top:12px;border-top:1px solid rgba(255,255,255,0.15);">
+          ${(caminoDetalle || "").split(/\n\s*\n/).map(p => `
+            <p style="margin:0 0 10px;font-size:14px;line-height:1.6;color:#e8ecf5;">${escapeTextToHtml(p)}</p>
+          `).join("")}
+        </div>` : ''}
+    </div>
+  ` : '';
+
+  return `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tu diagnóstico patrimonial · ABBA</title>
+</head>
+<body style="margin:0;padding:0;background:${COLORS.cream};font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;color:${COLORS.ink};">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${COLORS.cream};padding:32px 16px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border:1px solid ${COLORS.border};border-radius:8px;overflow:hidden;">
+
+        <tr>
+          <td style="background:${COLORS.navy};padding:32px 32px 24px;text-align:center;">
+            <p style="margin:0 0 8px;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#c9d3e6;">
+              ABBA Patrimonial
+            </p>
+            <h1 style="margin:0;font-size:22px;font-weight:400;color:#ffffff;line-height:1.35;">
+              Tu diagnóstico patrimonial
+            </h1>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:32px;">
+            <p style="margin:0 0 20px;font-size:15px;line-height:1.65;color:${COLORS.ink};">
+              Hola${firstName ? ' ' + escapeTextToHtml(firstName) : ''},
+            </p>
+            <p style="margin:0 0 20px;font-size:14px;line-height:1.65;color:${COLORS.ink};">
+              Gracias por tu sesión de diagnóstico${sessionDate ? ' del ' + formatBogota(sessionDate) : ''}. Acá te dejo lo que vimos, los tres puntos que me parecen prioritarios y el camino que recomiendo para seguir trabajando juntos.
+            </p>
+
+            <!-- Lectura de la situación -->
+            <h2 style="margin:28px 0 12px;font-size:16px;font-weight:600;color:${COLORS.navy};">
+              Lectura de la situación
+            </h2>
+            ${parrafos(lecturaSituacion)}
+
+            <!-- 3 puntos priorizados -->
+            <h2 style="margin:28px 0 16px;font-size:16px;font-weight:600;color:${COLORS.navy};">
+              Los tres puntos priorizados
+            </h2>
+            ${puntosHtml || `<p style="color:${COLORS.muted};font-style:italic;">(sin puntos cargados)</p>`}
+
+            <!-- Camino recomendado -->
+            <h2 style="margin:28px 0 16px;font-size:16px;font-weight:600;color:${COLORS.navy};">
+              Próximos pasos
+            </h2>
+            ${caminoHtml}
+
+            <p style="margin:24px 0 0;font-size:14px;line-height:1.65;color:${COLORS.ink};">
+              Si quieres avanzar con el camino propuesto, o si tienes dudas sobre algún punto, respóndeme este correo o escríbeme a
+              <a href="mailto:${supportEmail}" style="color:${COLORS.brand};text-decoration:none;">${supportEmail}</a>.
+            </p>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="background:${COLORS.cream};padding:24px 32px;text-align:center;border-top:1px solid ${COLORS.border};">
+            <p style="margin:0;font-size:13px;color:${COLORS.navy};font-weight:600;">
+              Natalia Jaramillo
+            </p>
+            <p style="margin:4px 0 0;font-size:12px;color:${COLORS.muted};">
+              ABBA Patrimonial · Arquitectura de patrimonio
+            </p>
+          </td>
+        </tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
+function renderEmailPostSesionText(ctx) {
+  const {
+    clientName = "",
+    sessionDate,
+    lecturaSituacion = "",
+    puntos = [],
+    caminoNombre = "",
+    caminoPrecio = "",
+    caminoDetalle = "",
+    supportEmail = "natalia.jaramillo@abbapatrimonial.com",
+  } = ctx;
+  const firstName = (clientName || "").split(" ")[0] || "";
+  const puntosTxt = (puntos || [])
+    .filter(p => p && (p.titulo || p.diagnostico || p.accion))
+    .map((p, i) => `
+PUNTO ${i+1} — ${p.titulo || ''}
+Diagnóstico: ${p.diagnostico || ''}
+Acción: ${p.accion || ''}`)
+    .join("\n");
+  return `Hola${firstName ? ' ' + firstName : ''},
+
+Gracias por tu sesión de diagnóstico${sessionDate ? ' del ' + formatBogota(sessionDate) : ''}. Acá te dejo lo que vimos, los tres puntos que me parecen prioritarios y el camino que recomiendo.
+
+LECTURA DE LA SITUACIÓN
+${lecturaSituacion}
+
+LOS TRES PUNTOS PRIORIZADOS${puntosTxt}
+
+CAMINO RECOMENDADO
+${caminoNombre}
+Inversión: ${caminoPrecio}
+${caminoDetalle}
+
+Si quieres avanzar o tienes dudas, respóndeme este correo o escríbeme a ${supportEmail}.
+
+Un abrazo,
+Natalia Jaramillo
+ABBA Patrimonial`;
+}
+
 module.exports = {
   renderEmailInstruccionesPago,
   renderEmailInstruccionesPagoText,
@@ -905,4 +1128,6 @@ module.exports = {
   renderEmailRecordatorio12hText,
   renderEmailReagendamiento,
   renderEmailReagendamientoText,
+  renderEmailPostSesion,
+  renderEmailPostSesionText,
 };

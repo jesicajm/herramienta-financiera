@@ -35,6 +35,8 @@ const {
   renderEmailRecordatorio12hText,
   renderEmailReagendamiento,
   renderEmailReagendamientoText,
+  renderEmailPostSesion,
+  renderEmailPostSesionText,
 } = require("./emailTemplates");
 
 admin.initializeApp();
@@ -1217,5 +1219,142 @@ ${CONFIG.appUrl}/admin-diagnostico.html`;
       );
       // No marcamos como notificado para que reintente la próxima escritura
     }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────
+//  sendPostSessionEmail — Callable para enviar el correo post-sesión
+//  al cliente firmado por Natalia.
+//
+//  Jessica llena los campos del borrador en el panel admin, revisa
+//  y aprieta "Enviar correo al cliente". El panel llama esta función
+//  con { sessionId }. La función:
+//    1) Verifica que el que llama es asesor
+//    2) Lee la sesión + su postSesion
+//    3) Valida contenido mínimo (lectura + al menos 1 punto + camino)
+//    4) Envía el correo al client_email firmado por Natalia
+//    5) Marca postSesion.estado = "enviado" + postSesion.enviado_at
+// ─────────────────────────────────────────────────────────────────
+exports.sendPostSessionEmail = onCall(
+  {
+    region: "us-central1",
+    secrets: ["GMAIL_PASSWORD"],
+    memory: "256MiB",
+    timeoutSeconds: 60,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión primero.");
+    }
+
+    const asesorSnap = await db
+      .collection("asesores")
+      .doc(request.auth.uid)
+      .get();
+    if (!asesorSnap.exists) {
+      throw new HttpsError(
+        "permission-denied",
+        "Solo asesoras autorizadas pueden enviar correos post-sesión."
+      );
+    }
+    const asesorData = asesorSnap.data() || {};
+
+    const sessionId =
+      request.data && typeof request.data.sessionId === "string"
+        ? request.data.sessionId.trim()
+        : "";
+    if (!sessionId) {
+      throw new HttpsError("invalid-argument", "sessionId es requerido.");
+    }
+
+    const sessionRef = db.collection("diagnostico_sessions").doc(sessionId);
+    const sessionSnap = await sessionRef.get();
+    if (!sessionSnap.exists) {
+      throw new HttpsError("not-found", "Sesión no encontrada.");
+    }
+    const session = sessionSnap.data();
+    const post = session.postSesion || {};
+
+    if (!post.lectura_situacion || !post.lectura_situacion.trim()) {
+      throw new HttpsError(
+        "failed-precondition",
+        "La lectura de la situación está vacía."
+      );
+    }
+    const puntosValidos = (post.puntos || []).filter(
+      (p) => p && (p.titulo || p.diagnostico || p.accion)
+    );
+    if (puntosValidos.length === 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        "No hay puntos priorizados cargados."
+      );
+    }
+    const camino = post.camino || {};
+    if (!camino.nombre && !camino.detalle) {
+      throw new HttpsError(
+        "failed-precondition",
+        "No hay camino recomendado cargado."
+      );
+    }
+    if (!session.client_email) {
+      throw new HttpsError(
+        "failed-precondition",
+        "La sesión no tiene email del cliente."
+      );
+    }
+
+    const sessionDate = session.session_start.toDate
+      ? session.session_start.toDate()
+      : session.session_start;
+
+    const ctx = {
+      clientName: session.client_name || "",
+      sessionDate,
+      lecturaSituacion: post.lectura_situacion,
+      puntos: puntosValidos,
+      caminoNombre: camino.nombre || "",
+      caminoPrecio: camino.precio || "",
+      caminoDetalle: camino.detalle || "",
+      supportEmail: CONFIG.natalia.email,
+    };
+
+    const transporter = makeTransporter();
+    try {
+      await transporter.sendMail({
+        from: `"Natalia Jaramillo — ABBA Patrimonial" <${CONFIG.gmail.user}>`,
+        to: session.client_email,
+        subject: `Tu diagnóstico patrimonial · próximos pasos`,
+        html: renderEmailPostSesion(ctx),
+        text: renderEmailPostSesionText(ctx),
+        replyTo: CONFIG.natalia.email,
+      });
+    } catch (err) {
+      logger.error(
+        `Error enviando correo post-sesión para ${sessionId}:`,
+        err
+      );
+      throw new HttpsError(
+        "internal",
+        "No se pudo enviar el correo. " + (err.message || "")
+      );
+    }
+
+    await sessionRef.update({
+      "postSesion.estado": "enviado",
+      "postSesion.enviado_at": new Date(),
+      "postSesion.enviado_by": request.auth.uid,
+      "postSesion.enviado_by_name":
+        asesorData.nombre || request.auth.token.email || "",
+    });
+
+    logger.info(
+      `✉️  Correo post-sesión enviado a ${session.client_email} para ${sessionId} por ${asesorData.nombre || request.auth.uid}`
+    );
+
+    return {
+      success: true,
+      enviadoA: session.client_email,
+    };
   }
 );
