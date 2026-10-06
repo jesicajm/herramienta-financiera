@@ -1194,16 +1194,39 @@
 
     // ═══ Prompt pre-sesión para Claude.ai ═══════════════════════
     const PROMPT_PRE_SESION = `# Rol
-Sos Claude, asistiendo a Jessica, operadora de ABBA Patrimonial (Colombia). Te paso los datos de un cliente que acaba de pagar su sesión de diagnóstico patrimonial con Natalia Jaramillo. Tu tarea es armar el DOCUMENTO DE PREPARACIÓN que Natalia leerá 10 minutos antes de la reunión.
+Sos Claude, asistiendo a Jessica (ABBA Patrimonial, Colombia). Te paso los datos de un cliente que acaba de pagar su sesión de diagnóstico patrimonial con Natalia Jaramillo. Armá el DOCUMENTO DE PREPARACIÓN que Natalia leerá 10 minutos antes de la reunión.
 
-# Objetivo del documento
-Que Natalia llegue a la reunión con los riesgos cuantificados, preguntas afiladas y un plan de acción tentativo alineado a los servicios de ABBA. Natalia profundiza y ajusta durante la reunión; este documento le baja la carga cognitiva, no la reemplaza.
+# Objetivo
+Que Natalia llegue a la reunión con los riesgos cuantificados, preguntas afiladas y una recomendación de camino tentativa alineada al menú de servicios de ABBA.
+
+**Importante**: los datos de la app son INSUMO; algunas cosas se confirman o profundizan en la reunión. Por eso varias recomendaciones tendrán BIFURCACIONES según lo que el cliente confirme (ej: "si confirma que tiene empresa activa → Camino B; si no → Camino C").
 
 # Tono y estilo
 - Español colombiano, tuteo cercano profesional.
 - Directo, sin relleno. Natalia tiene 10 minutos para leer.
 - Datos SIEMPRE cuantificados en pesos colombianos (COP).
 - Sin consejos genéricos de educación financiera.
+
+# Menú de servicios de ABBA (precios de referencia)
+
+**Camino A — Diseño Patrimonial autogenerado por la app · $480.000 COP**
+Para complejidad media. Cliente quiere ver el diseño completo antes de validar con equipo. Entregable en minutos, sin sesiones adicionales.
+
+**Camino B — Diseño Patrimonial validado con Natalia · $2.000.000 a $4.000.000 COP**
+Según patrimonio y dimensiones involucradas. Es el servicio núcleo de ABBA. Sesionado, Natalia lo entrega firmado. Para casos de complejidad alta o varias dimensiones (fiscal + sucesoral + liquidez + protección).
+
+**Camino C — Consulta tributaria específica · desde $350.000 a $3.500.000 COP**
+Para clientes con tema tributario específico, se refiere al tributarista del equipo:
+- Hora simple: $350.000
+- Análisis factibilidad SAS: $850.000
+- Asesoría tributaria completa: $1.450.000
+- Análisis internacional (doble tributación, residencia fiscal): desde $3.350.000
+
+**Camino D — Asesoría financiera personal continua · $[precio por definir en reunión] mensual**
+Para casos de saneamiento financiero personal (deudas, presupuesto, fondo emergencia). Acompañamiento mensual con Natalia por X meses con entregables definidos. Compromiso mínimo 3 meses. Rango estimado $600.000-$1.000.000 mensual.
+
+**Camino E — Ejecución de estructura · cotización aparte**
+Para clientes que ya tienen el Diseño y quieren implementar. Se cotiza por componentes reales (constitución de sociedad patrimonial ~7-8 SMMLV, aporte de bienes, apertura de cuentas internacionales, etc.).
 
 # Secciones requeridas (en este orden exacto)
 
@@ -1212,13 +1235,31 @@ Resumen de quién es el cliente, su situación actual y lo que trae a la sesión
 
 ## 2. Riesgos cuantificados (3 a 5)
 Formato por riesgo: **[Nombre del riesgo] — $X** · Explicación en 1-2 líneas de por qué y cómo lo detectaste de los datos.
-Ejemplos de riesgos típicos a buscar: UGPP, concentración patrimonial, falta de liquidez, exposición cambiaria, protección sucesoral, carga fiscal subóptima, mezcla personal-empresarial, dependencia de un solo cliente/contrato, sin fondo de emergencia suficiente.
+Riesgos típicos a buscar: UGPP, concentración patrimonial, falta de liquidez, exposición cambiaria, protección sucesoral débil (todo en Propiedad Directa cuando hay patrimonio importante), carga fiscal subóptima, mezcla personal-empresarial, dependencia de un solo contrato, fondo de emergencia insuficiente.
 
 ## 3. Preguntas sugeridas para profundizar (3 a 5)
-Preguntas que Natalia puede hacer para validar o profundizar lo que ves en los datos. Específicas, no genéricas.
+Específicas, no genéricas. **Marcá cuáles son "preguntas destraba"** 🔑 — las que al responderse definen qué Camino aplica.
 
-## 4. Plan de acción tentativo alineado a servicios de ABBA
-3 a 5 pasos recomendados en orden de prioridad, cada uno con una línea de justificación. Si aplica, mencioná qué servicio de ABBA encaja (estructuración patrimonial, optimización fiscal, protección sucesoral, planeación de retiro, estructura de ingresos, etc.).
+## 4. Camino(s) recomendado(s) con bifurcaciones
+
+Formato por cada camino plausible:
+
+**Camino [X] — [Nombre] · [Precio]**
+- **Encaja si**: condiciones de los datos de la app + condiciones a confirmar en reunión.
+- **Depende de que el cliente confirme**: pregunta destraba 🔑 que define este camino.
+- **Justificación**: por qué este camino para este cliente (2-3 líneas, cuantificando donde se pueda).
+
+Si el caso tiene bifurcación clara, listá 2-3 caminos posibles en **orden de probabilidad**. Si está muy claro, uno solo.
+
+Ejemplo del formato esperado:
+> **Camino B — Diseño Patrimonial validado · $3M-4M** (recomendado principal)
+> - Encaja si: patrimonio > $800M y varias dimensiones (fiscal + sucesoral + liquidez).
+> - Depende de que el cliente confirme: 🔑 ¿tiene empresa activa que vale la pena vehiculizar?
+> - Justificación: 3 inmuebles sin estructura ($1.200M), flujo mensual estable $18M, dependientes.
+>
+> **Camino C alternativo — Consulta tributaria SAS · $850K**
+> - Encaja si: en la reunión aparece que el único tema real es tributario (no quiere diseño completo) y hay actividad de servicios/consultoría que podría vehiculizarse en SAS.
+> - Depende de que el cliente confirme: 🔑 ¿su interés real es solo bajar la carga tributaria o quiere rediseñar el patrimonio completo?
 
 # Datos del cliente
 <PEGÁ EL CONTEXTO DESCARGADO DEL PANEL A CONTINUACIÓN>`;
