@@ -938,6 +938,15 @@ function renderEmailPostSesion(ctx) {
   } = ctx;
 
   const firstName = (clientName || "").split(" ")[0] || "";
+  // Quitar prefijo "A - ", "B - ", etc. del nombre del camino para que solo quede el nombre del servicio
+  const caminoNombreLimpio = (caminoNombre || "").replace(/^[A-E]\s*-\s*/i, "");
+
+  // WhatsApp de Natalia (link clickeable con mensaje predefinido)
+  const WA_NUMERO = "573104278004"; // +57 310 427 8004
+  const waMsg = encodeURIComponent(
+    `Hola Natalia, soy ${firstName || clientName || ''}. Te escribo por mi diagnóstico patrimonial.`
+  );
+  const waLink = `https://wa.me/${WA_NUMERO}?text=${waMsg}`;
 
   // Convierte texto plano a párrafos HTML (respeta saltos de línea dobles)
   function parrafos(txt) {
@@ -981,13 +990,13 @@ function renderEmailPostSesion(ctx) {
     `)
     .join("");
 
-  const caminoHtml = (caminoNombre || caminoDetalle || caminoPrecio) ? `
-    <div style="background:${COLORS.navy};color:#ffffff;padding:24px;border-radius:8px;margin:0 0 24px;">
+  const caminoHtml = (caminoNombreLimpio || caminoDetalle || caminoPrecio) ? `
+    <div style="background:${COLORS.navy};color:#ffffff;padding:24px;border-radius:8px;margin:0 0 20px;">
       <p style="margin:0 0 8px;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#c9d3e6;font-weight:600;">
         Camino recomendado
       </p>
       <p style="margin:0 0 6px;font-size:18px;font-weight:600;color:#ffffff;line-height:1.35;">
-        ${escapeTextToHtml(caminoNombre || "—")}
+        ${escapeTextToHtml(caminoNombreLimpio || "—")}
       </p>
       ${caminoPrecio ? `
         <p style="margin:0 0 14px;font-size:14px;color:#c9d3e6;">
@@ -999,6 +1008,20 @@ function renderEmailPostSesion(ctx) {
             <p style="margin:0 0 10px;font-size:14px;line-height:1.6;color:#e8ecf5;">${escapeTextToHtml(p)}</p>
           `).join("")}
         </div>` : ''}
+    </div>
+  ` : '';
+
+  // Bloque de instrucciones de pago (visible solo si hay un camino con precio concreto)
+  const comoEmpezarHtml = (caminoNombreLimpio || caminoPrecio) ? `
+    <div style="background:${COLORS.cream};border:1px solid ${COLORS.border};border-radius:8px;padding:20px 22px;margin:0 0 24px;">
+      <p style="margin:0 0 8px;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:${COLORS.brand};font-weight:600;">
+        Para empezar
+      </p>
+      <p style="margin:0 0 10px;font-size:14px;line-height:1.6;color:${COLORS.ink};">
+        Para arrancar con este camino, hace un abono del <strong>50% del valor</strong> del servicio y envíame el comprobante de pago por WhatsApp al
+        <a href="${waLink}" style="color:${COLORS.brand};text-decoration:none;font-weight:600;">310 427 8004</a>.
+        Yo coordino los próximos pasos contigo.
+      </p>
     </div>
   ` : '';
 
@@ -1031,7 +1054,7 @@ function renderEmailPostSesion(ctx) {
               Hola${firstName ? ' ' + escapeTextToHtml(firstName) : ''},
             </p>
             <p style="margin:0 0 20px;font-size:14px;line-height:1.65;color:${COLORS.ink};">
-              Gracias por tu sesión de diagnóstico${sessionDate ? ' del ' + formatBogota(sessionDate) : ''}. Acá te dejo lo que vimos, los tres puntos que me parecen prioritarios y el camino que recomiendo para seguir trabajando juntos.
+              Acá te dejo lo que vimos en nuestra sesión${sessionDate ? ' del ' + formatBogota(sessionDate) : ''}: los tres puntos que me parecen prioritarios y el camino que recomiendo para seguir trabajando juntos.
             </p>
 
             <!-- Lectura de la situación -->
@@ -1051,10 +1074,11 @@ function renderEmailPostSesion(ctx) {
               Próximos pasos
             </h2>
             ${caminoHtml}
+            ${comoEmpezarHtml}
 
             <p style="margin:24px 0 0;font-size:14px;line-height:1.65;color:${COLORS.ink};">
-              Si quieres avanzar con el camino propuesto, o si tienes dudas sobre algún punto, respóndeme este correo o escríbeme a
-              <a href="mailto:${supportEmail}" style="color:${COLORS.brand};text-decoration:none;">${supportEmail}</a>.
+              ¿Dudas o quieres avanzar? Respóndeme este correo o escríbeme por WhatsApp al
+              <a href="${waLink}" style="color:${COLORS.brand};text-decoration:none;font-weight:600;">310 427 8004</a>.
             </p>
           </td>
         </tr>
@@ -1086,9 +1110,9 @@ function renderEmailPostSesionText(ctx) {
     caminoNombre = "",
     caminoPrecio = "",
     caminoDetalle = "",
-    supportEmail = "natalia.jaramillo@abbapatrimonial.com",
   } = ctx;
   const firstName = (clientName || "").split(" ")[0] || "";
+  const caminoNombreLimpio = (caminoNombre || "").replace(/^[A-E]\s*-\s*/i, "");
   const puntosTxt = (puntos || [])
     .filter(p => p && (p.titulo || p.diagnostico || p.accion))
     .map((p, i) => `
@@ -1096,9 +1120,13 @@ PUNTO ${i+1} — ${p.titulo || ''}
 Diagnóstico: ${p.diagnostico || ''}
 Acción: ${p.accion || ''}`)
     .join("\n");
+  const comoEmpezarTxt = (caminoNombreLimpio || caminoPrecio) ? `
+
+PARA EMPEZAR
+Para arrancar con este camino, haz un abono del 50% del valor del servicio y envíame el comprobante de pago por WhatsApp al 310 427 8004. Yo coordino los próximos pasos contigo.` : '';
   return `Hola${firstName ? ' ' + firstName : ''},
 
-Gracias por tu sesión de diagnóstico${sessionDate ? ' del ' + formatBogota(sessionDate) : ''}. Acá te dejo lo que vimos, los tres puntos que me parecen prioritarios y el camino que recomiendo.
+Acá te dejo lo que vimos en nuestra sesión${sessionDate ? ' del ' + formatBogota(sessionDate) : ''}: los tres puntos que me parecen prioritarios y el camino que recomiendo.
 
 LECTURA DE LA SITUACIÓN
 ${lecturaSituacion}
@@ -1106,11 +1134,11 @@ ${lecturaSituacion}
 LOS TRES PUNTOS PRIORIZADOS${puntosTxt}
 
 CAMINO RECOMENDADO
-${caminoNombre}
+${caminoNombreLimpio}
 Inversión: ${caminoPrecio}
-${caminoDetalle}
+${caminoDetalle}${comoEmpezarTxt}
 
-Si quieres avanzar o tienes dudas, respóndeme este correo o escríbeme a ${supportEmail}.
+¿Dudas o quieres avanzar? Respóndeme este correo o escríbeme por WhatsApp al 310 427 8004.
 
 Un abrazo,
 Natalia Jaramillo
