@@ -46,6 +46,48 @@
         }
       } catch(e){ console.warn('detectDiagSessionToken falló:', e); }
     })();
+
+    /* ═══════════════════════════════════════════════════════════
+       MODO VISTA DE ASESOR (view_as)
+       Si un asesor abre el app con ?view_as=<uid> del cliente, carga
+       los datos del cliente en modo SOLO LECTURA. Todas las escrituras
+       quedan bloqueadas. Se muestra un banner rojo arriba.
+       ═══════════════════════════════════════════════════════════ */
+    const _viewAsFromUrl = (function(){
+      try {
+        const url = new URL(window.location.href);
+        const uid = url.searchParams.get('view_as');
+        // UIDs de Firebase son alfanumeric, 20-32 chars típicamente
+        if (uid && /^[a-zA-Z0-9]{20,36}$/.test(uid)){
+          console.log('[view_as] Parámetro detectado:', uid);
+          return uid;
+        }
+      } catch(e){ console.warn('[view_as] Error leyendo URL:', e); }
+      return null;
+    })();
+    let _readOnlyMode = false;      // se activa en onAuthStateChange si el user es asesor
+    let _readOnlyAsesorEmail = '';  // el correo del asesor que está viendo
+    function isReadOnly(){ return _readOnlyMode === true; }
+    if (typeof window !== 'undefined') window.isReadOnly = isReadOnly;
+
+    function showReadOnlyBanner(clientName, asesorEmail){
+      // Inyectar banner rojo arriba de todo
+      if (document.getElementById('read-only-banner')) return; // ya existe
+      const banner = document.createElement('div');
+      banner.id = 'read-only-banner';
+      banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#dc2626;color:#fff;padding:10px 16px;text-align:center;font-size:14px;font-weight:500;font-family:-apple-system,BlinkMacSystemFont,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);';
+      banner.innerHTML =
+        '<span style="margin-right:8px;">👁</span>' +
+        '<strong>Modo lectura</strong> · Viendo datos de: <strong>' +
+        (clientName || 'cliente') + '</strong>' +
+        '<span style="opacity:0.75;margin:0 10px;">·</span>' +
+        'Logueada como: ' + (asesorEmail || '—') +
+        '<span style="opacity:0.75;margin:0 10px;">·</span>' +
+        '<a href="javascript:window.close()" style="color:#fff;text-decoration:underline;">Cerrar pestaña</a>';
+      document.body.insertBefore(banner, document.body.firstChild);
+      // Empujar el contenido abajo para que no quede tapado por el banner
+      document.body.style.paddingTop = (banner.offsetHeight || 42) + 'px';
+    }
   /* ═══════════════════════════════════════════════════════════
      CONFIGURACIÓN FISCAL — parámetros por año (UVT, topes, tarifas, calendario)
      Fuente de verdad: Firestore  config/fiscal/anios/{año}  (editable sin re-desplegar).
@@ -7415,6 +7457,10 @@ function showToast(msg, type) {
      PERSISTENCIA
      ═══════════════════════════════════════════════════════════ */
   async function saveModule(name,data){
+    if(isReadOnly()){
+      console.log('[read-only] saveModule ignorado:', name);
+      return;
+    }
     if(!firestoreAvailable||!userId){
       localStorage.setItem(`abba_${userId}_${name}`,JSON.stringify(data));
       return;
@@ -7488,6 +7534,7 @@ function showToast(msg, type) {
   }
 
   function scheduleSave(name){
+    if(isReadOnly()) return;
     if(!_autosaveReady) return;
     clearTimeout(_saveTimers[name]);
     _saveTimers[name] = setTimeout(()=>persistModule(name), 700);
@@ -7498,6 +7545,10 @@ function showToast(msg, type) {
   }
 
   async function persistModule(name){
+    if(isReadOnly()){
+      console.log('[read-only] persistModule ignorado:', name);
+      return;
+    }
     const data = moduleData(name);
     if(data == null) return;
     let json = null;
@@ -7542,6 +7593,10 @@ function showToast(msg, type) {
 
   /* Perfil del cliente: vive en clientes/{uid} (raíz, no en una subcolección) */
   async function savePerfil(uid, perfilData){
+    if(isReadOnly()){
+      console.log('[read-only] savePerfil ignorado');
+      return;
+    }
     if(!firestoreAvailable||!uid){
       localStorage.setItem(`abba_${uid}_perfil`, JSON.stringify(perfilData));
       return;
@@ -8330,9 +8385,66 @@ function showToast(msg, type) {
       return;
     }
     // Usuario autenticado
-    userId = user.uid;
     currency = 'COP $';
-  
+
+    /* ═══ MODO VIEW_AS: si llegó con ?view_as=<uid> y el user es asesor,
+         cargamos los datos de ese UID en modo solo-lectura ═══ */
+    if (_viewAsFromUrl) {
+      let esAsesor = false;
+      try {
+        const asesorDoc = await db.collection('asesores').doc(user.uid).get();
+        esAsesor = asesorDoc.exists;
+      } catch(e){ console.warn('[view_as] Error verificando asesor:', e); }
+
+      if (esAsesor) {
+        _readOnlyMode = true;
+        _readOnlyAsesorEmail = user.email || '';
+        userId = _viewAsFromUrl;
+        console.log('%c[view_as] Modo lectura activado para UID: ' + _viewAsFromUrl + ' por ' + user.email, 'color:#dc2626;font-weight:bold');
+
+        // Cargar perfil del cliente target
+        let clientePerfil = null;
+        try {
+          clientePerfil = await loadPerfil(_viewAsFromUrl);
+        } catch(e){ console.warn('[view_as] Error cargando perfil del cliente:', e); }
+
+        // Mostrar banner rojo
+        const clientName = (clientePerfil && clientePerfil.nombre) || 'cliente ' + _viewAsFromUrl.slice(0,8);
+        showReadOnlyBanner(clientName, user.email);
+
+        // Aplicar perfil del cliente al state (sin pedir onboarding — es solo lectura)
+        state.profile = Object.assign(state.profile||{}, {
+          uid: _viewAsFromUrl,
+          nombre: (clientePerfil && clientePerfil.nombre) || clientName,
+          email: (clientePerfil && clientePerfil.email) || '',
+          whatsapp: (clientePerfil && clientePerfil.whatsapp) || '',
+          tipoIngreso: (clientePerfil && clientePerfil.tipoIngreso) || '',
+          edad: (clientePerfil && clientePerfil.edad != null) ? clientePerfil.edad : null,
+          dependientes: (clientePerfil && clientePerfil.dependientes != null) ? clientePerfil.dependientes : undefined,
+          edadRetiro: (clientePerfil && clientePerfil.edadRetiro != null) ? clientePerfil.edadRetiro : null,
+          moneda: (clientePerfil && clientePerfil.moneda) || 'COP',
+          consentimientoTratamiento: (clientePerfil && clientePerfil.consentimientoTratamiento) || {aceptado:true}, // simulamos aceptado para no bloquear
+          consentimientoRecomendaciones: (clientePerfil && clientePerfil.consentimientoRecomendaciones) || {aceptado:false}
+        });
+        aplicarMoneda(state.profile.moneda);
+
+        const userDisplay = document.getElementById('user-display');
+        const userAvatar = document.getElementById('user-avatar');
+        if (userDisplay) userDisplay.textContent = state.profile.nombre + ' (lectura)';
+        if (userAvatar) userAvatar.textContent = (state.profile.nombre||'C').charAt(0).toUpperCase();
+
+        document.getElementById('login-screen').style.display = 'none';
+        document.getElementById('app').classList.add('show');
+        await loadAllData();
+        try { migrarDependientesLegacy(); } catch(e){}
+        return;
+      } else {
+        console.warn('[view_as] UID presente pero el usuario no es asesor. Ignorando view_as y siguiendo flujo normal.');
+      }
+    }
+
+    userId = user.uid;
+
     // Cargar perfil para decidir si debe ir al onboarding o a la app
     let perfil = null;
     try {

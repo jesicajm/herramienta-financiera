@@ -20,7 +20,7 @@
 
 const { onRequest, onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
-const { onDocumentUpdated } = require("firebase-functions/v2/firestore");
+const { onDocumentUpdated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { logger } = require("firebase-functions");
 const admin = require("firebase-admin");
 const nodemailer = require("nodemailer");
@@ -35,6 +35,8 @@ const {
   renderEmailRecordatorio12hText,
   renderEmailReagendamiento,
   renderEmailReagendamientoText,
+  renderEmailPostSesion,
+  renderEmailPostSesionText,
 } = require("./emailTemplates");
 
 admin.initializeApp();
@@ -66,7 +68,7 @@ const CONFIG = {
   //   2) Cuando el custom domain esté activo: apuntar a "https://app.abbapatrimonial.com"
   //   3) NUNCA apuntar a la URL default de Netlify (abba-finanzas.netlify.app) en producción
   //      hasta que Model B esté mergeado a main.
-  appUrl: "https://abba-finanzas.netlify.app",
+  appUrl: "https://feat-reestructura-diagnostico--abba-finanzas.netlify.app",
 };
 
 // ─────────────────────────────────────────────────────────────────
@@ -1063,3 +1065,296 @@ async function hasCompletedDiagnostico(sessionData) {
 
   return true;
 }
+
+// ─────────────────────────────────────────────────────────────────
+//  onClientModulesWritten — Trigger de notificación a Jessica
+//
+//  Se dispara cuando el cliente escribe en clientes/{uid}/modulos/{nombre}.
+//  Si tiene los 2 módulos mínimos (ingresos_gastos + fiscal), busca
+//  una sesión confirmada vinculada que todavía NO haya recibido la
+//  notificación, envía email a Jessica y marca el campo para no re-enviar.
+//
+//  Módulos mínimos: ingresos_gastos (perfil de ingresos y gastos),
+//    fiscal (perfil tributario, incluye el bloque LEGAL — estado civil,
+//    régimen conyugal, hijos, cónyuge). "Activos" NO es mínimo porque
+//    el cliente puede no tener activos registrables (si tiene, la
+//    estructura legal se declara por activo adentro del módulo).
+// ─────────────────────────────────────────────────────────────────
+const MODULOS_MINIMOS = ["ingresos_gastos", "fiscal"];
+
+exports.onClientModulesWritten = onDocumentWritten(
+  {
+    document: "clientes/{uid}/modulos/{nombreModulo}",
+    region: "us-central1",
+    secrets: ["GMAIL_PASSWORD"],
+    memory: "256MiB",
+    timeoutSeconds: 60,
+  },
+  async (event) => {
+    const { uid, nombreModulo } = event.params;
+
+    // Solo nos interesa si el módulo escrito es uno de los mínimos
+    if (!MODULOS_MINIMOS.includes(nombreModulo)) {
+      return;
+    }
+
+    // Ignorar si es una eliminación
+    if (!event.data || !event.data.after.exists) {
+      return;
+    }
+
+    logger.info(
+      `📝 Módulo escrito: clientes/${uid}/modulos/${nombreModulo}`
+    );
+
+    // Verificar que existan los 3 docs mínimos
+    const snaps = await Promise.all(
+      MODULOS_MINIMOS.map((m) =>
+        db.collection("clientes").doc(uid).collection("modulos").doc(m).get()
+      )
+    );
+    const faltantes = MODULOS_MINIMOS.filter((m, i) => !snaps[i].exists);
+    if (faltantes.length > 0) {
+      logger.info(
+        `  → Aún faltan módulos para ${uid}: ${faltantes.join(", ")}`
+      );
+      return;
+    }
+
+    // Buscar sesión confirmada vinculada a este uid que no haya sido notificada
+    const sesionesSnap = await db
+      .collection("diagnostico_sessions")
+      .where("linked_user_uid", "==", uid)
+      .where("status", "==", "confirmed")
+      .limit(5)
+      .get();
+
+    if (sesionesSnap.empty) {
+      logger.info(
+        `  → UID ${uid} completó módulos pero no tiene sesión confirmada vinculada`
+      );
+      return;
+    }
+
+    // Encontrar la primera sesión sin notificación enviada
+    const sesionDoc = sesionesSnap.docs.find(
+      (d) => !d.data().cliente_listo_notificado_at
+    );
+    if (!sesionDoc) {
+      logger.info(
+        `  → UID ${uid} ya fue notificado para todas sus sesiones`
+      );
+      return;
+    }
+
+    const sesion = sesionDoc.data();
+    logger.info(
+      `  → ✅ Cliente ${sesion.client_name} listo. Notificando a Jessica…`
+    );
+
+    try {
+      const transporter = makeTransporter();
+      const fechaSesion = sesion.session_start.toDate
+        ? sesion.session_start.toDate()
+        : sesion.session_start;
+      const subject = `✅ ${sesion.client_name} completó sus datos — sesión del ${formatBogota(fechaSesion)}`;
+
+      const html = `
+        <div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:560px;margin:0 auto;color:#1e2853;">
+          <div style="background:#1e2853;color:#fff;padding:24px;border-radius:8px 8px 0 0;">
+            <p style="margin:0 0 4px;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#c9d3e6;">ABBA Patrimonial</p>
+            <h2 style="margin:0;font-size:20px;font-weight:400;color:#fff;">Cliente listo para preparar la sesión</h2>
+          </div>
+          <div style="background:#fff;border:1px solid #e5e7eb;border-top:0;padding:24px;border-radius:0 0 8px 8px;">
+            <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">
+              <strong>${sesion.client_name}</strong> completó los módulos mínimos en la app (ingresos y gastos + perfil fiscal con estructura legal).
+            </p>
+            <table style="width:100%;border-collapse:collapse;font-size:14px;margin:0 0 20px;">
+              <tr><td style="padding:8px 12px;background:#f6f3ec;font-weight:600;">Cliente</td>
+                  <td style="padding:8px 12px;border-bottom:1px solid #eee;">${sesion.client_name}</td></tr>
+              <tr><td style="padding:8px 12px;background:#f6f3ec;font-weight:600;">Email</td>
+                  <td style="padding:8px 12px;border-bottom:1px solid #eee;"><a href="mailto:${sesion.client_email}" style="color:#10578f;text-decoration:none;">${sesion.client_email}</a></td></tr>
+              <tr><td style="padding:8px 12px;background:#f6f3ec;font-weight:600;">Sesión</td>
+                  <td style="padding:8px 12px;border-bottom:1px solid #eee;">${formatBogota(fechaSesion)}</td></tr>
+            </table>
+            <p style="margin:0 0 20px;font-size:14px;line-height:1.6;">
+              Ya podés entrar al panel admin, abrir "Ver preparación" y descargar el contexto para armar el documento con Claude.ai.
+            </p>
+            <div style="text-align:center;">
+              <a href="${CONFIG.appUrl}/admin-diagnostico.html" style="display:inline-block;background:#10578f;color:#fff;text-decoration:none;padding:12px 28px;border-radius:6px;font-size:14px;font-weight:600;">
+                Ir al panel admin →
+              </a>
+            </div>
+          </div>
+        </div>
+      `;
+
+      const text = `${sesion.client_name} completó sus datos en la app.
+
+Email: ${sesion.client_email}
+Sesión programada: ${formatBogota(fechaSesion)}
+
+Entrá al panel admin para preparar el documento:
+${CONFIG.appUrl}/admin-diagnostico.html`;
+
+      await transporter.sendMail({
+        from: `"Sistema ABBA" <${CONFIG.gmail.user}>`,
+        to: CONFIG.jessica.email,
+        subject,
+        html,
+        text,
+      });
+
+      await sesionDoc.ref.update({
+        cliente_listo_notificado_at: new Date(),
+      });
+
+      logger.info(
+        `  → ✉️ Notificación enviada a Jessica para sesión ${sesionDoc.id}`
+      );
+    } catch (err) {
+      logger.error(
+        `Error enviando notificación de cliente listo para ${sesionDoc.id}:`,
+        err
+      );
+      // No marcamos como notificado para que reintente la próxima escritura
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────
+//  sendPostSessionEmail — Callable para enviar el correo post-sesión
+//  al cliente firmado por Natalia.
+//
+//  Jessica llena los campos del borrador en el panel admin, revisa
+//  y aprieta "Enviar correo al cliente". El panel llama esta función
+//  con { sessionId }. La función:
+//    1) Verifica que el que llama es asesor
+//    2) Lee la sesión + su postSesion
+//    3) Valida contenido mínimo (lectura + al menos 1 punto + camino)
+//    4) Envía el correo al client_email firmado por Natalia
+//    5) Marca postSesion.estado = "enviado" + postSesion.enviado_at
+// ─────────────────────────────────────────────────────────────────
+exports.sendPostSessionEmail = onCall(
+  {
+    region: "us-central1",
+    secrets: ["GMAIL_PASSWORD"],
+    memory: "256MiB",
+    timeoutSeconds: 60,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión primero.");
+    }
+
+    const asesorSnap = await db
+      .collection("asesores")
+      .doc(request.auth.uid)
+      .get();
+    if (!asesorSnap.exists) {
+      throw new HttpsError(
+        "permission-denied",
+        "Solo asesoras autorizadas pueden enviar correos post-sesión."
+      );
+    }
+    const asesorData = asesorSnap.data() || {};
+
+    const sessionId =
+      request.data && typeof request.data.sessionId === "string"
+        ? request.data.sessionId.trim()
+        : "";
+    if (!sessionId) {
+      throw new HttpsError("invalid-argument", "sessionId es requerido.");
+    }
+
+    const sessionRef = db.collection("diagnostico_sessions").doc(sessionId);
+    const sessionSnap = await sessionRef.get();
+    if (!sessionSnap.exists) {
+      throw new HttpsError("not-found", "Sesión no encontrada.");
+    }
+    const session = sessionSnap.data();
+    const post = session.postSesion || {};
+
+    if (!post.lectura_situacion || !post.lectura_situacion.trim()) {
+      throw new HttpsError(
+        "failed-precondition",
+        "La lectura de la situación está vacía."
+      );
+    }
+    const puntosValidos = (post.puntos || []).filter(
+      (p) => p && (p.titulo || p.diagnostico || p.accion)
+    );
+    if (puntosValidos.length === 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        "No hay puntos priorizados cargados."
+      );
+    }
+    const camino = post.camino || {};
+    if (!camino.nombre && !camino.detalle) {
+      throw new HttpsError(
+        "failed-precondition",
+        "No hay camino recomendado cargado."
+      );
+    }
+    if (!session.client_email) {
+      throw new HttpsError(
+        "failed-precondition",
+        "La sesión no tiene email del cliente."
+      );
+    }
+
+    const sessionDate = session.session_start.toDate
+      ? session.session_start.toDate()
+      : session.session_start;
+
+    const ctx = {
+      clientName: session.client_name || "",
+      sessionDate,
+      lecturaSituacion: post.lectura_situacion,
+      puntos: puntosValidos,
+      caminoNombre: camino.nombre || "",
+      caminoPrecio: camino.precio || "",
+      caminoDetalle: camino.detalle || "",
+      supportEmail: CONFIG.natalia.email,
+    };
+
+    const transporter = makeTransporter();
+    try {
+      await transporter.sendMail({
+        from: `"Natalia Jaramillo — ABBA Patrimonial" <${CONFIG.gmail.user}>`,
+        to: session.client_email,
+        subject: `Tu diagnóstico patrimonial · próximos pasos`,
+        html: renderEmailPostSesion(ctx),
+        text: renderEmailPostSesionText(ctx),
+        replyTo: CONFIG.natalia.email,
+      });
+    } catch (err) {
+      logger.error(
+        `Error enviando correo post-sesión para ${sessionId}:`,
+        err
+      );
+      throw new HttpsError(
+        "internal",
+        "No se pudo enviar el correo. " + (err.message || "")
+      );
+    }
+
+    await sessionRef.update({
+      "postSesion.estado": "enviado",
+      "postSesion.enviado_at": new Date(),
+      "postSesion.enviado_by": request.auth.uid,
+      "postSesion.enviado_by_name":
+        asesorData.nombre || request.auth.token.email || "",
+    });
+
+    logger.info(
+      `✉️  Correo post-sesión enviado a ${session.client_email} para ${sessionId} por ${asesorData.nombre || request.auth.uid}`
+    );
+
+    return {
+      success: true,
+      enviadoA: session.client_email,
+    };
+  }
+);

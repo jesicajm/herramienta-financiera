@@ -148,6 +148,428 @@
     .badge-expired { background: #fef2f2; color: var(--alert); }
     .badge-cancelled { background: #f3f4f6; color: var(--muted); }
 
+    /* ─── Chips de vinculación y módulos (Task #5) ─── */
+    .card-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: 10px 0 0;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      font-weight: 500;
+      padding: 4px 10px;
+      border-radius: 10px;
+      white-space: nowrap;
+      line-height: 1.4;
+    }
+    .chip-linked { background: #ecfdf5; color: var(--success); }
+    .chip-unlinked { background: #f3f4f6; color: var(--muted); }
+    .chip-modulos { background: #eef4fb; color: var(--brand); }
+    .chip-modulos-loading { background: #f3f4f6; color: var(--muted); font-style: italic; }
+    .linked-meta {
+      font-size: 12px;
+      color: var(--muted);
+      margin: 6px 0 0;
+      line-height: 1.5;
+    }
+
+    /* ─── Vista completa de preparación (Task #6) ─── */
+    .prep-view-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .prep-view-header h2 {
+      margin: 0;
+      font-size: 20px;
+      color: var(--navy);
+      font-weight: 500;
+    }
+    .prep-view-header .prep-sub {
+      margin: 4px 0 0;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .btn-back {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--brand);
+      font-size: 13px;
+      font-weight: 500;
+      padding: 8px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .btn-back:hover { background: var(--cream); }
+    .prep-section {
+      margin-bottom: 20px;
+    }
+    .prep-section h4 {
+      margin: 0 0 10px;
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--brand);
+      font-weight: 600;
+    }
+    .prep-perfil-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 12px;
+    }
+    .prep-perfil-grid > div .pl {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 0 0 2px;
+    }
+    .prep-perfil-grid > div .pv {
+      font-size: 14px;
+      color: var(--ink);
+      margin: 0;
+      font-weight: 500;
+    }
+    .prep-totales {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+    }
+    .total-card {
+      background: var(--cream);
+      border-left: 3px solid var(--brand);
+      padding: 12px 14px;
+      border-radius: 0 4px 4px 0;
+    }
+    .total-card .tl {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 0 0 4px;
+    }
+    .total-card .tv {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--navy);
+      margin: 0;
+    }
+    .total-card.tc-negative .tv { color: var(--alert); }
+    .total-card.tc-positive .tv { color: var(--success); }
+    .total-card .tfoot-mini {
+      font-size: 10px;
+      color: var(--muted);
+      margin: 4px 0 0;
+      line-height: 1.4;
+      font-style: italic;
+    }
+    .prep-modulos-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .mod-chip {
+      font-size: 11px;
+      padding: 5px 10px;
+      border-radius: 10px;
+      background: #eef4fb;
+      color: var(--brand);
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+      user-select: none;
+      border: none;
+    }
+    .mod-chip:hover { background: #d7e5f3; }
+    .mod-chip.active {
+      background: var(--brand);
+      color: #fff;
+    }
+    .mod-chip-empty {
+      background: #f3f4f6;
+      color: var(--muted);
+      font-style: italic;
+      cursor: default;
+    }
+    .mod-detail {
+      margin-top: 14px;
+      background: #fafbfd;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 16px 18px;
+    }
+    .mod-detail h5 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      color: var(--navy);
+      font-weight: 600;
+    }
+    .mod-detail table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .mod-detail th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .mod-detail td {
+      padding: 7px 8px;
+      border-bottom: 1px solid #f0f2f6;
+      color: var(--ink);
+    }
+    .mod-detail td.num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .mod-detail tr:last-child td { border-bottom: none; }
+    .mod-detail tfoot td {
+      font-weight: 600;
+      color: var(--navy);
+      border-top: 2px solid var(--border);
+      border-bottom: none;
+    }
+    .mod-detail .cat-tag {
+      display: inline-block;
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 8px;
+      background: #eef4fb;
+      color: var(--brand);
+      font-weight: 500;
+    }
+    .prep-empty {
+      font-size: 13px;
+      color: var(--muted);
+      font-style: italic;
+      padding: 10px 0;
+    }
+    .prep-loader {
+      text-align: center;
+      color: var(--muted);
+      padding: 40px 0;
+      font-size: 14px;
+    }
+    /* Modal con scroll si el contenido se pasa de alto */
+    .modal.modal-xl {
+      max-height: 85vh;
+      overflow-y: auto;
+    }
+    .prep-stub-link {
+      font-size: 13px;
+      color: var(--muted);
+      margin: 0;
+      text-align: left;
+      flex: 1;
+    }
+    .prep-stub-link a {
+      color: var(--brand);
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .prep-stub-link a:hover { text-decoration: underline; }
+
+    /* ─── Bloque IA Claude.ai (pre-sesión) ─── */
+    .ai-helper {
+      background: linear-gradient(135deg, #faf6ef 0%, #f6f3ec 100%);
+      border: 1px solid #e8dfc9;
+      border-radius: 8px;
+      padding: 18px 20px;
+      margin: 0 0 20px;
+    }
+    .ai-helper h4 {
+      margin: 0 0 6px;
+      font-size: 13px;
+      color: var(--navy);
+      font-weight: 600;
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .ai-helper .ai-desc {
+      font-size: 13px;
+      color: var(--ink);
+      margin: 0 0 14px;
+      line-height: 1.5;
+    }
+    .ai-helper .ai-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .ai-helper button {
+      background: #fff;
+      border: 1px solid var(--brand);
+      color: var(--brand);
+      padding: 9px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background 0.15s;
+    }
+    .ai-helper button:hover { background: var(--cream); }
+    .ai-helper button.btn-primary-ai {
+      background: var(--brand);
+      color: #fff;
+    }
+    .ai-helper button.btn-primary-ai:hover { background: var(--navy); }
+    .ai-helper details {
+      margin-top: 14px;
+      font-size: 12px;
+    }
+    .ai-helper summary {
+      cursor: pointer;
+      color: var(--muted);
+      user-select: none;
+      padding: 4px 0;
+    }
+    .ai-helper summary:hover { color: var(--brand); }
+    .ai-helper pre {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 12px;
+      font-size: 11px;
+      line-height: 1.5;
+      max-height: 320px;
+      overflow: auto;
+      white-space: pre-wrap;
+      margin: 8px 0 0;
+      color: var(--ink);
+      font-family: 'SF Mono', Monaco, 'Cascadia Mono', monospace;
+    }
+    .ai-helper .ai-toast {
+      display: inline-block;
+      margin-left: 10px;
+      font-size: 12px;
+      color: var(--success);
+      font-weight: 500;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .ai-helper .ai-toast.show { opacity: 1; }
+
+    /* ─── Formulario post-sesión ─── */
+    .post-section {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px 22px;
+      margin: 0 0 18px;
+    }
+    .post-section h4 {
+      margin: 0 0 4px;
+      font-size: 13px;
+      color: var(--navy);
+      font-weight: 600;
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .post-section .section-hint {
+      margin: 0 0 14px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .post-field {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--ink);
+      margin: 14px 0 6px;
+      letter-spacing: 0.03em;
+    }
+    .post-input, .post-textarea, .post-select {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-size: 14px;
+      font-family: inherit;
+      color: var(--ink);
+      background: #fff;
+      box-sizing: border-box;
+    }
+    .post-textarea { resize: vertical; min-height: 70px; }
+    .post-input:focus, .post-textarea:focus, .post-select:focus {
+      outline: none;
+      border-color: var(--brand);
+    }
+    .post-punto {
+      background: #fafbfd;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 14px 16px;
+      margin: 10px 0;
+    }
+    .post-punto .punto-num {
+      display: inline-block;
+      width: 24px;
+      height: 24px;
+      line-height: 24px;
+      text-align: center;
+      background: var(--brand);
+      color: #fff;
+      border-radius: 50%;
+      font-size: 12px;
+      font-weight: 600;
+      margin-right: 8px;
+    }
+    .post-punto .punto-head {
+      font-size: 13px;
+      color: var(--navy);
+      font-weight: 600;
+      margin: 0 0 6px;
+    }
+    .post-save-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 20px;
+      background: var(--cream);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-top: 20px;
+    }
+    .post-save-status {
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .post-save-status.saved { color: var(--success); }
+    .post-save-status.error { color: var(--alert); }
+    .post-estado-badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      border-radius: 10px;
+      margin-left: 10px;
+    }
+    .post-estado-badge.borrador { background: #fff7ed; color: var(--warning); }
+    .post-estado-badge.enviado { background: #ecfdf5; color: var(--success); }
+
     .card-details {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -370,6 +792,52 @@
 
       <div id="msg-container"></div>
       <div id="cards" class="cards"></div>
+
+      <!-- Vista completa de POST-SESIÓN -->
+      <div id="post-view" style="display:none">
+        <div class="prep-view-header">
+          <div>
+            <h2 id="post-title">Post-sesión</h2>
+            <p class="prep-sub" id="post-subtitle">—</p>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <button class="btn-back" id="post-close">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <polyline points="15 18 9 12 15 6"/>
+              </svg>
+              Volver al panel
+            </button>
+          </div>
+        </div>
+        <div id="post-body">
+          <div class="prep-loader">Cargando…</div>
+        </div>
+      </div>
+
+      <!-- Vista completa de preparación (reemplaza al modal) -->
+      <div id="prep-view" style="display:none">
+        <div class="prep-view-header">
+          <div>
+            <h2 id="prep-title">Preparación de sesión</h2>
+            <p class="prep-sub" id="prep-subtitle">—</p>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <a id="prep-open-app" style="font-size:13px;color:var(--brand);cursor:pointer;text-decoration:none;"
+               title="Abre el app con la vista del cliente en modo solo lectura">
+              👁 Abrir app del cliente (modo lectura)
+            </a>
+            <button class="btn-back" id="prep-close">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <polyline points="15 18 9 12 15 6"/>
+              </svg>
+              Volver al panel
+            </button>
+          </div>
+        </div>
+        <div id="prep-body">
+          <div class="prep-loader">Cargando datos del cliente…</div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -431,8 +899,11 @@
     } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
     import {
       getFirestore, collection, query, where, orderBy, onSnapshot,
-      doc, getDoc, updateDoc, serverTimestamp, limit
+      doc, getDoc, getDocs, updateDoc, serverTimestamp, limit
     } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+    import {
+      getFunctions, httpsCallable
+    } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-functions.js";
 
     // Firebase config del proyecto evaluafinanzas (valores públicos, seguros en el cliente)
     const firebaseConfig = {
@@ -448,6 +919,7 @@
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const db = getFirestore(app);
+    const functions = getFunctions(app, "us-central1");
     const provider = new GoogleAuthProvider();
 
     // ───── DOM refs ─────
@@ -620,14 +1092,32 @@
           ? `https://wa.me/${String(s.client_whatsapp).replace(/[^\d]/g, "")}`
           : "";
 
+        const isLinked = !!s.linked_user_uid;
+        const linkedChip = isLinked
+          ? `<span class="chip chip-linked" title="Vinculada con cuenta app">✓ Vinculada</span>`
+          : `<span class="chip chip-unlinked" title="Cliente aún no se registró en la app">○ Sin vincular</span>`;
+        // Chip de módulos: placeholder, se rellena después con fetchModuleCount
+        const modulosChipHtml = isLinked
+          ? `<span class="chip chip-modulos-loading" data-mod-chip="${id}" data-linked-uid="${escapeAttr(s.linked_user_uid)}">… módulos</span>`
+          : "";
+
         html.push(`
-          <div class="card" data-id="${id}">
+          <div class="card" data-id="${id}"${isLinked ? ` data-linked-uid="${escapeAttr(s.linked_user_uid)}"` : ""}>
             <div class="card-head">
               <div>
                 <p class="card-name">${escapeHtml(s.client_name || "—")}</p>
                 <p class="card-email">
                   <a href="mailto:${escapeHtml(s.client_email || "")}">${escapeHtml(s.client_email || "—")}</a>
                 </p>
+                <div class="card-chips">
+                  ${linkedChip}
+                  ${modulosChipHtml}
+                </div>
+                ${
+                  isLinked
+                    ? `<p class="linked-meta">${escapeHtml(s.linked_user_email || "—")}${s.linked_at ? " · vinculada el " + fmt(s.linked_at) : ""}</p>`
+                    : ""
+                }
               </div>
               <span class="badge ${badge.cls}">${badge.text}</span>
             </div>
@@ -698,15 +1188,48 @@
             }
             ${
               isConfirmed && !s.original_session_start
-                ? `<div class="card-actions">
+                ? (function(){
+                    const sessionStartMs = s.session_start && s.session_start.toDate ? s.session_start.toDate().getTime() : 0;
+                    const yaPasoLaSesion = sessionStartMs > 0 && sessionStartMs < Date.now();
+                    const sessionStartIso = s.session_start && s.session_start.toDate ? s.session_start.toDate().toISOString() : "";
+                    const postEstado = s.postSesion && s.postSesion.estado ? s.postSesion.estado : null;
+                    const postBtnLabel = postEstado === "enviado"
+                      ? "📝 Post-sesión (enviada)"
+                      : postEstado === "borrador"
+                        ? "📝 Post-sesión (borrador)"
+                        : "📝 Post-sesión";
+                    return `<div class="card-actions">
+                     ${
+                       isLinked
+                         ? `<button class="btn btn-primary" data-action="prep"
+                                   data-id="${id}"
+                                   data-name="${escapeAttr(s.client_name || "")}"
+                                   data-linked-uid="${escapeAttr(s.linked_user_uid)}"
+                                   data-session-start="${sessionStartIso}">
+                              Ver preparación
+                            </button>`
+                         : ""
+                     }
+                     ${
+                       isLinked && yaPasoLaSesion
+                         ? `<button class="btn btn-secondary" data-action="post"
+                                   data-id="${id}"
+                                   data-name="${escapeAttr(s.client_name || "")}"
+                                   data-linked-uid="${escapeAttr(s.linked_user_uid)}"
+                                   data-session-start="${sessionStartIso}">
+                              ${postBtnLabel}
+                            </button>`
+                         : ""
+                     }
                      <button class="btn btn-secondary" data-action="reagendar"
                              data-id="${id}"
                              data-name="${escapeAttr(s.client_name || "")}"
-                             data-current="${s.session_start && s.session_start.toDate ? s.session_start.toDate().toISOString() : ""}"
+                             data-current="${sessionStartIso}"
                              data-reschedule-url="${escapeAttr(s.calendly_reschedule_url || "")}">
                        Reagendar
                      </button>
-                   </div>`
+                   </div>`;
+                  })()
                 : ""
             }
             ${
@@ -733,6 +1256,42 @@
           btn.dataset.rescheduleUrl
         ));
       });
+      cardsContainer.querySelectorAll('[data-action="prep"]').forEach(btn => {
+        btn.addEventListener("click", () => openPrepView(
+          btn.dataset.id,
+          btn.dataset.name,
+          btn.dataset.linkedUid,
+          btn.dataset.sessionStart
+        ));
+      });
+      cardsContainer.querySelectorAll('[data-action="post"]').forEach(btn => {
+        btn.addEventListener("click", () => openPostView(
+          btn.dataset.id,
+          btn.dataset.name,
+          btn.dataset.linkedUid,
+          btn.dataset.sessionStart
+        ));
+      });
+
+      // Enriquecer: contar módulos iniciados en paralelo para cada card vinculada
+      cardsContainer.querySelectorAll('[data-mod-chip]').forEach(async (chip) => {
+        const uid = chip.dataset.linkedUid;
+        if (!uid) return;
+        try {
+          const modsSnap = await getDocs(collection(db, "clientes", uid, "modulos"));
+          const count = modsSnap.size;
+          chip.classList.remove("chip-modulos-loading");
+          chip.classList.add("chip-modulos");
+          chip.textContent = count === 0
+            ? "0 módulos iniciados"
+            : (count === 1 ? "1 módulo iniciado" : `${count} módulos iniciados`);
+        } catch(e){
+          console.warn("[prep] No se pudo contar módulos de", uid, e);
+          chip.classList.remove("chip-modulos-loading");
+          chip.classList.add("chip-unlinked");
+          chip.textContent = "módulos: sin lectura";
+        }
+      });
     }
 
     function statusBadge(status) {
@@ -751,6 +1310,1462 @@
         .replace(/"/g, "&quot;").replace(/'/g, "&#039;");
     }
     function escapeAttr(s) { return escapeHtml(s); }
+
+    // ─── Preparación de sesión (Task #5 + #6) ─────────────────
+    const prepView = document.getElementById("prep-view");
+    const prepTitle = document.getElementById("prep-title");
+    const prepSubtitle = document.getElementById("prep-subtitle");
+    const prepBody = document.getElementById("prep-body");
+    const panelListEls = [
+      document.querySelector(".tabs"),
+      document.getElementById("msg-container"),
+      document.getElementById("cards"),
+    ];
+
+    function showPrepView(show){
+      prepView.style.display = show ? "block" : "none";
+      panelListEls.forEach(el => { if (el) el.style.display = show ? "none" : ""; });
+      // Scroll al tope cuando se cambia de vista
+      window.scrollTo({ top: 0, behavior: "instant" });
+    }
+
+    document.getElementById("prep-close").addEventListener("click", () => showPrepView(false));
+
+    // Guardado temporal del uid y módulos del cliente actualmente abierto (para los detalles y el stub)
+    let currentPrepUid = null;
+    let currentPrepModulos = {};
+
+    // URL base del app principal (misma origin que el panel admin, raíz del sitio)
+    const APP_BASE_URL = window.location.origin + "/";
+
+    document.getElementById("prep-open-app").addEventListener("click", (e) => {
+      e.preventDefault();
+      const uid = currentPrepUid;
+      if (!uid){
+        alert("No hay cliente vinculado para abrir.");
+        return;
+      }
+      const url = APP_BASE_URL + "?view_as=" + encodeURIComponent(uid);
+      window.open(url, "_blank");
+    });
+
+    // ═══ Prompt pre-sesión para Claude.ai ═══════════════════════
+    const PROMPT_PRE_SESION = `# Rol
+Sos Claude, asistiendo a Jessica (ABBA Patrimonial, Colombia). Te paso los datos de un cliente que acaba de pagar su sesión de diagnóstico patrimonial con Natalia Jaramillo. Armá el DOCUMENTO DE PREPARACIÓN que Natalia leerá 10 minutos antes de la reunión.
+
+# Objetivo
+Que Natalia llegue a la reunión con los riesgos cuantificados, preguntas afiladas y una recomendación de camino tentativa alineada al menú de servicios de ABBA.
+
+**Importante**: los datos de la app son INSUMO; algunas cosas se confirman o profundizan en la reunión. Por eso varias recomendaciones tendrán BIFURCACIONES según lo que el cliente confirme (ej: "si confirma que tiene empresa activa → Camino B; si no → Camino C").
+
+# Tono y estilo
+- Español colombiano, tuteo cercano profesional.
+- Directo, sin relleno. Natalia tiene 10 minutos para leer.
+- Datos SIEMPRE cuantificados en pesos colombianos (COP).
+- Sin consejos genéricos de educación financiera.
+
+# Menú de servicios de ABBA (precios de referencia)
+
+**Camino A — Diseño Patrimonial autogenerado por la app · $480.000 COP**
+Para complejidad media. Cliente quiere ver el diseño completo antes de validar con equipo. Entregable en minutos, sin sesiones adicionales.
+
+**Camino B — Diseño Patrimonial validado con Natalia · $2.000.000 a $4.000.000 COP**
+Según patrimonio y dimensiones involucradas. Es el servicio núcleo de ABBA. Sesionado, Natalia lo entrega firmado. Para casos de complejidad alta o varias dimensiones (fiscal + sucesoral + liquidez + protección).
+
+**Camino C — Consulta tributaria específica · desde $350.000 a $3.500.000 COP**
+Para clientes con tema tributario específico, se refiere al tributarista del equipo:
+- Hora simple: $350.000
+- Análisis factibilidad SAS: $850.000
+- Asesoría tributaria completa: $1.450.000
+- Análisis internacional (doble tributación, residencia fiscal): desde $3.350.000
+
+**Camino D — Asesoría financiera personal continua · $[precio por definir en reunión] mensual**
+Para casos de saneamiento financiero personal (deudas, presupuesto, fondo emergencia). Acompañamiento mensual con Natalia por X meses con entregables definidos. Compromiso mínimo 3 meses. Rango estimado $600.000-$1.000.000 mensual.
+
+**Camino E — Ejecución de estructura · cotización aparte**
+Para clientes que ya tienen el Diseño y quieren implementar. Se cotiza por componentes reales (constitución de sociedad patrimonial ~7-8 SMMLV, aporte de bienes, apertura de cuentas internacionales, etc.).
+
+# Secciones requeridas (en este orden exacto)
+
+## 1. Lectura rápida de la situación (máx 5 líneas)
+Resumen de quién es el cliente, su situación actual y lo que trae a la sesión (su motivo).
+
+## 2. Riesgos cuantificados (3 a 5)
+Formato por riesgo: **[Nombre del riesgo] — $X** · Explicación en 1-2 líneas de por qué y cómo lo detectaste de los datos.
+Riesgos típicos a buscar: UGPP, concentración patrimonial, falta de liquidez, exposición cambiaria, protección sucesoral débil (todo en Propiedad Directa cuando hay patrimonio importante), carga fiscal subóptima, mezcla personal-empresarial, dependencia de un solo contrato, fondo de emergencia insuficiente.
+
+## 3. Preguntas sugeridas para profundizar (3 a 5)
+Específicas, no genéricas. **Marcá cuáles son "preguntas destraba"** 🔑 — las que al responderse definen qué Camino aplica.
+
+## 4. Camino(s) recomendado(s) con bifurcaciones
+
+Formato por cada camino plausible:
+
+**Camino [X] — [Nombre] · [Precio]**
+- **Encaja si**: condiciones de los datos de la app + condiciones a confirmar en reunión.
+- **Depende de que el cliente confirme**: pregunta destraba 🔑 que define este camino.
+- **Justificación**: por qué este camino para este cliente (2-3 líneas, cuantificando donde se pueda).
+
+Si el caso tiene bifurcación clara, listá 2-3 caminos posibles en **orden de probabilidad**. Si está muy claro, uno solo.
+
+Ejemplo del formato esperado:
+> **Camino B — Diseño Patrimonial validado · $3M-4M** (recomendado principal)
+> - Encaja si: patrimonio > $800M y varias dimensiones (fiscal + sucesoral + liquidez).
+> - Depende de que el cliente confirme: 🔑 ¿tiene empresa activa que vale la pena vehiculizar?
+> - Justificación: 3 inmuebles sin estructura ($1.200M), flujo mensual estable $18M, dependientes.
+>
+> **Camino C alternativo — Consulta tributaria SAS · $850K**
+> - Encaja si: en la reunión aparece que el único tema real es tributario (no quiere diseño completo) y hay actividad de servicios/consultoría que podría vehiculizarse en SAS.
+> - Depende de que el cliente confirme: 🔑 ¿su interés real es solo bajar la carga tributaria o quiere rediseñar el patrimonio completo?
+
+# Datos del cliente
+<PEGÁ EL CONTEXTO DESCARGADO DEL PANEL A CONTINUACIÓN>`;
+
+    // ═══ Prompt post-sesión para Claude.ai ═══════════════════════
+    const PROMPT_POST_SESION = `# Rol
+Sos Claude, asistiendo a Jessica (ABBA Patrimonial, Colombia). Natalia Jaramillo acaba de terminar una sesión de diagnóstico patrimonial con un cliente. Te paso la TRANSCRIPCIÓN de la reunión + el CONTEXTO del cliente (datos de la app). Tu tarea es generar el borrador del correo post-sesión que Jessica revisará y mandará al cliente firmado por Natalia.
+
+# Objetivo
+Que el cliente reciba un correo que (1) demuestra que fue escuchado, (2) le entrega 3 hallazgos accionables de alto valor, (3) le propone un camino concreto con precio para seguir trabajando con ABBA.
+
+# Tono y estilo
+- Español colombiano, tuteo cercano profesional (tú/tienes/puedes, no vos).
+- Sin em-dashes (—). Usá punto, coma, dos puntos.
+- Directo, honesto. Nada de relleno motivacional genérico.
+- Montos SIEMPRE en pesos colombianos (COP).
+- Mantener la voz de Natalia: sabe lo que hace, no sobrevende.
+
+# Menú de servicios de ABBA (recordatorio de precios)
+
+- **Camino A — Diseño Patrimonial autogenerado · $480.000 COP**
+- **Camino B — Diseño Patrimonial validado con Natalia · $2.000.000-$4.000.000 COP**
+- **Camino C — Consulta tributaria específica · $350.000-$3.500.000 COP** (hora simple $350K, factibilidad SAS $850K, asesoría completa $1.450K, internacional desde $3.350K)
+- **Camino D — Asesoría financiera personal continua · $600.000-$1.000.000 COP/mes** (mínimo 3 meses)
+- **Camino E — Ejecución de estructura · cotización aparte**
+
+# Formato de salida esperado — EXACTAMENTE ESTOS BLOQUES CON SUS HEADERS
+
+Devolveme la respuesta en MARKDOWN con esta estructura exacta (Jessica va a copy-pegar cada bloque a un campo del panel):
+
+## LECTURA DE LA SITUACIÓN
+
+<Un párrafo de 3-5 líneas que resume lo que viste. Primera persona plural "vemos", "notamos". Que el cliente se sienta leído, no analizado. NO empieces con "Gracias por la sesión" ni similares — ese agradecimiento ya va en otra parte del correo. Entrá directo al diagnóstico.>
+
+## PUNTO 1
+**Título**: <frase de 3-7 palabras, lo más concreto posible>
+**Diagnóstico**: <2-3 líneas con el hallazgo cuantificado. Por qué importa.>
+**Acción**: <qué hacer, en 1-2 líneas accionables, no genéricas>
+
+## PUNTO 2
+**Título**: <...>
+**Diagnóstico**: <...>
+**Acción**: <...>
+
+## PUNTO 3
+**Título**: <...>
+**Diagnóstico**: <...>
+**Acción**: <...>
+
+## CAMINO RECOMENDADO
+**Camino**: <Camino A | B | C | D | E — nombre del servicio>
+**Precio**: <monto en COP o rango o "cotización aparte">
+**Detalle**: <2-4 líneas explicando qué incluye este camino para ESTE cliente, por qué encaja según lo que vieron en la sesión, cuáles son los próximos pasos operativos (ej. "agendamos una sesión con Natalia la próxima semana para...").>
+
+# Datos del cliente (de la app)
+<AQUÍ VA EL CONTEXTO DESCARGADO>
+
+# Transcripción de la sesión
+<AQUÍ VA LA TRANSCRIPCIÓN DE LA REUNIÓN>`;
+
+    // ═══ Generador de contexto markdown para Claude.ai ═══════════
+    function generarContextoMarkdown(clientName, perfil, modulos, sessionMeta){
+      const L = [];
+      L.push(`# Contexto del cliente: ${clientName || "—"}`);
+      if (sessionMeta && sessionMeta.sessionStart){
+        L.push(`Sesión programada: ${fmt({ toDate: () => new Date(sessionMeta.sessionStart) })}`);
+      }
+      if (sessionMeta && sessionMeta.motivo){
+        L.push(``);
+        L.push(`## Motivo del cliente (texto escrito al reservar)`);
+        L.push(`> ${sessionMeta.motivo}`);
+      }
+
+      // Perfil
+      L.push(``, `## Perfil`);
+      L.push(`- Nombre: ${perfil.nombre || "—"}`);
+      L.push(`- Email: ${perfil.email || "—"}`);
+      L.push(`- Edad: ${perfil.edad != null ? perfil.edad + " años" : "—"}`);
+      L.push(`- Edad de retiro deseada: ${perfil.edadRetiro != null ? perfil.edadRetiro + " años" : "—"}`);
+      L.push(`- Tipo de ingreso declarado: ${perfil.tipoIngreso || "—"}`);
+      L.push(`- Moneda: ${perfil.moneda || "COP"}`);
+      if (perfil.dependientes != null) L.push(`- Dependientes: ${perfil.dependientes}`);
+
+      // Ingresos y gastos
+      const ig = modulos.ingresos_gastos;
+      const varInc = modulos.ingresos_variables;
+      if (ig){
+        L.push(``, `## Ingresos y gastos (módulo 1)`);
+        if (ig.tipoIngreso) L.push(`- Tipo de ingreso en M1: ${ig.tipoIngreso}`);
+        if (ig.tieneEmpleadosArt336) L.push(`- Tiene empleados (art. 336): sí`);
+        const fuentes = Array.isArray(ig.fuentes_ingreso) ? ig.fuentes_ingreso : [];
+        if (fuentes.length > 0){
+          L.push(``, `### Fuentes de ingreso fijo`);
+          fuentes.forEach(f => {
+            L.push(`- ${f.nombre || "—"}: ${fmtCOP(f.monto)}/mes${f.claseIngreso ? ' · clase fiscal: **' + f.claseIngreso + '**' : ' · *sin clasificar*'}`);
+          });
+          const totalFijos = fuentes.reduce((s,f)=>s+(+f.monto||0),0);
+          L.push(`- **Total ingresos fijos: ${fmtCOP(totalFijos)}/mes**`);
+        }
+        const gastos = ig.gastos || {};
+        const labels = ig.gastosLabels || {};
+        const gKeys = Object.keys(gastos).filter(k => (gastos[k]||0) > 0);
+        if (gKeys.length > 0){
+          L.push(``, `### Gastos mensuales por categoría`);
+          gKeys.sort((a,b) => (gastos[b]||0) - (gastos[a]||0));
+          gKeys.forEach(k => L.push(`- ${labels[k] || k}: ${fmtCOP(gastos[k])}`));
+          L.push(`- **Total gastos: ${fmtCOP(ig.total_gastos || gKeys.reduce((s,k)=>s+(gastos[k]||0),0))}/mes**`);
+        }
+      }
+      if (varInc && varInc.active){
+        L.push(``, `## Ingresos variables (módulo propio)`);
+        if (varInc.salarioPersonal > 0){
+          L.push(`- **Salario personal mensual: ${fmtCOP(varInc.salarioPersonal)}** (${varInc.salarioOverride ? 'fijado por el cliente' : 'sugerido por el sistema'})`);
+        }
+        if (varInc.fondoActual != null) L.push(`- Fondo de estabilización actual: ${fmtCOP(varInc.fondoActual)}`);
+        const contratos = Array.isArray(varInc.contratos) ? varInc.contratos : [];
+        if (contratos.length > 0){
+          L.push(`- Contratos registrados: ${contratos.length}`);
+          contratos.forEach((c, i) => {
+            const meses = Array.isArray(c.meses) ? c.meses.filter(m => (+m.ingresos||0)>0 || (+m.costos||0)>0) : [];
+            const promIng = meses.length > 0 ? meses.reduce((s,m)=>s+(+m.ingresos||0),0)/meses.length : 0;
+            const promCos = meses.length > 0 ? meses.reduce((s,m)=>s+(+m.costos||0),0)/meses.length : 0;
+            L.push(`  - Contrato ${i+1}: ${c.nombre || c.cliente || "s/n"} · clase fiscal: **${c.claseIngreso || 'SIN CLASIFICAR'}** · promedio ingresos ${fmtCOP(promIng)}/mes · promedio costos ${fmtCOP(promCos)}/mes`);
+          });
+        }
+      }
+
+      // Mapa patrimonial
+      const act = modulos.activos;
+      if (act){
+        const activos = Array.isArray(act.activos) ? act.activos : [];
+        L.push(``, `## Mapa patrimonial (${activos.length} activos)`);
+        if (activos.length === 0){
+          L.push(`- *El cliente abrió el módulo pero no registró activos.*`);
+        } else {
+          const byCat = {};
+          activos.forEach(a => { const c = a.category || "Otros"; (byCat[c] = byCat[c] || []).push(a); });
+          let totalGeneral = 0;
+          Object.keys(byCat).forEach(cat => {
+            const items = byCat[cat];
+            const sub = items.reduce((s,a)=>s+(a.value||0),0);
+            totalGeneral += sub;
+            L.push(``, `### ${cat} (${items.length}) · ${fmtCOP(sub)}`);
+            items.forEach(a => {
+              const legal = a.legalStructure || "Propiedad Directa";
+              const legalTexto = (legal === "Otro" && a.legalStructureOtro) ? `Otro: ${a.legalStructureOtro}` : legal;
+              L.push(`- ${a.name || a.nombre || "—"} · ${a.subtype || "—"} · estructura legal: **${legalTexto}** · ${fmtCOP(a.value)}`);
+            });
+          });
+          L.push(``, `**Total patrimonial: ${fmtCOP(totalGeneral)}**`);
+
+          // Resumen por estructura legal (clave para análisis sucesoral/fiscal)
+          const byLegal = {};
+          activos.forEach(a => {
+            const legal = a.legalStructure || "Propiedad Directa";
+            const key = (legal === "Otro" && a.legalStructureOtro) ? `Otro: ${a.legalStructureOtro}` : legal;
+            byLegal[key] = (byLegal[key] || 0) + (a.value || 0);
+          });
+          L.push(``, `### Resumen por estructura legal`);
+          Object.keys(byLegal).sort((a,b) => byLegal[b] - byLegal[a]).forEach(key => {
+            const pct = totalGeneral > 0 ? ((byLegal[key] / totalGeneral) * 100).toFixed(1) : "0";
+            L.push(`- **${key}**: ${fmtCOP(byLegal[key])} (${pct}% del patrimonio)`);
+          });
+        }
+      }
+
+      // Deudas
+      const deu = modulos.endeudamiento;
+      if (deu){
+        const deudas = Array.isArray(deu.deudas) ? deu.deudas : [];
+        L.push(``, `## Endeudamiento (${deudas.length} deudas)`);
+        if (deudas.length === 0){
+          L.push(`- El cliente no tiene deudas registradas.`);
+        } else {
+          let total = 0;
+          deudas.forEach(d => {
+            const saldo = d.saldo || d.monto || 0;
+            total += saldo;
+            L.push(`- ${d.nombre || d.name || "—"} · ${d.tipo || d.type || "—"} · saldo ${fmtCOP(saldo)}${d.cuota ? ' · cuota mensual ' + fmtCOP(d.cuota) : ''}`);
+          });
+          L.push(``, `**Total deuda: ${fmtCOP(total)}**`);
+        }
+      }
+
+      // Ahorro
+      const aho = modulos.ahorro;
+      if (aho){
+        const objetivos = Array.isArray(aho.objetivos_ahorro) ? aho.objetivos_ahorro : [];
+        L.push(``, `## Ahorro`);
+        if (aho.cupos_disponibles != null) L.push(`- Cupos de crédito disponibles (respaldo): ${fmtCOP(aho.cupos_disponibles)}`);
+        if (objetivos.length > 0){
+          objetivos.forEach(o => {
+            const m = o.monto_mensual != null ? o.monto_mensual : (o.monto || o.valor || 0);
+            L.push(`- ${o.nombre || "—"}: ${fmtCOP(m)}/mes${o.precaucion ? ' · marcado como precaución' : ''}`);
+          });
+        }
+      }
+
+      // Metas
+      const metas = modulos.metas;
+      if (metas){
+        const items = Array.isArray(metas.items) ? metas.items : [];
+        L.push(``, `## Metas`);
+        if (metas.proy){
+          const p = metas.proy;
+          L.push(`- Rendimiento esperado: ${p.rendimiento || "—"}% · horizonte: ${p.anios || "—"} años`);
+        }
+        if (items.length === 0){
+          L.push(`- *El cliente no registró metas puntuales.*`);
+        } else {
+          items.forEach(m => {
+            L.push(`- ${m.nombre || "—"} · fecha: ${m.fecha || "—"} · fuente: ${m.fuente || "—"} · objetivo: ${m.objetivo != null ? fmtCOP(m.objetivo) : "—"} · saldo actual: ${m.saldoManual != null ? fmtCOP(m.saldoManual) : "—"} · aporte mensual: ${m.aporte != null ? fmtCOP(m.aporte) : "—"}`);
+          });
+        }
+      }
+
+      // Fiscal (incluye legal)
+      const fis = modulos.fiscal;
+      if (fis){
+        L.push(``, `## Perfil fiscal`);
+        Object.keys(fis).forEach(k => {
+          const v = fis[k];
+          if (v == null || typeof v === "object") return;
+          const vs = typeof v === "boolean" ? (v ? "sí" : "no") : String(v);
+          L.push(`- ${k}: ${vs}`);
+        });
+        // Bloque LEGAL (estado civil, régimen conyugal, hijos, cónyuge, gasto familiar)
+        const legal = fis.legal;
+        if (legal && typeof legal === "object"){
+          L.push(``, `### Estructura legal (sucesoral)`);
+          if (legal.estadoCivil) L.push(`- Estado civil: **${legal.estadoCivil}**`);
+          if (legal.regimenConyugal) L.push(`- Régimen conyugal: ${legal.regimenConyugal}`);
+          if (legal.anioMatrimonioUnion) L.push(`- Año matrimonio/unión: ${legal.anioMatrimonioUnion}`);
+          if (legal.nombreConyuge) L.push(`- Nombre cónyuge: ${legal.nombreConyuge}`);
+          const totalDep = (+legal.hijosMenores||0) + (+legal.hijosMayoresDependientes||0) + (+legal.otrosDependientes||0);
+          if (legal.hijosMenores != null) L.push(`- Hijos menores: ${legal.hijosMenores}`);
+          if (legal.hijosMayoresDependientes != null) L.push(`- Hijos mayores dependientes: ${legal.hijosMayoresDependientes}`);
+          if (legal.otrosDependientes != null) L.push(`- Otros dependientes: ${legal.otrosDependientes}`);
+          if (totalDep > 0) L.push(`- **Total dependientes: ${totalDep}**`);
+          if (legal.gastoMensualFamilia != null) L.push(`- Gasto mensual familia: ${fmtCOP(legal.gastoMensualFamilia)}`);
+        }
+      }
+
+      // Presupuesto anual (resumido)
+      const pres = modulos.presupuesto_anual;
+      if (pres){
+        L.push(``, `## Presupuesto anual (resumido)`);
+        if (pres.ingMensual != null) L.push(`- Ingreso mensual declarado: ${fmtCOP(pres.ingMensual)}`);
+        if (pres.deuMensual != null) L.push(`- Cuota de deuda mensual: ${fmtCOP(pres.deuMensual)}`);
+        if (pres.fondoProvisiones != null) L.push(`- Fondo de provisiones: ${fmtCOP(pres.fondoProvisiones)}`);
+      }
+
+      L.push(``, `---`, `*Generado automáticamente desde el panel admin de ABBA Patrimonial · ${new Date().toLocaleString('es-CO', {timeZone:'America/Bogota'})}*`);
+      return L.join("\n");
+    }
+
+    function descargarArchivo(nombre, contenido, mime){
+      const blob = new Blob([contenido], { type: (mime || 'text/plain') + ';charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = nombre;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    async function copiarAlClipboard(texto){
+      try {
+        await navigator.clipboard.writeText(texto);
+        return true;
+      } catch(e){
+        // Fallback para navegadores sin permiso de clipboard
+        const t = document.createElement('textarea');
+        t.value = texto;
+        t.style.position = 'fixed';
+        t.style.opacity = '0';
+        document.body.appendChild(t);
+        t.select();
+        try { document.execCommand('copy'); } catch(_){}
+        document.body.removeChild(t);
+        return true;
+      }
+    }
+
+    function flashAiToast(id, texto){
+      const t = document.getElementById(id);
+      if (!t) return;
+      t.textContent = texto || "✓ Copiado";
+      t.classList.add("show");
+      setTimeout(() => t.classList.remove("show"), 1800);
+    }
+
+    // Datos actuales para los botones de IA (perfil, modulos, nombre, meta)
+    let currentPrepData = { clientName: '', perfil: {}, modulos: {}, sessionMeta: {} };
+
+    // Nombres bonitos de módulos para mostrar al humano
+    const MODULE_LABELS = {
+      ingresos_gastos: "Ingresos y gastos",
+      endeudamiento: "Endeudamiento",
+      activos: "Mapa patrimonial",
+      ahorro: "Ahorro",
+      presupuesto_anual: "Presupuesto anual",
+      tablero: "Tablero",
+      simulador_deuda: "Simulador de deuda",
+      metas: "Metas",
+      ingresos_variables: "Ingresos variables",
+      fiscal: "Perfil fiscal",
+      presupuesto: "Presupuesto",
+    };
+
+    // Formato de moneda COP (sin decimales, con separadores)
+    function fmtCOP(n) {
+      if (n == null || isNaN(n)) return "—";
+      return "$" + Math.round(n).toLocaleString("es-CO");
+    }
+
+    async function openPrepView(sessionId, clientName, linkedUid, sessionStartIso) {
+      prepTitle.textContent = `Preparación · ${clientName || "cliente"}`;
+      prepSubtitle.textContent = sessionStartIso
+        ? "Sesión programada para " + fmt({ toDate: () => new Date(sessionStartIso) })
+        : "";
+      prepBody.innerHTML = `<div class="prep-loader">Cargando datos del cliente…</div>`;
+      showPrepView(true);
+      currentPrepUid = linkedUid;
+      currentPrepModulos = {};
+
+      try {
+        // Leer sesión + perfil + lista de módulos en paralelo
+        const [sessionSnap, perfilSnap, modulosSnap] = await Promise.all([
+          getDoc(doc(db, "diagnostico_sessions", sessionId)),
+          getDoc(doc(db, "clientes", linkedUid)),
+          getDocs(collection(db, "clientes", linkedUid, "modulos")),
+        ]);
+        const perfil = perfilSnap.exists() ? perfilSnap.data() : {};
+        const sessionData = sessionSnap.exists() ? sessionSnap.data() : {};
+        const modulos = {};
+        modulosSnap.forEach(m => { modulos[m.id] = m.data(); });
+        currentPrepModulos = modulos;
+        currentPrepData = {
+          clientName: clientName || perfil.nombre || "cliente",
+          perfil: perfil,
+          modulos: modulos,
+          sessionMeta: {
+            sessionStart: sessionStartIso,
+            motivo: sessionData.client_motivo || "",
+            sessionId: sessionId,
+          },
+        };
+
+        prepBody.innerHTML = buildPrepHtml(perfil, modulos);
+        bindModChipClicks();
+        bindAiHelperButtons();
+      } catch(err){
+        console.error("[prep] Error cargando datos:", err);
+        prepBody.innerHTML = `<p class="prep-empty" style="color:var(--alert);">
+          No pudimos cargar los datos del cliente. ${escapeHtml(err.message || "")}
+        </p>`;
+      }
+    }
+
+    // ═══ Vista Post-sesión ═══════════════════════════════════════
+    const postView = document.getElementById("post-view");
+    const postTitle = document.getElementById("post-title");
+    const postSubtitle = document.getElementById("post-subtitle");
+    const postBody = document.getElementById("post-body");
+    document.getElementById("post-close").addEventListener("click", () => showPostView(false));
+
+    function showPostView(show){
+      postView.style.display = show ? "block" : "none";
+      panelListEls.forEach(el => { if (el) el.style.display = show ? "none" : ""; });
+      if (show){
+        prepView.style.display = "none"; // asegurar que no se vean las dos vistas
+      }
+      window.scrollTo({ top: 0, behavior: "instant" });
+    }
+
+    let currentPostSessionId = null;
+    let currentPostLinkedUid = null;
+
+    async function openPostView(sessionId, clientName, linkedUid, sessionStartIso){
+      postTitle.textContent = `Post-sesión · ${clientName || "cliente"}`;
+      postSubtitle.textContent = sessionStartIso
+        ? "Sesión realizada: " + fmt({ toDate: () => new Date(sessionStartIso) })
+        : "";
+      postBody.innerHTML = `<div class="prep-loader">Cargando datos del cliente…</div>`;
+      showPostView(true);
+      currentPostSessionId = sessionId;
+      currentPostLinkedUid = linkedUid;
+
+      try {
+        // Leer sesión + perfil + módulos del cliente en paralelo (para el prompt)
+        const [sessionSnap, perfilSnap, modulosSnap] = await Promise.all([
+          getDoc(doc(db, "diagnostico_sessions", sessionId)),
+          getDoc(doc(db, "clientes", linkedUid)),
+          getDocs(collection(db, "clientes", linkedUid, "modulos")),
+        ]);
+        const sessionData = sessionSnap.exists() ? sessionSnap.data() : {};
+        const perfil = perfilSnap.exists() ? perfilSnap.data() : {};
+        const modulos = {};
+        modulosSnap.forEach(m => { modulos[m.id] = m.data(); });
+
+        // Datos para el prompt (compartidos con pre-sesión)
+        currentPrepData = {
+          clientName: clientName || perfil.nombre || "cliente",
+          perfil,
+          modulos,
+          sessionMeta: {
+            sessionStart: sessionStartIso,
+            motivo: sessionData.client_motivo || "",
+            sessionId,
+          },
+        };
+
+        // Cargar borrador previo si existe
+        const borrador = sessionData.postSesion || {};
+        postBody.innerHTML = buildPostHtml(borrador, currentPrepData.clientName, sessionData);
+        bindPostHandlers();
+      } catch(err){
+        console.error("[post] Error cargando datos:", err);
+        postBody.innerHTML = `<p class="prep-empty" style="color:var(--alert);">
+          No pudimos cargar los datos. ${escapeHtml(err.message || "")}
+        </p>`;
+      }
+    }
+
+    function buildPostHtml(borrador, clientName, sessionData){
+      const puntos = Array.isArray(borrador.puntos) ? borrador.puntos : [];
+      const p1 = puntos[0] || {};
+      const p2 = puntos[1] || {};
+      const p3 = puntos[2] || {};
+      const camino = borrador.camino || {};
+      const estado = borrador.estado || null;
+      const estadoBadge = estado === "enviado"
+        ? '<span class="post-estado-badge enviado">Enviado</span>'
+        : estado === "borrador"
+          ? '<span class="post-estado-badge borrador">Borrador</span>'
+          : '';
+      const updatedBy = borrador.updated_by_name ? ' por ' + escapeHtml(borrador.updated_by_name) : '';
+      const updatedAt = borrador.updated_at && borrador.updated_at.toDate
+        ? ' · guardado ' + fmt(borrador.updated_at)
+        : '';
+      return `
+        <!-- Bloque IA Claude.ai post-sesión -->
+        <section class="ai-helper">
+          <h4>🤖 Generar borrador del correo con Claude.ai</h4>
+          <p class="ai-desc">
+            Pegá la transcripción de la sesión en el campo de abajo. Luego presioná "Copiar prompt + contexto + transcripción" y pegalo en <a href="https://claude.ai" target="_blank" style="color:var(--brand);">claude.ai</a>. Claude te devuelve los 4 bloques en formato markdown — copiás cada uno al campo correspondiente del formulario de abajo.
+          </p>
+          <label class="post-field" for="post-transcripcion">Transcripción de la sesión</label>
+          <textarea id="post-transcripcion" class="post-textarea" rows="6" placeholder="Pegá acá la transcripción de la reunión (Google Meet, Otter, etc.)."></textarea>
+          <div class="ai-actions" style="margin-top:12px;">
+            <button type="button" id="btn-copy-post-all" class="btn-primary-ai">
+              ⚡ Copiar prompt + contexto + transcripción
+            </button>
+            <span class="ai-toast" id="ai-toast-post-all"></span>
+          </div>
+          <div class="ai-actions" style="margin-top:10px;">
+            <button type="button" id="btn-copy-post-prompt">
+              📋 Copiar solo el prompt
+            </button>
+            <span class="ai-toast" id="ai-toast-post-prompt"></span>
+          </div>
+          <details>
+            <summary>Ver prompt completo</summary>
+            <pre>${escapeHtml(PROMPT_POST_SESION)}</pre>
+          </details>
+        </section>
+
+        <!-- Formulario de los 4 bloques -->
+        <section class="post-section">
+          <h4>📝 Borrador del correo post-sesión ${estadoBadge}</h4>
+          <p class="section-hint">
+            Copiá cada bloque desde la respuesta de Claude.ai y pegalo acá. Cuando esté todo, apretá "Guardar borrador".${updatedAt}${updatedBy}
+          </p>
+
+          <label class="post-field" for="post-lectura">Lectura de la situación</label>
+          <textarea id="post-lectura" class="post-textarea" rows="4" placeholder="Un párrafo de 3-5 líneas donde el cliente se sienta leído.">${escapeHtml(borrador.lectura_situacion || "")}</textarea>
+        </section>
+
+        <section class="post-section">
+          <h4>Los 3 puntos priorizados</h4>
+          <p class="section-hint">Cada punto tiene título, diagnóstico (qué viste y por qué importa) y acción (qué hacer).</p>
+
+          ${[1,2,3].map(n => {
+            const p = [p1,p2,p3][n-1] || {};
+            return `
+              <div class="post-punto">
+                <p class="punto-head"><span class="punto-num">${n}</span>Punto ${n}</p>
+                <label class="post-field" for="post-p${n}-titulo">Título</label>
+                <input type="text" id="post-p${n}-titulo" class="post-input" placeholder="Frase corta de 3-7 palabras" value="${escapeAttr(p.titulo || "")}">
+                <label class="post-field" for="post-p${n}-diagnostico">Diagnóstico</label>
+                <textarea id="post-p${n}-diagnostico" class="post-textarea" rows="2" placeholder="2-3 líneas cuantificando el hallazgo">${escapeHtml(p.diagnostico || "")}</textarea>
+                <label class="post-field" for="post-p${n}-accion">Acción</label>
+                <textarea id="post-p${n}-accion" class="post-textarea" rows="2" placeholder="1-2 líneas accionables">${escapeHtml(p.accion || "")}</textarea>
+              </div>
+            `;
+          }).join("")}
+        </section>
+
+        <section class="post-section">
+          <h4>Camino recomendado con precio</h4>
+          <p class="section-hint">Elegí uno de los 5 Caminos (o "Otro") + detalle + precio.</p>
+
+          <label class="post-field" for="post-camino-nombre">Camino</label>
+          <select id="post-camino-nombre" class="post-select">
+            <option value="">— elegir —</option>
+            <option value="A - Diseño Patrimonial autogenerado"${(camino.nombre==="A - Diseño Patrimonial autogenerado")?" selected":""}>Camino A — Diseño Patrimonial autogenerado</option>
+            <option value="B - Diseño Patrimonial validado con Natalia"${(camino.nombre==="B - Diseño Patrimonial validado con Natalia")?" selected":""}>Camino B — Diseño Patrimonial validado con Natalia</option>
+            <option value="C - Consulta tributaria específica"${(camino.nombre==="C - Consulta tributaria específica")?" selected":""}>Camino C — Consulta tributaria específica</option>
+            <option value="D - Asesoría financiera personal continua"${(camino.nombre==="D - Asesoría financiera personal continua")?" selected":""}>Camino D — Asesoría financiera personal continua</option>
+            <option value="E - Ejecución de estructura"${(camino.nombre==="E - Ejecución de estructura")?" selected":""}>Camino E — Ejecución de estructura</option>
+            <option value="Otro"${(camino.nombre==="Otro")?" selected":""}>Otro</option>
+          </select>
+
+          <label class="post-field" for="post-camino-precio">Precio</label>
+          <input type="text" id="post-camino-precio" class="post-input" placeholder="Ej. $2.500.000 COP o 'cotización aparte'" value="${escapeAttr(camino.precio || "")}">
+
+          <label class="post-field" for="post-camino-detalle">Detalle</label>
+          <textarea id="post-camino-detalle" class="post-textarea" rows="4" placeholder="2-4 líneas: qué incluye, por qué encaja para este cliente, próximos pasos.">${escapeHtml(camino.detalle || "")}</textarea>
+        </section>
+
+        <div class="post-save-bar">
+          <span class="post-save-status ${estado==='enviado'?'saved':''}" id="post-save-status">${
+            estado === 'enviado'
+              ? '✉ Correo ya enviado al cliente' + (borrador.enviado_at && borrador.enviado_at.toDate ? ' · ' + fmt(borrador.enviado_at) : '')
+              : (estado ? 'Último estado: ' + estado : 'Sin borrador guardado')
+          }</span>
+          <div style="display:flex;gap:10px;">
+            <button type="button" class="btn btn-secondary" id="btn-post-save">💾 Guardar borrador</button>
+            <button type="button" class="btn btn-primary" id="btn-post-send" ${estado==='enviado'?'disabled title="Ya se envió este correo"':''}>
+              ${estado==='enviado' ? '✓ Enviado' : '📤 Enviar correo al cliente'}
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    function bindPostHandlers(){
+      // Botones IA
+      const btnPostAll = document.getElementById("btn-copy-post-all");
+      const btnPostPrompt = document.getElementById("btn-copy-post-prompt");
+      if (btnPostAll) btnPostAll.addEventListener("click", async () => {
+        const transcripcion = (document.getElementById("post-transcripcion") || {value:""}).value.trim();
+        const md = generarContextoMarkdown(currentPrepData.clientName, currentPrepData.perfil, currentPrepData.modulos, currentPrepData.sessionMeta);
+        const texto = PROMPT_POST_SESION
+          .replace("<AQUÍ VA EL CONTEXTO DESCARGADO>", md)
+          .replace("<AQUÍ VA LA TRANSCRIPCIÓN DE LA REUNIÓN>", transcripcion || "(sin transcripción)");
+        await copiarAlClipboard(texto);
+        flashAiToast("ai-toast-post-all", "✓ Copiado");
+      });
+      if (btnPostPrompt) btnPostPrompt.addEventListener("click", async () => {
+        await copiarAlClipboard(PROMPT_POST_SESION);
+        flashAiToast("ai-toast-post-prompt", "✓ Prompt copiado");
+      });
+
+      // Enviar correo al cliente
+      const btnSend = document.getElementById("btn-post-send");
+      if (btnSend) btnSend.addEventListener("click", async () => {
+        if (!currentPostSessionId) return;
+        if (btnSend.disabled) return;
+        // Validación básica antes de enviar
+        const lectura = (document.getElementById("post-lectura").value || "").trim();
+        const p1Titulo = (document.getElementById("post-p1-titulo").value || "").trim();
+        const caminoNombre = document.getElementById("post-camino-nombre").value;
+        if (!lectura){ alert("La lectura de la situación está vacía."); return; }
+        if (!p1Titulo){ alert("El punto 1 no tiene título."); return; }
+        if (!caminoNombre){ alert("No elegiste camino recomendado."); return; }
+        // Confirmación
+        const clientName = currentPrepData.clientName || "el cliente";
+        const confirmar = confirm(
+          `¿Enviar el correo post-sesión a ${clientName}?\n\n` +
+          "Antes de enviar, asegurate de haber guardado el borrador con los últimos cambios.\n\n" +
+          "Esta acción:\n" +
+          "• Enviará el correo al email del cliente firmado por Natalia.\n" +
+          "• Marcará esta sesión como 'enviada' (no se puede re-enviar).\n\n" +
+          "¿Continuar?"
+        );
+        if (!confirmar) return;
+
+        btnSend.disabled = true;
+        btnSend.textContent = "Enviando…";
+        const statusEl = document.getElementById("post-save-status");
+        statusEl.className = "post-save-status";
+        statusEl.textContent = "Enviando correo…";
+        try {
+          const call = httpsCallable(functions, "sendPostSessionEmail");
+          const res = await call({ sessionId: currentPostSessionId });
+          if (res && res.data && res.data.success){
+            statusEl.className = "post-save-status saved";
+            statusEl.textContent = "✓ Correo enviado a " + res.data.enviadoA;
+            btnSend.textContent = "✓ Enviado";
+            btnSend.title = "Ya se envió este correo";
+            // deshabilitar también el botón de guardar (ya no tiene sentido)
+            const btnSaveLocal = document.getElementById("btn-post-save");
+            if (btnSaveLocal) btnSaveLocal.disabled = true;
+          }
+        } catch(err){
+          console.error("[post] Error enviando correo:", err);
+          statusEl.className = "post-save-status error";
+          const msg = (err && err.message) ? err.message : "Error desconocido";
+          statusEl.textContent = "✗ No se pudo enviar: " + msg;
+          btnSend.disabled = false;
+          btnSend.textContent = "📤 Enviar correo al cliente";
+          alert("No se pudo enviar el correo:\n" + msg);
+        }
+      });
+
+      // Guardar borrador
+      const btnSave = document.getElementById("btn-post-save");
+      const statusEl = document.getElementById("post-save-status");
+      if (btnSave) btnSave.addEventListener("click", async () => {
+        if (!currentPostSessionId) return;
+        btnSave.disabled = true;
+        btnSave.textContent = "Guardando…";
+        statusEl.className = "post-save-status";
+        statusEl.textContent = "Guardando…";
+        try {
+          const payload = {
+            postSesion: {
+              lectura_situacion: (document.getElementById("post-lectura").value || "").trim(),
+              puntos: [1,2,3].map(n => ({
+                titulo: (document.getElementById(`post-p${n}-titulo`).value || "").trim(),
+                diagnostico: (document.getElementById(`post-p${n}-diagnostico`).value || "").trim(),
+                accion: (document.getElementById(`post-p${n}-accion`).value || "").trim(),
+              })),
+              camino: {
+                nombre: document.getElementById("post-camino-nombre").value || "",
+                precio: (document.getElementById("post-camino-precio").value || "").trim(),
+                detalle: (document.getElementById("post-camino-detalle").value || "").trim(),
+              },
+              estado: "borrador",
+              updated_at: serverTimestamp(),
+              updated_by: currentUser.uid,
+              updated_by_name: (asesorData && asesorData.nombre) || currentUser.displayName || currentUser.email,
+            },
+          };
+          await updateDoc(doc(db, "diagnostico_sessions", currentPostSessionId), payload);
+          statusEl.className = "post-save-status saved";
+          statusEl.textContent = "✓ Borrador guardado";
+        } catch(err){
+          console.error("[post] Error guardando:", err);
+          statusEl.className = "post-save-status error";
+          statusEl.textContent = "✗ Error: " + (err.message || "desconocido");
+        } finally {
+          btnSave.disabled = false;
+          btnSave.textContent = "💾 Guardar borrador";
+        }
+      });
+    }
+
+    function bindAiHelperButtons(){
+      const btnDl = document.getElementById("btn-download-prep-context");
+      const btnCopyPrompt = document.getElementById("btn-copy-prep-prompt");
+      const btnCopyAll = document.getElementById("btn-copy-prep-all");
+      if (btnDl) btnDl.addEventListener("click", () => {
+        const md = generarContextoMarkdown(currentPrepData.clientName, currentPrepData.perfil, currentPrepData.modulos, currentPrepData.sessionMeta);
+        const safeName = (currentPrepData.clientName || "cliente").replace(/[^a-zA-Z0-9]+/g, "_").toLowerCase();
+        descargarArchivo(`contexto_${safeName}.md`, md, "text/markdown");
+        flashAiToast("ai-toast-dl", "✓ Descargado");
+      });
+      if (btnCopyPrompt) btnCopyPrompt.addEventListener("click", async () => {
+        await copiarAlClipboard(PROMPT_PRE_SESION);
+        flashAiToast("ai-toast-prompt", "✓ Prompt copiado");
+      });
+      if (btnCopyAll) btnCopyAll.addEventListener("click", async () => {
+        const md = generarContextoMarkdown(currentPrepData.clientName, currentPrepData.perfil, currentPrepData.modulos, currentPrepData.sessionMeta);
+        await copiarAlClipboard(PROMPT_PRE_SESION.replace("<PEGÁ EL CONTEXTO DESCARGADO DEL PANEL A CONTINUACIÓN>", md));
+        flashAiToast("ai-toast-all", "✓ Prompt + contexto copiados");
+      });
+    }
+
+    // Chips clickeables → expanden detalle del módulo abajo
+    function bindModChipClicks(){
+      const chips = prepBody.querySelectorAll(".mod-chip[data-mod]");
+      const detailBox = prepBody.querySelector("#mod-detail-box");
+      if (!detailBox) return;
+      chips.forEach(chip => {
+        chip.addEventListener("click", () => {
+          const key = chip.dataset.mod;
+          // Toggle: si ya está activo, cerrar
+          if (chip.classList.contains("active")){
+            chip.classList.remove("active");
+            detailBox.innerHTML = "";
+            return;
+          }
+          chips.forEach(c => c.classList.remove("active"));
+          chip.classList.add("active");
+          detailBox.innerHTML = renderModuleDetail(key, currentPrepModulos[key]);
+          detailBox.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        });
+      });
+    }
+
+    function buildPrepHtml(perfil, modulos) {
+      const parts = [];
+
+      // ── Bloque helper para Claude.ai (pre-sesión)
+      parts.push(`
+        <section class="ai-helper">
+          <h4>🤖 Preparar documento de sesión con Claude.ai</h4>
+          <p class="ai-desc">
+            Jessica: descargá el contexto estructurado del cliente y copiá el prompt. Pegalos en <a href="https://claude.ai" target="_blank" style="color:var(--brand);">claude.ai</a> para que Claude arme el documento que Natalia leerá antes de la reunión (lectura rápida, riesgos cuantificados, preguntas sugeridas, plan de acción).
+          </p>
+          <div class="ai-actions">
+            <button type="button" id="btn-copy-prep-all" class="btn-primary-ai">
+              ⚡ Copiar prompt + contexto en 1 clic
+            </button>
+            <span class="ai-toast" id="ai-toast-all"></span>
+          </div>
+          <div class="ai-actions" style="margin-top:10px;">
+            <button type="button" id="btn-download-prep-context">
+              📥 Descargar contexto (.md)
+            </button>
+            <span class="ai-toast" id="ai-toast-dl"></span>
+            <button type="button" id="btn-copy-prep-prompt">
+              📋 Copiar solo el prompt
+            </button>
+            <span class="ai-toast" id="ai-toast-prompt"></span>
+          </div>
+          <details>
+            <summary>Ver prompt completo</summary>
+            <pre>${escapeHtml(PROMPT_PRE_SESION)}</pre>
+          </details>
+        </section>
+      `);
+
+      // ── Perfil del cliente
+      const perfilRows = [
+        ["Nombre", perfil.nombre || "—"],
+        ["Tipo de ingreso", perfil.tipoIngreso || "—"],
+        ["Edad", perfil.edad != null ? perfil.edad + " años" : "—"],
+        ["Moneda", perfil.moneda || "COP"],
+      ];
+      parts.push(`
+        <section class="prep-section">
+          <h4>Perfil</h4>
+          <div class="prep-perfil-grid">
+            ${perfilRows.map(([l,v]) => `
+              <div>
+                <p class="pl">${escapeHtml(l)}</p>
+                <p class="pv">${escapeHtml(v)}</p>
+              </div>
+            `).join("")}
+          </div>
+        </section>
+      `);
+
+      // ── Totales clave (combinando varias fuentes)
+      const ig = modulos.ingresos_gastos;
+      const act = modulos.activos;
+      const deu = modulos.endeudamiento;
+      const varInc = modulos.ingresos_variables;
+      const pres = modulos.presupuesto_anual;
+
+      // INGRESOS: ingresos_gastos.total_ingresos YA incluye el salario personal del módulo variable
+      // (la app agrega internamente un item linkedToMVar al total). Entonces NO sumamos el salario
+      // personal otra vez. Pero sí lo exponemos como "variable" para mostrar la composición.
+      let totalIngFijos = null;
+      let totalIngVariables = null;
+      let fuenteIng = []; // qué módulos aportaron, para diagnóstico
+
+      // Fijos: sumar fuentes_ingreso (NO total_ingresos, que incluye el variable)
+      if (ig && Array.isArray(ig.fuentes_ingreso)){
+        totalIngFijos = ig.fuentes_ingreso.reduce((s, f) => s + (+f.monto || 0), 0);
+        if (ig.fuentes_ingreso.length > 0) fuenteIng.push("ingresos_gastos.fuentes_ingreso");
+      }
+      // Variable: salario personal del módulo variable
+      if (varInc && varInc.active && typeof varInc.salarioPersonal === "number" && varInc.salarioPersonal > 0){
+        totalIngVariables = varInc.salarioPersonal;
+        fuenteIng.push(
+          varInc.salarioOverride
+            ? "ingresos_variables (salario personal fijado por el cliente)"
+            : "ingresos_variables (salario personal sugerido por el sistema)"
+        );
+      }
+      let totalIng = null;
+      if (totalIngFijos != null || totalIngVariables != null){
+        totalIng = (totalIngFijos || 0) + (totalIngVariables || 0);
+      } else if (ig && typeof ig.total_ingresos === "number" && ig.total_ingresos > 0){
+        // Fallback: si no pude discriminar, usar el total_ingresos del módulo 1
+        totalIng = ig.total_ingresos;
+        fuenteIng.push("ingresos_gastos.total_ingresos (sin discriminar)");
+      } else if (pres && typeof pres.ingMensual === "number" && pres.ingMensual > 0){
+        totalIng = pres.ingMensual;
+        fuenteIng.push("presupuesto_anual.ingMensual (fallback)");
+      }
+
+      // GASTOS: ingresos_gastos.total_gastos
+      const totalGas = ig && typeof ig.total_gastos === "number" ? ig.total_gastos : null;
+      const flujo = (totalIng != null && totalGas != null) ? (totalIng - totalGas) : null;
+
+      // ACTIVOS: mostrar siempre si el módulo existe (aunque esté vacío)
+      let totalActivos = null;
+      let nActivos = null;
+      if (act && Array.isArray(act.activos)){
+        nActivos = act.activos.length;
+        totalActivos = act.activos.reduce((s, a) => s + (typeof a.value === "number" ? a.value : 0), 0);
+      }
+
+      // DEUDAS
+      let totalDeudas = null;
+      let nDeudas = null;
+      if (deu && Array.isArray(deu.deudas)){
+        nDeudas = deu.deudas.length;
+        totalDeudas = deu.deudas.reduce((s, d) => s + (typeof d.saldo === "number" ? d.saldo : (typeof d.monto === "number" ? d.monto : 0)), 0);
+      }
+
+      const patrimonioNeto = (totalActivos != null || totalDeudas != null)
+        ? (totalActivos || 0) - (totalDeudas || 0)
+        : null;
+
+      const totalCards = [];
+      if (totalIng != null) totalCards.push(`
+        <div class="total-card tc-positive">
+          <p class="tl">Ingresos mensuales</p>
+          <p class="tv">${fmtCOP(totalIng)}</p>
+          ${fuenteIng.length > 0 ? `<p class="tfoot-mini">de: ${escapeHtml(fuenteIng.join(" + "))}</p>` : ""}
+        </div>`);
+      if (totalGas != null) totalCards.push(`
+        <div class="total-card">
+          <p class="tl">Gastos mensuales</p>
+          <p class="tv">${fmtCOP(totalGas)}</p>
+        </div>`);
+      if (flujo != null) totalCards.push(`
+        <div class="total-card ${flujo >= 0 ? 'tc-positive' : 'tc-negative'}">
+          <p class="tl">Flujo mensual</p>
+          <p class="tv">${fmtCOP(flujo)}</p>
+        </div>`);
+      // Activos: card siempre que el módulo exista, incluso con 0
+      if (act != null) totalCards.push(`
+        <div class="total-card">
+          <p class="tl">Activos${nActivos != null ? ' ('+nActivos+')' : ''}</p>
+          <p class="tv">${nActivos === 0 ? '<span style="color:var(--muted);font-size:13px;font-weight:400;">Abrió el módulo, sin activos</span>' : fmtCOP(totalActivos)}</p>
+        </div>`);
+      if (totalDeudas != null) totalCards.push(`
+        <div class="total-card tc-negative">
+          <p class="tl">Deudas (${nDeudas || 0})</p>
+          <p class="tv">${nDeudas === 0 ? '<span style="color:var(--muted);font-size:13px;font-weight:400;">Sin deudas</span>' : fmtCOP(totalDeudas)}</p>
+        </div>`);
+      if (patrimonioNeto != null) totalCards.push(`
+        <div class="total-card ${patrimonioNeto >= 0 ? 'tc-positive' : 'tc-negative'}">
+          <p class="tl">Patrimonio neto</p>
+          <p class="tv">${fmtCOP(patrimonioNeto)}</p>
+        </div>`);
+
+      if (totalCards.length > 0) {
+        parts.push(`
+          <section class="prep-section">
+            <h4>Resumen financiero</h4>
+            <div class="prep-totales">${totalCards.join("")}</div>
+          </section>
+        `);
+      }
+
+      // ── Perfil fiscal (si existe)
+      const fiscal = modulos.fiscal;
+      if (fiscal) {
+        const tipoCont = fiscal.tipoContribuyente || fiscal.tipo || null;
+        const declRenta = fiscal.declaraRenta != null ? (fiscal.declaraRenta ? "Sí" : "No") : null;
+        const fiscalRows = [];
+        if (tipoCont) fiscalRows.push(["Tipo contribuyente", tipoCont]);
+        if (declRenta) fiscalRows.push(["Declara renta", declRenta]);
+        if (fiscalRows.length > 0) {
+          parts.push(`
+            <section class="prep-section">
+              <h4>Situación fiscal</h4>
+              <div class="prep-perfil-grid">
+                ${fiscalRows.map(([l,v]) => `
+                  <div>
+                    <p class="pl">${escapeHtml(l)}</p>
+                    <p class="pv">${escapeHtml(v)}</p>
+                  </div>
+                `).join("")}
+              </div>
+            </section>
+          `);
+        }
+      }
+
+      // ── Módulos diligenciados (chips clickeables)
+      const modKeys = Object.keys(modulos);
+      if (modKeys.length === 0) {
+        parts.push(`
+          <section class="prep-section">
+            <h4>Módulos</h4>
+            <p class="prep-empty">El cliente aún no ha diligenciado ningún módulo en la app.</p>
+          </section>
+        `);
+      } else {
+        const chips = modKeys.map(k =>
+          `<button type="button" class="mod-chip" data-mod="${escapeAttr(k)}" title="Clic para ver detalle">
+             ${escapeHtml(MODULE_LABELS[k] || k)}
+           </button>`
+        ).join("");
+        parts.push(`
+          <section class="prep-section">
+            <h4>Módulos diligenciados (${modKeys.length})</h4>
+            <p style="font-size:12px;color:var(--muted);margin:0 0 10px;">Clic en un módulo para ver el detalle.</p>
+            <div class="prep-modulos-list">${chips}</div>
+            <div id="mod-detail-box"></div>
+          </section>
+        `);
+      }
+
+      return parts.join("");
+    }
+
+    // ─── Renderers de detalle por módulo ──────────────────────
+    function renderModuleDetail(key, data){
+      if (!data) return `<div class="mod-detail"><p class="prep-empty">Sin datos para este módulo.</p></div>`;
+      const label = MODULE_LABELS[key] || key;
+      try {
+        switch (key){
+          case "ingresos_gastos":   return renderIngresosGastos(label, data);
+          case "ingresos_variables":return renderIngresosVariables(label, data);
+          case "activos":           return renderActivos(label, data);
+          case "endeudamiento":     return renderEndeudamiento(label, data);
+          case "fiscal":            return renderFiscal(label, data);
+          case "metas":             return renderMetas(label, data);
+          case "ahorro":            return renderAhorro(label, data);
+          case "presupuesto_anual": return renderPresupuestoAnual(label, data);
+          default:                  return renderGenerico(label, data);
+        }
+      } catch(e){
+        console.error("[prep] Error renderizando", key, e);
+        return `<div class="mod-detail">
+          <h5>${escapeHtml(label)}</h5>
+          <p class="prep-empty">No se pudo renderizar este módulo.</p>
+        </div>`;
+      }
+    }
+
+    function renderIngresosGastos(label, data){
+      const fuentes = Array.isArray(data.fuentes_ingreso) ? data.fuentes_ingreso : [];
+      const gastosObj = (data.gastos && typeof data.gastos === "object") ? data.gastos : {};
+      const gastosLabels = (data.gastosLabels && typeof data.gastosLabels === "object") ? data.gastosLabels : {};
+      const totalIngFijos = fuentes.reduce((s,f)=>s+(+f.monto||0),0); // suma solo las fijas
+      const totalGas = data.total_gastos || Object.values(gastosObj).reduce((a,b)=>a+(b||0),0);
+      const tipoIngreso = data.tipoIngreso || null;
+
+      // Traer el módulo de ingresos variables (si existe) para mostrar el salario personal + clases
+      const varInc = currentPrepModulos.ingresos_variables;
+      const hasVar = varInc && varInc.active && typeof varInc.salarioPersonal === "number" && varInc.salarioPersonal > 0;
+      const salarioPersonal = hasVar ? varInc.salarioPersonal : 0;
+      const totalIngGeneral = totalIngFijos + salarioPersonal;
+
+      let html = `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>`;
+
+      if (tipoIngreso){
+        html += `<p style="font-size:13px;margin:0 0 10px;">
+          Tipo de ingreso declarado: <strong>${escapeHtml(tipoIngreso)}</strong>
+          ${data.tieneEmpleadosArt336 ? ' · <span class="cat-tag">Tiene empleados (art. 336)</span>' : ''}
+        </p>`;
+      }
+
+      // Fuentes de ingreso FIJO + variable integrado abajo
+      html += `<p style="font-size:12px;color:var(--muted);margin:12px 0 6px;">Composición del ingreso mensual (${fuentes.length}${hasVar ? ' + 1 variable' : ''})</p>
+        <table><thead><tr><th>Fuente</th><th>Origen</th><th>Clase fiscal</th><th class="num">Monto mensual</th></tr></thead><tbody>`;
+
+      fuentes.forEach(f => {
+        html += `<tr>
+          <td>${escapeHtml(f.nombre || "—")}</td>
+          <td><span style="font-size:11px;color:var(--muted);">Fijo (módulo 1)</span></td>
+          <td>${f.claseIngreso ? '<span class="cat-tag">'+escapeHtml(f.claseIngreso)+'</span>' : '<span style="color:var(--warning);font-size:11px;font-style:italic;">sin clasificar</span>'}</td>
+          <td class="num">${fmtCOP(f.monto)}</td>
+        </tr>`;
+      });
+
+      // Fila(s) de ingreso variable, con clase de cada contrato
+      if (hasVar){
+        const contratos = Array.isArray(varInc.contratos) ? varInc.contratos : [];
+        const clasesUnicas = Array.from(new Set(contratos.map(c => c.claseIngreso).filter(Boolean)));
+        const sinClasificar = contratos.filter(c => !c.claseIngreso).length;
+        const clasesHtml = clasesUnicas.length > 0
+          ? clasesUnicas.map(c => '<span class="cat-tag">'+escapeHtml(c)+'</span>').join(' ')
+          : '<span style="color:var(--warning);font-size:11px;font-style:italic;">sin clasificar</span>';
+        html += `<tr style="background:#fafbfd;">
+          <td><strong>Ingreso variable (salario personal)</strong>
+            <br><span style="font-size:11px;color:var(--muted);">${contratos.length} contrato${contratos.length>1?'s':''}${sinClasificar>0 ? ', '+sinClasificar+' sin clasificar' : ''}</span>
+          </td>
+          <td><span style="font-size:11px;color:var(--muted);">Variable (módulo Ingresos variables)</span></td>
+          <td>${clasesHtml}</td>
+          <td class="num">${fmtCOP(salarioPersonal)}</td>
+        </tr>`;
+      }
+
+      html += `<tfoot>
+        <tr><td colspan="3">Subtotal ingresos fijos</td><td class="num">${fmtCOP(totalIngFijos)}</td></tr>`;
+      if (hasVar) html += `<tr><td colspan="3">Subtotal ingreso variable (salario personal)</td><td class="num">${fmtCOP(salarioPersonal)}</td></tr>`;
+      html += `<tr><td colspan="3"><strong>Total ingresos mensuales</strong></td><td class="num"><strong>${fmtCOP(totalIngGeneral)}</strong></td></tr>
+        </tfoot></tbody></table>`;
+
+      if (fuentes.length === 0 && !hasVar){
+        html += `<p style="font-size:13px;margin:12px 0;color:var(--muted);">
+          <strong>Sin fuentes de ingreso registradas.</strong>
+        </p>`;
+      }
+
+      // Gastos
+      const gastoKeys = Object.keys(gastosObj).filter(k => (gastosObj[k]||0) > 0);
+      if (gastoKeys.length > 0){
+        html += `<p style="font-size:12px;color:var(--muted);margin:16px 0 6px;">Gastos mensuales por categoría</p>
+          <table><thead><tr><th>Categoría</th><th class="num">Monto</th></tr></thead><tbody>`;
+        gastoKeys.sort((a,b) => (gastosObj[b]||0) - (gastosObj[a]||0));
+        gastoKeys.forEach(k => {
+          const lbl = gastosLabels[k] || k;
+          html += `<tr><td>${escapeHtml(lbl)}</td><td class="num">${fmtCOP(gastosObj[k])}</td></tr>`;
+        });
+        html += `<tfoot><tr><td>Total gastos</td><td class="num">${fmtCOP(totalGas)}</td></tr></tfoot></tbody></table>`;
+      }
+
+      html += `</div>`;
+      return html;
+    }
+
+    function renderIngresosVariables(label, data){
+      if (!data || !data.active){
+        return `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>
+          <p class="prep-empty">El cliente abrió el módulo pero no activó el módulo de ingresos variables (no corresponde a su perfil o aún no lo configuró).</p></div>`;
+      }
+      const contratos = Array.isArray(data.contratos) ? data.contratos : [];
+      let html = `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>`;
+
+      // Salario personal mensual — el dato clave que usa la app
+      if (typeof data.salarioPersonal === "number" && data.salarioPersonal > 0){
+        const origen = data.salarioOverride
+          ? "definido manualmente por el cliente"
+          : "sugerido automáticamente por el sistema (P25 de netos históricos)";
+        html += `<div style="background:var(--cream);border-left:3px solid var(--brand);padding:12px 14px;border-radius:0 4px 4px 0;margin:0 0 14px;">
+          <p style="margin:0 0 4px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;">Salario personal mensual</p>
+          <p style="margin:0;font-size:18px;font-weight:600;color:var(--navy);">${fmtCOP(data.salarioPersonal)}</p>
+          <p style="margin:4px 0 0;font-size:11px;color:var(--muted);font-style:italic;">${escapeHtml(origen)}</p>
+        </div>`;
+      }
+
+      if (data.fondoActual != null){
+        html += `<p style="font-size:13px;margin:0 0 12px;">Fondo de estabilización actual: <strong>${fmtCOP(data.fondoActual)}</strong></p>`;
+      }
+
+      if (contratos.length === 0){
+        html += `<p class="prep-empty">Módulo activado pero sin contratos registrados.</p>`;
+      } else {
+        // Chequear si algún contrato está sin clasificar
+        const sinClasificar = contratos.filter(c => !c.claseIngreso).length;
+        if (sinClasificar > 0){
+          html += `<p style="background:#fff7ed;border-left:3px solid var(--warning);padding:10px 12px;border-radius:0 4px 4px 0;font-size:12px;color:var(--ink);margin:0 0 12px;">
+            ⚠ <strong>${sinClasificar} contrato${sinClasificar>1?'s':''} sin clasificar fiscalmente.</strong> El cliente debe asignar una clase de ingreso (honorarios, servicios, rentas de trabajo, etc.) para que el perfil fiscal sea correcto.
+          </p>`;
+        }
+
+        html += `<p style="font-size:12px;color:var(--muted);margin:0 0 6px;">Contratos registrados (${contratos.length}) — contexto histórico</p>
+          <table><thead><tr><th>Contrato</th><th>Clase fiscal</th><th class="num">Promedio ingresos</th><th class="num">Promedio costos</th><th class="num">Flujo neto promedio</th></tr></thead><tbody>`;
+        let totalProm = 0;
+        contratos.forEach(c => {
+          const meses = Array.isArray(c.meses) ? c.meses : [];
+          const mesesConDatos = meses.filter(m => (+m.ingresos || 0) > 0 || (+m.costos || 0) > 0);
+          const sumIng = mesesConDatos.reduce((s,m)=>s+(+m.ingresos||0),0);
+          const sumCos = mesesConDatos.reduce((s,m)=>s+(+m.costos||0),0);
+          const promIng = mesesConDatos.length > 0 ? sumIng / mesesConDatos.length : 0;
+          const promCos = mesesConDatos.length > 0 ? sumCos / mesesConDatos.length : 0;
+          totalProm += (promIng - promCos);
+          const clase = c.claseIngreso
+            ? `<span class="cat-tag">${escapeHtml(c.claseIngreso)}</span>`
+            : `<span style="color:var(--warning);font-size:11px;font-style:italic;">sin clasificar</span>`;
+          html += `<tr>
+            <td>${escapeHtml(c.nombre || c.cliente || "Contrato")}</td>
+            <td>${clase}</td>
+            <td class="num">${fmtCOP(promIng)}</td>
+            <td class="num">${fmtCOP(promCos)}</td>
+            <td class="num">${fmtCOP(promIng - promCos)}</td>
+          </tr>`;
+        });
+        html += `<tfoot><tr><td colspan="4">Flujo neto promedio total (todos los contratos)</td><td class="num">${fmtCOP(totalProm)}</td></tr></tfoot></tbody></table>
+          <p style="font-size:11px;color:var(--muted);margin:8px 0 0;font-style:italic;">El salario personal (arriba) es el ingreso efectivo mensual del cliente; los promedios de contratos son contexto histórico.</p>`;
+      }
+      html += `</div>`;
+      return html;
+    }
+
+    function renderPresupuestoAnual(label, data){
+      let html = `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>`;
+      const campos = [];
+      if (data.ingMensual != null) campos.push(["Ingreso mensual", fmtCOP(data.ingMensual)]);
+      if (data.deuMensual != null) campos.push(["Cuota de deuda mensual", fmtCOP(data.deuMensual)]);
+      if (data.fondoProvisiones != null) campos.push(["Fondo de provisiones", fmtCOP(data.fondoProvisiones)]);
+      if (data.socio1) campos.push(["Socio 1", data.socio1]);
+      if (campos.length > 0){
+        html += `<table><tbody>`;
+        campos.forEach(([l,v]) => {
+          html += `<tr><td style="color:var(--muted);width:40%;">${escapeHtml(l)}</td><td>${escapeHtml(v)}</td></tr>`;
+        });
+        html += `</tbody></table>`;
+      }
+      // Gastos por categoría (presupuesto anual tiene estructura {gastos: {categoria: [items]}})
+      const gastosObj = data.gastos || {};
+      const catKeys = Object.keys(gastosObj);
+      if (catKeys.length > 0){
+        html += `<p style="font-size:12px;color:var(--muted);margin:16px 0 6px;">Gastos anuales por categoría</p>
+          <table><thead><tr><th>Categoría</th><th class="num">Items</th><th class="num">Total anual</th></tr></thead><tbody>`;
+        let totalAnual = 0;
+        catKeys.forEach(cat => {
+          const items = Array.isArray(gastosObj[cat]) ? gastosObj[cat] : [];
+          const sum = items.reduce((s,i)=>s+((+i.monto||0) * (i.frec === "TODOS LOS MESES" ? 12 : 1)), 0);
+          totalAnual += sum;
+          html += `<tr><td>${escapeHtml(cat)}</td><td class="num">${items.length}</td><td class="num">${fmtCOP(sum)}</td></tr>`;
+        });
+        html += `<tfoot><tr><td colspan="2">Total gasto anual (estimado)</td><td class="num">${fmtCOP(totalAnual)}</td></tr></tfoot></tbody></table>`;
+      }
+      // Ahorros y deudas listas
+      if (Array.isArray(data.ahorro) && data.ahorro.length > 0){
+        html += `<p style="font-size:12px;color:var(--muted);margin:16px 0 6px;">Ahorros programados (${data.ahorro.length})</p>`;
+      }
+      if (Array.isArray(data.deudas) && data.deudas.length > 0){
+        html += `<p style="font-size:12px;color:var(--muted);margin:16px 0 6px;">Deudas en presupuesto (${data.deudas.length})</p>`;
+      }
+      html += `</div>`;
+      return html;
+    }
+
+    function renderActivos(label, data){
+      const activos = Array.isArray(data.activos) ? data.activos : [];
+      if (activos.length === 0){
+        return `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>
+          <p class="prep-empty">El cliente abrió el módulo <strong>pero no registró activos</strong>. Puede significar que no tiene activos, o que todavía no los cargó.</p></div>`;
+      }
+      // Agrupar por categoría
+      const byCat = {};
+      activos.forEach(a => {
+        const cat = a.category || "Otros";
+        (byCat[cat] = byCat[cat] || []).push(a);
+      });
+      let html = `<div class="mod-detail"><h5>${escapeHtml(label)} (${activos.length})</h5>`;
+      let totalGeneral = 0;
+      Object.keys(byCat).forEach(cat => {
+        const items = byCat[cat];
+        const sub = items.reduce((s,a)=>s+(a.value||0),0);
+        totalGeneral += sub;
+        html += `<p style="font-size:12px;color:var(--muted);margin:12px 0 6px;">${escapeHtml(cat)} (${items.length})</p>
+          <table><thead><tr><th>Nombre</th><th>Subtipo</th><th>Estructura legal</th><th class="num">Valor</th></tr></thead><tbody>`;
+        items.forEach(a => {
+          const legal = a.legalStructure || "Propiedad Directa";
+          const legalTexto = (legal === "Otro" && a.legalStructureOtro) ? `Otro: ${a.legalStructureOtro}` : legal;
+          const legalClass = legal === "Propiedad Directa" ? "cat-tag" : "cat-tag";
+          const legalStyle = legal !== "Propiedad Directa"
+            ? 'background:#eef4fb;color:var(--brand);font-weight:600;'
+            : 'background:#f3f4f6;color:var(--muted);';
+          html += `<tr>
+            <td>${escapeHtml(a.name || a.nombre || "—")}</td>
+            <td><span class="cat-tag">${escapeHtml(a.subtype || "—")}</span></td>
+            <td><span class="${legalClass}" style="${legalStyle}">${escapeHtml(legalTexto)}</span></td>
+            <td class="num">${fmtCOP(a.value)}</td>
+          </tr>`;
+        });
+        html += `<tfoot><tr><td colspan="3">Subtotal ${escapeHtml(cat)}</td><td class="num">${fmtCOP(sub)}</td></tr></tfoot></tbody></table>`;
+      });
+      html += `<p style="margin-top:14px;text-align:right;font-weight:600;color:var(--navy);">Total patrimonial: ${fmtCOP(totalGeneral)}</p>`;
+
+      // Resumen por estructura legal
+      const byLegal = {};
+      activos.forEach(a => {
+        const legal = a.legalStructure || "Propiedad Directa";
+        const key = (legal === "Otro" && a.legalStructureOtro) ? `Otro: ${a.legalStructureOtro}` : legal;
+        byLegal[key] = (byLegal[key] || 0) + (a.value || 0);
+      });
+      const legalKeys = Object.keys(byLegal).sort((a,b) => byLegal[b] - byLegal[a]);
+      if (legalKeys.length > 1 || (legalKeys.length === 1 && legalKeys[0] !== "Propiedad Directa")){
+        html += `<p style="font-size:12px;color:var(--muted);margin:16px 0 6px;">Resumen por estructura legal</p>
+          <table><thead><tr><th>Estructura</th><th class="num">Monto</th><th class="num">% del patrimonio</th></tr></thead><tbody>`;
+        legalKeys.forEach(k => {
+          const pct = totalGeneral > 0 ? ((byLegal[k] / totalGeneral) * 100).toFixed(1) : "0";
+          html += `<tr><td><strong>${escapeHtml(k)}</strong></td><td class="num">${fmtCOP(byLegal[k])}</td><td class="num">${pct}%</td></tr>`;
+        });
+        html += `</tbody></table>`;
+      }
+      html += `</div>`;
+      return html;
+    }
+
+    function renderEndeudamiento(label, data){
+      const deudas = Array.isArray(data.deudas) ? data.deudas : [];
+      if (deudas.length === 0){
+        return `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>
+          <p class="prep-empty">El cliente no registró deudas.</p></div>`;
+      }
+      let total = 0;
+      let html = `<div class="mod-detail"><h5>${escapeHtml(label)} (${deudas.length})</h5>
+        <table><thead><tr><th>Deuda</th><th>Tipo</th><th class="num">Saldo</th><th class="num">Cuota</th></tr></thead><tbody>`;
+      deudas.forEach(d => {
+        const saldo = d.saldo || d.monto || 0;
+        total += saldo;
+        html += `<tr>
+          <td>${escapeHtml(d.nombre || d.name || "—")}</td>
+          <td><span class="cat-tag">${escapeHtml(d.tipo || d.type || "—")}</span></td>
+          <td class="num">${fmtCOP(saldo)}</td>
+          <td class="num">${d.cuota != null ? fmtCOP(d.cuota) : "—"}</td>
+        </tr>`;
+      });
+      html += `<tfoot><tr><td colspan="2">Total deuda</td><td class="num">${fmtCOP(total)}</td><td></td></tr></tfoot></tbody></table></div>`;
+      return html;
+    }
+
+    function renderFiscal(label, data){
+      // El módulo fiscal tiene estructura variable; mostramos los campos top-level legibles
+      // + un bloque dedicado para fiscal.legal (estado civil, régimen, dependientes, cónyuge).
+      const rows = [];
+      const human = {
+        tipoContribuyente: "Tipo contribuyente",
+        tipo: "Tipo",
+        declaraRenta: "¿Declara renta?",
+        regimen: "Régimen",
+        actividad: "Actividad económica",
+        dependientes: "Dependientes a cargo",
+      };
+      Object.keys(data).forEach(k => {
+        const v = data[k];
+        if (v == null || typeof v === "object") return;
+        const lbl = human[k] || k;
+        const valStr = typeof v === "boolean" ? (v ? "Sí" : "No") : String(v);
+        rows.push([lbl, valStr]);
+      });
+
+      let html = `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>`;
+
+      // Campos planos (si existen)
+      if (rows.length > 0){
+        html += `<p style="font-size:12px;color:var(--muted);margin:0 0 6px;">Perfil tributario</p><table><tbody>`;
+        rows.forEach(([l,v]) => {
+          html += `<tr><td style="color:var(--muted);width:40%;">${escapeHtml(l)}</td><td>${escapeHtml(v)}</td></tr>`;
+        });
+        html += `</tbody></table>`;
+      }
+
+      // Bloque LEGAL (si existe)
+      const legal = data.legal;
+      if (legal && typeof legal === "object"){
+        const legalRows = [];
+        if (legal.estadoCivil) legalRows.push(["Estado civil", legal.estadoCivil]);
+        if (legal.regimenConyugal) legalRows.push(["Régimen conyugal", legal.regimenConyugal]);
+        if (legal.anioMatrimonioUnion) legalRows.push(["Año matrimonio/unión", legal.anioMatrimonioUnion]);
+        if (legal.nombreConyuge) legalRows.push(["Nombre cónyuge", legal.nombreConyuge]);
+        const totalDep = (+legal.hijosMenores||0) + (+legal.hijosMayoresDependientes||0) + (+legal.otrosDependientes||0);
+        if (legal.hijosMenores != null) legalRows.push(["Hijos menores", legal.hijosMenores]);
+        if (legal.hijosMayoresDependientes != null) legalRows.push(["Hijos mayores dependientes", legal.hijosMayoresDependientes]);
+        if (legal.otrosDependientes != null) legalRows.push(["Otros dependientes", legal.otrosDependientes]);
+        if (totalDep > 0) legalRows.push(["Total dependientes", totalDep]);
+        if (legal.gastoMensualFamilia != null) legalRows.push(["Gasto mensual familia", fmtCOP(legal.gastoMensualFamilia)]);
+
+        if (legalRows.length > 0){
+          html += `<p style="font-size:12px;color:var(--muted);margin:16px 0 6px;">Estructura legal (sucesoral)</p><table><tbody>`;
+          legalRows.forEach(([l,v]) => {
+            html += `<tr><td style="color:var(--muted);width:40%;">${escapeHtml(l)}</td><td>${escapeHtml(v)}</td></tr>`;
+          });
+          html += `</tbody></table>`;
+        }
+      }
+
+      if (rows.length === 0 && (!legal || Object.keys(legal).length === 0)){
+        html += `<p class="prep-empty">El cliente abrió el módulo pero aún no ingresó datos planos.</p>`;
+      }
+      html += `</div>`;
+      return html;
+    }
+
+    function renderMetas(label, data){
+      // La estructura real es {seeded, items: [...], proy: {...}}
+      // Cada item: {nombre, objetivo, fecha(YYYY-MM), fuente, saldoManual, aporte}
+      const items = Array.isArray(data.items) ? data.items
+                  : Array.isArray(data) ? data
+                  : (Array.isArray(data.metas) ? data.metas : []);
+      let html = `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>`;
+
+      // Parámetros de proyección (si existen)
+      if (data.proy && typeof data.proy === "object"){
+        const p = data.proy;
+        const proyLines = [];
+        if (p.rendimiento != null) proyLines.push("Rendimiento esperado: <strong>" + p.rendimiento + "%</strong>");
+        if (p.anios != null) proyLines.push("Horizonte: <strong>" + p.anios + " años</strong>");
+        if (p.inicialOverride != null) proyLines.push("Capital inicial: <strong>" + fmtCOP(p.inicialOverride) + "</strong>");
+        if (p.aporteOverride != null) proyLines.push("Aporte mensual: <strong>" + fmtCOP(p.aporteOverride) + "</strong>");
+        if (proyLines.length > 0){
+          html += `<p style="font-size:13px;margin:0 0 12px;">${proyLines.join(" · ")}</p>`;
+        }
+      }
+
+      if (items.length === 0){
+        html += `<p class="prep-empty">El cliente no registró metas puntuales.</p></div>`;
+        return html;
+      }
+
+      html += `<p style="font-size:12px;color:var(--muted);margin:12px 0 6px;">Metas registradas (${items.length})</p>
+        <table><thead><tr><th>Meta</th><th>Fecha objetivo</th><th>Fuente</th><th class="num">Objetivo</th><th class="num">Saldo actual</th><th class="num">Aporte mensual</th></tr></thead><tbody>`;
+      items.forEach(m => {
+        html += `<tr>
+          <td>${escapeHtml(m.nombre || "—")}</td>
+          <td>${escapeHtml(m.fecha || "—")}</td>
+          <td>${m.fuente ? '<span class="cat-tag">'+escapeHtml(m.fuente)+'</span>' : '<span style="color:var(--muted);">—</span>'}</td>
+          <td class="num">${m.objetivo != null ? fmtCOP(m.objetivo) : "—"}</td>
+          <td class="num">${m.saldoManual != null ? fmtCOP(m.saldoManual) : "—"}</td>
+          <td class="num">${m.aporte != null ? fmtCOP(m.aporte) : "—"}</td>
+        </tr>`;
+      });
+      html += `</tbody></table></div>`;
+      return html;
+    }
+
+    function renderAhorro(label, data){
+      // La estructura real es {objetivos_ahorro: [...], cupos_disponibles}
+      // Cada objetivo: {nombre, monto_mensual, precaucion}
+      const objetivos = Array.isArray(data.objetivos_ahorro) ? data.objetivos_ahorro
+                      : (Array.isArray(data) ? data : []);
+      let html = `<div class="mod-detail"><h5>${escapeHtml(label)}</h5>`;
+      if (data.cupos_disponibles != null){
+        html += `<p style="margin:0 0 10px;font-size:13px;">Cupos de crédito disponibles (respaldo de emergencia): <strong>${fmtCOP(data.cupos_disponibles)}</strong></p>`;
+      }
+      if (objetivos.length > 0){
+        html += `<p style="font-size:12px;color:var(--muted);margin:12px 0 6px;">Objetivos de ahorro mensual (${objetivos.length})</p>
+          <table><thead><tr><th>Objetivo</th><th class="num">Aporte mensual</th><th class="num">Sugerido</th><th>Marcado como precaución</th></tr></thead><tbody>`;
+        let total = 0;
+        objetivos.forEach(o => {
+          const m = o.monto_mensual != null ? o.monto_mensual : (o.monto || o.valor || 0);
+          total += m;
+          html += `<tr>
+            <td>${escapeHtml(o.nombre || "—")}</td>
+            <td class="num">${fmtCOP(m)}</td>
+            <td class="num">${o.sugerido != null ? fmtCOP(o.sugerido) : "—"}</td>
+            <td>${o.precaucion ? '<span class="cat-tag">Sí</span>' : '<span style="color:var(--muted);">—</span>'}</td>
+          </tr>`;
+        });
+        html += `<tfoot><tr><td>Total ahorro mensual</td><td class="num">${fmtCOP(total)}</td><td colspan="2"></td></tr></tfoot></tbody></table>`;
+      } else if (data.cupos_disponibles == null){
+        html += `<p class="prep-empty">Sin datos.</p>`;
+      } else {
+        html += `<p class="prep-empty">El cliente registró cupos pero no definió objetivos de ahorro mensual.</p>`;
+      }
+      html += `</div>`;
+      return html;
+    }
+
+    function renderGenerico(label, data){
+      // Fallback: mostrar JSON formateado
+      return `<div class="mod-detail">
+        <h5>${escapeHtml(label)}</h5>
+        <p style="font-size:12px;color:var(--muted);margin:0 0 8px;">Vista genérica (sin renderer dedicado para este módulo).</p>
+        <pre style="font-size:12px;background:#fff;padding:12px;border:1px solid var(--border);border-radius:4px;overflow:auto;max-height:300px;">${escapeHtml(JSON.stringify(data, null, 2))}</pre>
+      </div>`;
+    }
+    // ──────────────────────────────────────────────────────────
 
     // ───── Modal & confirm ─────
     let pendingId = null;

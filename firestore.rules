@@ -42,10 +42,20 @@ service cloud.firestore {
       allow get: if true;
       allow list: if isAsesor();
       allow create, delete: if false;
+      // Asesor puede actualizar:
+      //   - Campos de CONFIRMACIÓN (status, confirmed_at, confirmed_by, etc.)
+      //   - Campos de REAGENDAMIENTO (session_start, meet_link, original_session_start,
+      //     rescheduled_at, rescheduled_by, reschedule_reason, reminder_12h_sent_at)
+      //   - payment_notes (notas libres)
       allow update: if isAsesor()
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['status', 'confirmed_at', 'confirmed_by',
-                       'confirmed_by_uid', 'payment_notes'])
+                       'confirmed_by_uid', 'payment_notes',
+                       'session_start', 'meet_link',
+                       'original_session_start', 'rescheduled_at',
+                       'rescheduled_by', 'rescheduled_by_uid',
+                       'reschedule_reason', 'reminder_12h_sent_at',
+                       'cliente_listo_notificado_at', 'postSesion'])
         && request.resource.data.status in ['confirmed', 'cancelled', 'pending_payment'];
     }
 
