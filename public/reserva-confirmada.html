@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Reserva confirmada · ABBA Patrimonial</title>
+  <link rel="icon" type="image/png" href="logo-abba.png">
+  <style>
+    :root {
+      --navy: #1e2853;
+      --brand: #10578f;
+      --cream: #f6f3ec;
+      --ink: #1a1a1a;
+      --muted: #5d6a7d;
+      --warning: #d97706;
+      --warning-bg: #fff7ed;
+      --success: #10b981;
+      --border: #e2e0d8;
+      --whatsapp: #25D366;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--cream);
+      font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+      color: var(--ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+      line-height: 1.5;
+    }
+    .card {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      max-width: 560px;
+      width: 100%;
+      overflow: hidden;
+      box-shadow: 0 10px 40px rgba(30, 40, 83, 0.08);
+    }
+    .header {
+      background: var(--navy);
+      color: #fff;
+      padding: 32px 32px 28px;
+      text-align: center;
+    }
+    .brand-label {
+      font-size: 11px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: #c9d3e6;
+      font-weight: 600;
+      margin: 0 0 10px;
+    }
+    .check-circle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.12);
+      margin: 0 auto 16px;
+    }
+    .check-circle svg {
+      width: 32px;
+      height: 32px;
+      stroke: #fff;
+      stroke-width: 3;
+      fill: none;
+    }
+    .header h1 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 500;
+      line-height: 1.3;
+    }
+    .header .subtitle {
+      margin: 10px 0 0;
+      font-size: 15px;
+      color: #c9d3e6;
+      font-weight: 400;
+    }
+    .body {
+      padding: 32px;
+    }
+    .body h2 {
+      margin: 0 0 12px;
+      font-size: 17px;
+      color: var(--navy);
+      font-weight: 600;
+    }
+    .body p {
+      margin: 0 0 14px;
+      font-size: 15px;
+      line-height: 1.65;
+      color: var(--ink);
+    }
+    .alert {
+      background: var(--warning-bg);
+      border-left: 4px solid var(--warning);
+      padding: 16px 18px;
+      border-radius: 0 6px 6px 0;
+      margin: 20px 0 24px;
+    }
+    .alert .alert-title {
+      margin: 0 0 6px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--warning);
+      letter-spacing: 0.04em;
+    }
+    .alert p {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.55;
+      color: var(--ink);
+    }
+    .steps {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 24px;
+      counter-reset: step-counter;
+    }
+    .steps li {
+      counter-increment: step-counter;
+      position: relative;
+      padding: 10px 0 10px 40px;
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--ink);
+    }
+    .steps li::before {
+      content: counter(step-counter);
+      position: absolute;
+      left: 0;
+      top: 10px;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: var(--brand);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 13px;
+    }
+    .ctas {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 0 0 24px;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 20px;
+      border-radius: 6px;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+      font-family: inherit;
+      transition: transform 0.1s, box-shadow 0.15s;
+      border: 1px solid transparent;
+    }
+    .btn:active { transform: translateY(1px); }
+    .btn-primary {
+      background: var(--brand);
+      color: #fff;
+    }
+    .btn-primary:hover {
+      background: var(--navy);
+      box-shadow: 0 4px 12px rgba(16, 87, 143, 0.25);
+    }
+    .btn-whatsapp {
+      background: var(--whatsapp);
+      color: #fff;
+    }
+    .btn-whatsapp:hover {
+      background: #1ea755;
+      box-shadow: 0 4px 12px rgba(37, 211, 102, 0.25);
+    }
+    .btn svg { width: 18px; height: 18px; }
+    .footer {
+      background: var(--cream);
+      padding: 20px 32px;
+      text-align: center;
+      border-top: 1px solid var(--border);
+    }
+    .footer p {
+      margin: 0;
+      font-size: 13px;
+      color: var(--navy);
+      font-weight: 600;
+    }
+    .footer .sub {
+      margin: 4px 0 0;
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 400;
+    }
+    @media (max-width: 480px) {
+      .header, .body, .footer { padding-left: 22px; padding-right: 22px; }
+      .header h1 { font-size: 20px; }
+      .ctas { flex-direction: column; }
+      .btn { justify-content: center; }
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <header class="header">
+      <p class="brand-label">ABBA Patrimonial</p>
+      <div class="check-circle" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+      <h1>Tu sesión con Natalia<br>está reservada</h1>
+      <p class="subtitle">Falta un último paso para asegurar tu cupo.</p>
+    </header>
+
+    <section class="body">
+      <h2>¿Qué sigue ahora?</h2>
+      <ol class="steps">
+        <li>En los próximos minutos vas a recibir un correo con las <strong>instrucciones de pago</strong>.</li>
+        <li>Realizas la transferencia por el valor de la sesión.</li>
+        <li>Nos envías el comprobante por WhatsApp.</li>
+        <li>Confirmamos tu pago y te llega el enlace de Google Meet para la sesión.</li>
+      </ol>
+
+      <div class="alert">
+        <p class="alert-title">⏱ Tiempo límite para pagar</p>
+        <p>Tienes <strong>3 horas</strong> para enviarnos el comprobante. Si no recibimos el pago en ese plazo, el horario se libera automáticamente para otros clientes.</p>
+      </div>
+
+      <h2>¿No ves el correo?</h2>
+      <p>Revisa tu bandeja de entrada (y la carpeta de spam / promociones). Si pasados <strong>10 minutos</strong> no lo encuentras, escríbenos por WhatsApp.</p>
+
+      <div class="ctas">
+        <a href="https://mail.google.com/mail/u/0/#inbox" target="_blank" rel="noopener" class="btn btn-primary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><polyline points="3 7 12 13 21 7"/></svg>
+          Abrir mi correo
+        </a>
+        <a href="https://wa.me/573104278004?text=Hola%20Natalia%2C%20acabo%20de%20reservar%20mi%20sesi%C3%B3n%20de%20diagn%C3%B3stico%20patrimonial." target="_blank" rel="noopener" class="btn btn-whatsapp">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.52 3.48A11.86 11.86 0 0 0 12.02 0C5.5 0 .18 5.33.18 11.86c0 2.09.55 4.13 1.59 5.93L0 24l6.37-1.67a11.84 11.84 0 0 0 5.65 1.44h.01c6.52 0 11.84-5.33 11.84-11.86 0-3.17-1.24-6.15-3.35-8.43zM12.03 21.78h-.01a9.89 9.89 0 0 1-5.03-1.38l-.36-.21-3.78.99 1.01-3.69-.24-.38a9.84 9.84 0 0 1-1.52-5.26c0-5.44 4.43-9.86 9.88-9.86a9.84 9.84 0 0 1 9.87 9.88c0 5.44-4.43 9.9-9.82 9.91zm5.43-7.4c-.3-.15-1.76-.87-2.03-.97-.27-.1-.47-.15-.67.15-.2.3-.77.97-.94 1.17-.17.2-.34.22-.64.07-.3-.15-1.26-.46-2.4-1.48a9.03 9.03 0 0 1-1.67-2.07c-.17-.3-.02-.46.13-.6.14-.14.3-.37.45-.55.15-.18.2-.3.3-.5.1-.2.05-.37-.02-.52-.07-.15-.67-1.63-.92-2.23-.24-.58-.49-.5-.67-.51l-.57-.01c-.2 0-.52.07-.79.37-.27.3-1.03 1.01-1.03 2.47 0 1.46 1.06 2.87 1.21 3.07.15.2 2.09 3.19 5.07 4.47.71.3 1.26.49 1.69.62.71.22 1.35.19 1.86.11.57-.08 1.76-.72 2-1.42.25-.69.25-1.29.17-1.42-.07-.13-.27-.2-.57-.35z"/></svg>
+          Escribir por WhatsApp
+        </a>
+      </div>
+
+    </section>
+
+    <footer class="footer">
+      <p>Natalia Jaramillo</p>
+      <p class="sub">ABBA Patrimonial · Arquitectura de patrimonio</p>
+    </footer>
+  </main>
+</body>
+</html>
