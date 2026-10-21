@@ -17,7 +17,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-functions-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<link rel="stylesheet" href="styles.css?v=124">
+<link rel="stylesheet" href="styles.css?v=125">
 <style>
 /* ═══ Simulador de Deuda (Módulo 7) ═══ */
 #modulo-7 .ds-hint{font-size:13px;line-height:1.5;color:rgba(0,0,0,.55);margin:0 0 14px}
@@ -852,6 +852,10 @@
 
         <!-- PAYWALL · todo el análisis de ingresos variables es feature 'ingvar-completo' (plan Diagnóstico). El registro de contratos de arriba queda libre. -->
         <div id="mvar-analisis-wrap" data-pw-feature="ingvar-completo">
+        <div class="pw-teaser-head" data-pw-teaser>
+          <h3>Tu salario sostenible y tu fondo de estabilización</h3>
+          <p>Convierte tus ingresos irregulares en un sueldo predecible: cuánto puedes pagarte cada mes sin riesgo y cuánto apartar para los meses flojos.</p>
+        </div>
         <!-- Análisis estadístico -->
         <div class="kpi-grid" id="mvar-kpis"></div>
 
@@ -1254,11 +1258,11 @@
 
       <!-- Calendario anual de eventos · PAYWALL feature asesor (m5-calendario-eventos) -->
       <div class="card calendar-card" data-pw-feature="m5-calendario-eventos">
-        <div class="card-head">
+        <div class="card-head" data-pw-teaser>
           <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
           <h3>Calendario anual de eventos</h3>
         </div>
-        <p class="card-sub">Tus próximos 12 meses con todos los gastos e ingresos no mensuales que registraste. Los puntos verdes son ingresos, los rojos son gastos. Si un gasto está en rojo intenso, no tienes provisión suficiente.</p>
+        <p class="card-sub" data-pw-teaser>Tus próximos 12 meses con todos los gastos e ingresos no mensuales que registraste. Los puntos verdes son ingresos, los rojos son gastos. Si un gasto está en rojo intenso, no tienes provisión suficiente.</p>
         <div class="cal-legend">
           <span class="cal-leg-item"><span class="cal-leg-dot ingreso"></span>Ingreso esperado</span>
           <span class="cal-leg-item"><span class="cal-leg-dot gasto-ok"></span>Gasto provisionado</span>
@@ -1420,7 +1424,7 @@
       <!-- ════════ VISTA PATRIMONIAL ════════ -->
       <div id="db-view-pat" class="db-view" role="tabpanel" aria-labelledby="db-view-pat-tab" hidden data-pw-feature="m6-tablero-completo">
       <!-- ════════ SECCIÓN 2: TU PATRIMONIO (acumulación) ════════ -->
-      <div class="db-section-head" id="db-patrimonial-head">
+      <div class="db-section-head" id="db-patrimonial-head" data-pw-teaser>
         <h2 class="db-section-title">Tu patrimonio</h2>
         <p class="db-section-sub">Lo que has construido y hacia dónde va: tus activos, su concentración, los ingresos que generan y tu camino a la libertad financiera.</p>
       </div>
@@ -3155,6 +3159,6 @@
     </div>
 </div>
 
-<script src="app.js?v=124"></script>
+<script src="app.js?v=125"></script>
 </body>
 </html>

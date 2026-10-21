@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════
    FIREBASE — auth + firestore
    ═══════════════════════════════════════════════════════════ */
-   console.log('%cABBA · build 2026-10-21-v124 · paywall: planes Diagnóstico/Organizador/Asesor, precios + descuento, botones alineados', 'color:#0e4d3a;font-weight:bold');
+   console.log('%cABBA · build 2026-10-21-v125 · paywall: teasers persuasivos en bloqueos + precios tachados (50% real)', 'color:#0e4d3a;font-weight:bold');
    const firebaseConfig = {
     apiKey: "AIzaSyBLNS_xLAoAsnf5XfajAmVf12f4_mpUMfY",
     authDomain: "evaluafinanzas.firebaseapp.com",
@@ -798,6 +798,8 @@
    ═══════════════════════════════════════════════════════════ */
   const PLAN_ORDEN = { free:0, diagnostico:1, asesor:2 };
   const PLAN_NOMBRE = { free:'Diagnóstico', diagnostico:'Organizador Financiero', asesor:'Asesor Patrimonial' };
+  // cop/usd = precio FINAL que paga el cliente (ya con el 50% del cupón LANZAMIENTO50).
+  // El precio lista (tachado) es el doble.
   const PLAN_PRECIO = {
     diagnostico:{ cop:260000, usd:65 },
     asesor:{ cop:480000, usd:120 }
@@ -3399,21 +3401,20 @@ function showToast(msg, type) {
     else cta = `<button class="btn btn-primary pw-plan-cta" data-plan="${plan}">Elegir ${PLAN_NOMBRE[plan]}</button>`;
 
     // ── Bloque de precio ──
-    // Plan free: "Gratis". Planes de pago: precio normal tachado arriba +
-    // precio con 50% del cupón LANZAMIENTO50 como valor principal (primer año).
-    // Ambos valores llevan data-attrs COP/USD para que el toggle los actualice.
+    // cop/usd = precio FINAL con el 50% del cupón (lo que paga el cliente el primer año).
+    // El precio lista (tachado, arriba) es el doble. El toggle COP/USD actualiza ambos
+    // vía los data-attrs.
     let precioHTML;
     if(plan==='free'){
       precioHTML = '<div class="pw-plan-precio-wrap"><span class="pw-plan-precio">Gratis</span></div>';
     } else {
-      const cop = PLAN_PRECIO[plan].cop, usd = PLAN_PRECIO[plan].usd;
-      const copDesc = Math.round(cop/2), usdDesc = usd/2;
+      const cop = PLAN_PRECIO[plan].cop, usd = PLAN_PRECIO[plan].usd;   // lo que pagan
+      const copLista = cop * 2, usdLista = usd * 2;                     // precio normal (tachado)
       const fmtCOP = v => '$' + v.toLocaleString('es-CO');
-      const fmtUSD = v => 'USD $' + (Number.isInteger(v) ? v : v.toFixed(2));
       precioHTML =
         '<div class="pw-plan-precio-wrap">'
-        + `<span class="pw-plan-precio-lista" data-precio-cop="${cop}" data-precio-usd="${usd}">${fmtCOP(cop)}</span>`
-        + `<div class="pw-plan-precio-row"><span class="pw-plan-precio" data-precio-cop="${copDesc}" data-precio-usd="${usdDesc}">${fmtCOP(copDesc)}</span><span class="pw-plan-periodo">/primer año</span></div>`
+        + `<span class="pw-plan-precio-lista" data-precio-cop="${copLista}" data-precio-usd="${usdLista}">${fmtCOP(copLista)}</span>`
+        + `<div class="pw-plan-precio-row"><span class="pw-plan-precio" data-precio-cop="${cop}" data-precio-usd="${usd}">${fmtCOP(cop)}</span><span class="pw-plan-periodo">/primer año</span></div>`
         + '</div>';
     }
 
@@ -3422,7 +3423,7 @@ function showToast(msg, type) {
         ${destacado?'<div class="pw-plan-ribbon">Recomendado para ti</div>':''}
         <div class="pw-plan-nombre">${PLAN_NOMBRE[plan]}</div>
         ${precioHTML}
-        ${plan!=='free'?'<div class="pw-plan-cupon">50% OFF con <strong>LANZAMIENTO50</strong> · luego '+('$'+PLAN_PRECIO[plan].cop.toLocaleString('es-CO'))+'/año</div>':'<div class="pw-plan-cupon">&nbsp;</div>'}
+        ${plan!=='free'?'<div class="pw-plan-cupon">50% OFF con <strong>LANZAMIENTO50</strong> · luego '+('$'+(PLAN_PRECIO[plan].cop*2).toLocaleString('es-CO'))+'/año</div>':'<div class="pw-plan-cupon">&nbsp;</div>'}
         <ul class="pw-plan-incluye">${lista}</ul>
         ${cta}
       </div>`;
@@ -3504,16 +3505,28 @@ function showToast(msg, type) {
     modEl.appendChild(ov);
   }
 
+  // Gancho persuasivo por feature: qué resultado concreto se desbloquea.
+  // Se muestra en el gate de las secciones bloqueadas (mixto) para dar ganas de ver el resultado.
+  const FEATURE_GANCHO = {
+    'ingvar-completo':      'Descubre tu salario sostenible y cuánto apartar en tu fondo de estabilización.',
+    'm6-tablero-completo':  'Mira cómo crece tu patrimonio neto año a año y tu ingreso pasivo proyectado.',
+    'm13-hallazgos-completos':'Recibe los hallazgos de tu estructura legal con la acción, la norma y el costo de cada uno.',
+    'm15-capas-detallado':  'Abre el detalle de cada capa: qué falla, por qué y cuánto aporta cada activo.',
+    'm5-calendario-eventos':'Organiza tus pagos estacionales en un calendario anual y evita sorpresas.',
+    'm9-pdf-informe':       'Descarga tu diagnóstico completo en PDF, listo para tu asesor o contador.'
+  };
+
   /* ── BLOQUEO MIXTO ──
      El módulo queda usable; secciones concretas (marcadas en el render con
      data-pw-feature="xxx") se bloquean si el plan no las incluye.
-     Cada sección bloqueada se difumina y recibe un pequeño CTA encima. */
+     El contenido-resultado se difumina, pero cualquier sub-elemento marcado con
+     data-pw-teaser (título + descripción) queda nítido para enganchar, y el gate
+     muestra el beneficio concreto que se desbloquea. */
   function aplicarBloqueoMixto(id){
     const modEl = document.getElementById('modulo-'+id);
     if(!modEl) return;
     modEl.querySelectorAll('[data-pw-feature]').forEach(sec=>{
       const feat = sec.getAttribute('data-pw-feature');
-      const yaProcesado = sec.classList.contains('pw-mixto-proc');
       if(puedeAcceder(feat)){
         sec.classList.remove('pw-mixto-locked');
         const g = sec.querySelector(':scope > .pw-mixto-gate'); if(g) g.remove();
@@ -3522,13 +3535,17 @@ function showToast(msg, type) {
       sec.classList.add('pw-mixto-locked','pw-mixto-proc');
       if(sec.querySelector(':scope > .pw-mixto-gate')) return;
       const plan = planRequerido(feat);
+      const gancho = FEATURE_GANCHO[feat] || '';
       const gate = document.createElement('div');
       gate.className = 'pw-mixto-gate';
       gate.innerHTML = `
         <div class="pw-mixto-gate-inner">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
-          <span>Disponible en <strong>${PLAN_NOMBRE[plan]}</strong></span>
-          <button class="pw-mixto-cta">Desbloquear</button>
+          <div class="pw-mixto-gate-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+          ${gancho ? `<div class="pw-mixto-gate-txt">${gancho}</div>` : ''}
+          <div class="pw-mixto-gate-row">
+            <span class="pw-mixto-gate-plan">Incluido en <strong>${PLAN_NOMBRE[plan]}</strong></span>
+            <button class="pw-mixto-cta">Desbloquear</button>
+          </div>
         </div>`;
       gate.querySelector('.pw-mixto-cta').addEventListener('click', ()=>abrirPanelPlanes(feat));
       sec.appendChild(gate);
@@ -14955,7 +14972,7 @@ function showToast(msg, type) {
 
     let html = '';
 
-    html += '<div class="pf-diag-head">';
+    html += '<div class="pf-diag-head" data-pw-teaser>';
     html += '<h3>Diagnóstico legal patrimonial</h3>';
     if(resumen.totalHallazgos === 0){
       html += '<p>Sin hallazgos relevantes con los datos registrados. Revísalo cada año.</p>';
