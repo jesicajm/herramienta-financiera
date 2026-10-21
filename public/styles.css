@@ -6434,3 +6434,229 @@
     border-color: var(--accent, #0e4d3a) !important;
     color: var(--accent, #0e4d3a) !important;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PAYWALL · BLOQUEO DE MÓDULOS
+   Badge de plan, candados en el sidebar, pantalla de bloqueo duro,
+   overlays de bloqueo suave, gates mixtos, modal de upgrade y panel de planes.
+   Usa los tokens del design system (--accent verde esmeralda, --serif, --sans).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Badge de plan en el header ── */
+.pw-plan-badge{
+  font-family: var(--sans);
+  font-size: 12px; font-weight: 600; letter-spacing: .2px;
+  padding: 5px 12px; border-radius: var(--r-pill);
+  border: 1px solid var(--line); background: var(--surface-soft);
+  color: var(--ink-2); cursor: pointer; white-space: nowrap;
+  transition: all .15s ease; margin-right: 4px;
+}
+.pw-plan-badge:hover{ border-color: var(--accent); color: var(--accent); }
+.pw-plan-badge.pw-plan-free{ background: var(--surface-soft); color: var(--ink-3); }
+.pw-plan-badge.pw-plan-diagnostico{ background: var(--accent-soft); color: var(--accent); border-color: var(--accent-soft); }
+.pw-plan-badge.pw-plan-asesor{
+  background: linear-gradient(135deg, #0e4d3a, #1a6b54); color: #fff;
+  border-color: transparent; box-shadow: 0 1px 3px rgba(14,77,58,.3);
+}
+
+/* ── Candados en el sidebar ── */
+.sb-item.sb-locked{ opacity: .72; }
+.sb-item .sb-lock{
+  display: inline-flex; align-items: center; margin-left: auto;
+  color: var(--ink-4);
+}
+.sb-item .sb-lock svg{ width: 14px; height: 14px; }
+.sb-item.sb-locked:hover .sb-lock{ color: var(--accent); }
+
+/* ── Pantalla de BLOQUEO DURO (reemplaza el módulo) ── */
+.pw-hard-lock{ display: none; }
+.pw-hard-lock.active{ display: flex; align-items: center; justify-content: center; min-height: 60vh; }
+.pw-hl-card{
+  max-width: 540px; text-align: center; padding: 48px 40px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-xl); box-shadow: var(--sh-3);
+}
+.pw-hl-icon{
+  width: 64px; height: 64px; margin: 0 auto 20px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; background: var(--accent-soft); color: var(--accent);
+}
+.pw-hl-icon svg{ width: 30px; height: 30px; }
+.pw-hl-eyebrow{
+  font-family: var(--sans); font-size: 12px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 1px; color: var(--ink-4);
+  margin-bottom: 10px;
+}
+.pw-hl-title{
+  font-family: var(--serif); font-size: 24px; line-height: 1.3;
+  color: var(--ink); margin: 0 0 14px; font-weight: 500;
+}
+.pw-hl-sub{ font-family: var(--sans); font-size: 15px; color: var(--ink-3); margin: 0 0 28px; }
+.pw-hl-actions{ display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+
+/* ── Bloqueo SUAVE (contenido borroso + overlay) ── */
+.module.pw-soft-locked{ position: relative; }
+.module.pw-soft-locked > *:not(.pw-soft-overlay):not(.module-head){
+  filter: blur(5px); pointer-events: none; user-select: none; opacity: .7;
+}
+.pw-soft-overlay{
+  position: absolute; inset: 0; z-index: 20;
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 18vh;
+  background: linear-gradient(to bottom, rgba(246,243,236,.2), rgba(246,243,236,.75) 40%);
+}
+.pw-soft-card{
+  text-align: center; max-width: 440px; padding: 32px 30px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-lg); box-shadow: var(--sh-3);
+}
+.pw-soft-icon{
+  width: 52px; height: 52px; margin: 0 auto 16px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; background: var(--accent-soft); color: var(--accent);
+}
+.pw-soft-icon svg{ width: 26px; height: 26px; }
+.pw-soft-card h3{ font-family: var(--serif); font-size: 19px; font-weight: 500; color: var(--ink); margin: 0 0 10px; line-height: 1.35; }
+.pw-soft-card p{ font-family: var(--sans); font-size: 14px; color: var(--ink-3); margin: 0 0 20px; }
+
+/* ── Bloqueo MIXTO (sección difuminada dentro de un módulo) ── */
+.pw-mixto-locked{ position: relative; }
+.pw-mixto-locked > *:not(.pw-mixto-gate){
+  filter: blur(5px); pointer-events: none; user-select: none; opacity: .7;
+}
+.pw-mixto-gate{
+  position: absolute; inset: 0; z-index: 15;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(to bottom, rgba(246,243,236,.25), rgba(246,243,236,.72));
+  border-radius: var(--r-md);
+}
+.pw-mixto-gate-inner{
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  justify-content: center; padding: 14px 20px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-pill); box-shadow: var(--sh-2);
+  font-family: var(--sans); font-size: 14px; color: var(--ink-2);
+}
+.pw-mixto-gate-inner svg{ width: 18px; height: 18px; color: var(--accent); }
+.btn-sm{ padding: 6px 14px !important; font-size: 13px !important; }
+
+/* Botón "ver el detalle" bloqueado en M15 */
+.capa-mas.capa-mas-lock{ color: var(--ink-4); }
+.capa-mas.capa-mas-lock::after{ content: ' 🔒'; font-size: 11px; }
+
+/* ── Modal de upgrade ── */
+.pw-modal-overlay{
+  position: fixed; inset: 0; z-index: 2000;
+  display: none; align-items: center; justify-content: center;
+  background: rgba(12,12,13,.5); backdrop-filter: blur(2px); padding: 20px;
+}
+.pw-modal-overlay.show{ display: flex; }
+.pw-modal{
+  position: relative; max-width: 440px; width: 100%;
+  padding: 36px 32px; text-align: center;
+  background: var(--surface); border-radius: var(--r-xl); box-shadow: var(--sh-3);
+}
+.pw-modal-close{
+  position: absolute; top: 14px; right: 16px; border: none; background: none;
+  font-size: 26px; line-height: 1; color: var(--ink-4); cursor: pointer;
+}
+.pw-modal-close:hover{ color: var(--ink-2); }
+.pw-modal-icon{
+  width: 56px; height: 56px; margin: 0 auto 18px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; background: var(--accent-soft); color: var(--accent);
+}
+.pw-modal-icon svg{ width: 28px; height: 28px; }
+.pw-modal-title{ font-family: var(--serif); font-size: 21px; font-weight: 500; color: var(--ink); margin: 0 0 10px; line-height: 1.35; }
+.pw-modal-sub{ font-family: var(--sans); font-size: 14px; color: var(--ink-3); margin: 0 0 24px; }
+.pw-modal-actions{ display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+/* ── Panel de planes / facturación ── */
+.pw-planes-overlay{
+  position: fixed; inset: 0; z-index: 2000;
+  display: none; align-items: flex-start; justify-content: center;
+  background: rgba(12,12,13,.55); backdrop-filter: blur(3px);
+  padding: 40px 20px; overflow-y: auto;
+}
+.pw-planes-overlay.show{ display: flex; }
+.pw-planes-modal{
+  position: relative; max-width: 1040px; width: 100%;
+  padding: 40px; background: var(--bg); border-radius: var(--r-xl);
+  box-shadow: var(--sh-3);
+}
+.pw-planes-close{
+  position: absolute; top: 18px; right: 22px; border: none; background: none;
+  font-size: 30px; line-height: 1; color: var(--ink-4); cursor: pointer; z-index: 3;
+}
+.pw-planes-close:hover{ color: var(--ink-2); }
+.pw-planes-head{ text-align: center; margin-bottom: 28px; }
+.pw-planes-head h2{ font-family: var(--serif); font-size: 30px; font-weight: 500; color: var(--ink); margin: 0 0 10px; }
+.pw-planes-head p{ font-family: var(--sans); font-size: 15px; color: var(--ink-3); max-width: 560px; margin: 0 auto 20px; line-height: 1.5; }
+.pw-moneda-toggle{
+  display: inline-flex; background: var(--surface-soft); border: 1px solid var(--line);
+  border-radius: var(--r-pill); padding: 3px;
+}
+.pw-moneda-btn{
+  border: none; background: none; cursor: pointer;
+  font-family: var(--sans); font-size: 13px; font-weight: 600; color: var(--ink-3);
+  padding: 7px 18px; border-radius: var(--r-pill); transition: all .15s;
+}
+.pw-moneda-btn.active{ background: var(--accent); color: #fff; }
+.pw-planes-grid{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+.pw-plan-card{
+  position: relative; display: flex; flex-direction: column;
+  padding: 28px 24px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--r-lg);
+  box-shadow: var(--sh-1);
+}
+.pw-plan-card.pw-plan-destacado{ border-color: var(--accent); box-shadow: var(--sh-pop); }
+.pw-plan-card.pw-plan-actual{ background: var(--surface-soft); }
+.pw-plan-ribbon{
+  position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
+  background: var(--accent); color: #fff; font-family: var(--sans);
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px;
+  padding: 4px 14px; border-radius: var(--r-pill); white-space: nowrap;
+}
+.pw-plan-nombre{ font-family: var(--serif); font-size: 20px; font-weight: 500; color: var(--ink); margin-bottom: 8px; }
+.pw-plan-precio-wrap{ margin-bottom: 4px; }
+.pw-plan-precio{ font-family: var(--num); font-size: 30px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+.pw-plan-periodo{ font-family: var(--sans); font-size: 14px; color: var(--ink-3); }
+.pw-plan-cupon{ font-family: var(--sans); font-size: 12px; color: var(--accent-2); margin-bottom: 18px; min-height: 16px; }
+.pw-plan-incluye{ list-style: none; padding: 0; margin: 0 0 22px; flex: 1; }
+.pw-plan-incluye li{
+  font-family: var(--sans); font-size: 13.5px; color: var(--ink-2);
+  padding: 7px 0 7px 24px; position: relative; line-height: 1.4;
+  border-bottom: 1px solid var(--line-3);
+}
+.pw-plan-incluye li::before{
+  content: ''; position: absolute; left: 2px; top: 11px;
+  width: 13px; height: 8px; border-left: 2px solid var(--accent);
+  border-bottom: 2px solid var(--accent); transform: rotate(-45deg);
+}
+.pw-plan-cta{ width: 100%; justify-content: center; }
+.pw-planes-nota{
+  font-family: var(--sans); font-size: 12px; color: var(--ink-4);
+  text-align: center; margin-top: 24px; line-height: 1.5;
+}
+
+/* ── Switch de pruebas (solo modo prueba) ── */
+.pw-switch-prueba{
+  position: fixed; bottom: 16px; right: 16px; z-index: 3000;
+  display: flex; align-items: center; gap: 6px;
+  background: #1a1a1a; color: #fff; padding: 8px 12px;
+  border-radius: var(--r-pill); box-shadow: 0 6px 20px rgba(0,0,0,.3);
+  font-family: var(--sans); font-size: 12px;
+}
+.pw-switch-prueba .pw-sp-label{ font-weight: 600; opacity: .7; letter-spacing: .3px; margin-right: 2px; }
+.pw-switch-prueba button{
+  border: 1px solid rgba(255,255,255,.25); background: transparent; color: #fff;
+  font-size: 12px; padding: 4px 10px; border-radius: var(--r-pill); cursor: pointer;
+}
+.pw-switch-prueba button.active{ background: #1a6b54; border-color: #1a6b54; font-weight: 600; }
+
+/* ── Responsive ── */
+@media (max-width: 860px){
+  .pw-planes-grid{ grid-template-columns: 1fr; }
+  .pw-planes-modal{ padding: 28px 18px; }
+  .pw-plan-badge{ display: none; }
+}

@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════
    FIREBASE — auth + firestore
    ═══════════════════════════════════════════════════════════ */
-   console.log('%cABBA · build 2026-09-23-v122 · oportunidades respetan el tope · botones informativos cuando saturado', 'color:#0e4d3a;font-weight:bold');
+   console.log('%cABBA · build 2026-10-21-v123 · paywall bloqueo de módulos (Fase 1 cliente)', 'color:#0e4d3a;font-weight:bold');
    const firebaseConfig = {
     apiKey: "AIzaSyBLNS_xLAoAsnf5XfajAmVf12f4_mpUMfY",
     authDomain: "evaluafinanzas.firebaseapp.com",
@@ -783,8 +783,157 @@
       ingresos:{},                   // { 'YYYY-MM': {meta, real} }  (ingreso total del mes)
       cats:[],                       // estructura PROPIA del presupuesto (independiente del Módulo 1); se siembra una vez
       seeded:false
-    }
+    },
+    // ─── SUSCRIPCIÓN / PAYWALL ───
+    // plan: 'free' | 'diagnostico' | 'asesor'   ·   status: 'active' | 'expired' | 'pending_payment'
+    // Por defecto 'free' activo. El backend (Fase 2) escribe estos valores; en Fase 1 se
+    // leen de clientes/{uid}.subscription si existen, y se pueden forzar en modo prueba.
+    subscription:{ plan:'free', status:'active', expiresAt:null, couponUsed:null }
   };
+
+/* ═══════════════════════════════════════════════════════════
+   PAYWALL · FEATURE REGISTRY + CONTROL DE ACCESO
+   Contrato entre el paywall y los módulos. Cada feature mapea al
+   plan mínimo que la habilita. Fase 1 = solo gating en cliente.
+   ═══════════════════════════════════════════════════════════ */
+  const PLAN_ORDEN = { free:0, diagnostico:1, asesor:2 };
+  const PLAN_NOMBRE = { free:'Gratis', diagnostico:'Diagnóstico Financiero', asesor:'Asesor Patrimonial' };
+  const PLAN_PRECIO = {
+    diagnostico:{ cop:360000, usd:89 },
+    asesor:{ cop:790000, usd:189 }
+  };
+
+  const FEATURES = {
+    // ── Plan GRATIS · Diagnóstico patrimonial ──
+    'perfil': 'free',
+    'm10-perfil-fiscal': 'free',
+    'm3-mapa': 'free',
+    'm11-diagnostico-fiscal': 'free',
+    'm11-comparador-ord-simple': 'free',
+    'm13-diagrama-organizacion': 'free',
+    'm15-score-capas': 'free',
+    'ingvar-registro': 'free',
+    'm6-tablero-resumido': 'free',
+
+    // ── Plan DIAGNÓSTICO FINANCIERO · $360k/año ──
+    'm1-ingresos-gastos': 'diagnostico',
+    'ingvar-completo': 'diagnostico',
+    'm2-endeudamiento': 'diagnostico',
+    'm4-ahorro-solvencia': 'diagnostico',
+    'm5-gastos-basico': 'diagnostico',
+    'm6-tablero-completo': 'diagnostico',
+    'm7-simulador-deudas': 'diagnostico',
+    'm8-metas': 'diagnostico',
+    'm12-presupuesto': 'diagnostico',
+
+    // ── Plan ASESOR PATRIMONIAL · $790k/año ──
+    'm5-calendario-eventos': 'asesor',
+    'm9-pdf-informe': 'asesor',
+    'm13-hallazgos-completos': 'asesor',
+    'm14-sucesoral': 'asesor',
+    'm15-capas-detallado': 'asesor',
+    'm16-blueprint': 'asesor',
+    'm17-empresarial': 'asesor',
+    'multiperfil': 'asesor',
+    'snapshots-mensuales': 'asesor'
+  };
+
+  // Mapa de módulo (data-module) → tipo de bloqueo y feature de acceso.
+  // 'duro'  = no se abre; pantalla de upgrade en lugar del módulo.
+  // 'suave' = se abre pero el contenido avanzado va borroso con CTA.
+  // 'mixto' = se abre; funciones específicas dentro quedan bloqueadas.
+  // 'libre' = sin bloqueo a nivel módulo (puede tener features internas).
+  const MODULO_BLOQUEO = {
+    '1':   { tipo:'suave', feature:'m1-ingresos-gastos' },
+    'var': { tipo:'mixto', feature:'ingvar-registro' },      // registro libre, análisis = ingvar-completo
+    '2':   { tipo:'suave', feature:'m2-endeudamiento' },
+    '3':   { tipo:'libre', feature:'m3-mapa' },
+    '4':   { tipo:'suave', feature:'m4-ahorro-solvencia' },
+    '5':   { tipo:'suave', feature:'m5-gastos-basico' },      // base = diagnóstico; calendario (asesor) = gate interno
+    '6':   { tipo:'mixto', feature:'m6-tablero-resumido' },   // resumen libre, completo = m6-tablero-completo
+    '7':   { tipo:'suave', feature:'m7-simulador-deudas' },
+    '8':   { tipo:'suave', feature:'m8-metas' },
+    '9':   { tipo:'suave', feature:'m9-pdf-informe' },
+    '10':  { tipo:'libre', feature:'m10-perfil-fiscal' },
+    '11':  { tipo:'libre', feature:'m11-diagnostico-fiscal' }, // completo en Gratis (incluye comparador Ord vs Simple)
+    '12':  { tipo:'suave', feature:'m12-presupuesto' },
+    '13':  { tipo:'mixto', feature:'m13-diagrama-organizacion' }, // diagrama libre, hallazgos = m13-hallazgos-completos
+    '14':  { tipo:'duro',  feature:'m14-sucesoral' },
+    '15':  { tipo:'mixto', feature:'m15-score-capas' },       // score libre, detalle = m15-capas-detallado
+    '16':  { tipo:'duro',  feature:'m16-blueprint' },
+    '17':  { tipo:'duro',  feature:'m17-empresarial' },
+    'perfil': { tipo:'libre', feature:'perfil' }
+  };
+
+  function planActual(){
+    const s = state.subscription || {};
+    if(!s.plan) return 'free';
+    // Una suscripción vencida o pendiente degrada a 'free' en el acceso.
+    if(s.plan !== 'free' && s.status !== 'active') return 'free';
+    return s.plan;
+  }
+
+  function puedeAcceder(feature){
+    const req = FEATURES[feature] || 'asesor';   // feature desconocida = más restrictiva
+    if(req === 'free') return true;
+    const plan = planActual();
+    return (PLAN_ORDEN[plan] || 0) >= (PLAN_ORDEN[req] || 99);
+  }
+
+  // Plan mínimo requerido por una feature (para copy del modal).
+  function planRequerido(feature){ return FEATURES[feature] || 'asesor'; }
+
+  // Exponer para depuración / integración futura.
+  window.ABBA_PAYWALL = {
+    FEATURES, MODULO_BLOQUEO, PLAN_NOMBRE, PLAN_PRECIO,
+    puedeAcceder, planActual, planRequerido,
+    setPlan: function(plan){ _setPlanPrueba(plan); }
+  };
+
+  // Cambia el plan en memoria y refresca toda la UI de bloqueo (modo prueba / tras pago).
+  function _setPlanPrueba(plan){
+    if(!PLAN_ORDEN.hasOwnProperty(plan)) { console.warn('Plan inválido:', plan); return; }
+    state.subscription = state.subscription || {};
+    state.subscription.plan = plan;
+    state.subscription.status = 'active';
+    try{ localStorage.setItem('abba_plan_prueba', plan); }catch(e){}
+    aplicarUIPlan();
+    // Re-render del módulo activo para reflejar bloqueos internos.
+    const act = document.querySelector('.module.active');
+    if(act){ const id = (act.id||'').replace('modulo-',''); try{ navigateTo(isNaN(id)?id:parseInt(id)); }catch(e){} }
+  }
+
+  // Carga el plan desde el doc del cliente (Fase 1: lee subscription si existe; si no, 'free').
+  // En modo prueba, respeta el override guardado en localStorage.
+  function cargarSubscription(clienteDoc){
+    let plan = 'free', status = 'active', expiresAt = null, couponUsed = null;
+    if(clienteDoc && clienteDoc.subscription && typeof clienteDoc.subscription === 'object'){
+      const sub = clienteDoc.subscription;
+      if(PLAN_ORDEN.hasOwnProperty(sub.plan)) plan = sub.plan;
+      if(sub.status) status = sub.status;
+      expiresAt = sub.expiresAt || null;
+      couponUsed = sub.couponUsed || null;
+    }
+    // Override de prueba (solo si está activo el modo prueba).
+    try{
+      if(MODO_PRUEBA_PLAN){
+        const p = localStorage.getItem('abba_plan_prueba');
+        if(p && PLAN_ORDEN.hasOwnProperty(p)){ plan = p; status = 'active'; }
+      }
+    }catch(e){}
+    state.subscription = { plan, status, expiresAt, couponUsed };
+    aplicarUIPlan();
+  }
+
+  // ── Modo prueba: permite cambiar de plan sin pasarela para validar el bloqueo. ──
+  // Poner en false (o quitar el panel) antes de producción.  También se activa con
+  // ?prueba=1 en la URL o localStorage 'abba_modo_prueba'='1'.
+  const MODO_PRUEBA_PLAN = (function(){
+    try{
+      if(/[?&]prueba=1/.test(location.search)) { localStorage.setItem('abba_modo_prueba','1'); return true; }
+      return localStorage.getItem('abba_modo_prueba') === '1';
+    }catch(e){ return false; }
+  })();
 
 /* ═══════════════════════════════════════════════════════════
    MÓDULO 3 · MAPA PATRIMONIAL (integrado)
@@ -3035,11 +3184,360 @@ function showToast(msg, type) {
     ov.classList.add('show');
   }
   function toggleAcc(h){h.parentElement.classList.toggle('open');}
-  
-  function navigateTo(num){
+
+  /* ═══════════════════════════════════════════════════════════
+     PAYWALL · COMPONENTES DE UI
+     Badge de plan, candados en el sidebar, pantalla de bloqueo
+     duro, modal de upgrade y panel de planes/facturación.
+     ═══════════════════════════════════════════════════════════ */
+
+  const MODULO_NOMBRE = {
+    '1':'Ingresos y Gastos','var':'Ingresos Variables','2':'Endeudamiento','3':'Mapa Patrimonial',
+    '4':'Ahorro y Solvencia','5':'Gastos no periódicos','6':'Tablero de Control','7':'Simulador de Deuda',
+    '8':'Metas y Proyección','9':'Informe para mi Asesor','10':'Perfil personal y fiscal','11':'Diagnóstico fiscal',
+    '12':'Presupuesto mensual','13':'Estructura legal','14':'Planificación sucesoral','15':'Evaluación 4 Capas',
+    '16':'Arquitectura patrimonial','17':'Arquitectura empresarial'
+  };
+
+  // Beneficio directo (no funcionalidad) por módulo bloqueado — para el copy del paywall.
+  const MODULO_BENEFICIO = {
+    '14':'Protege a tu familia: define cómo pasa tu patrimonio sin pleitos ni impuestos de más al momento de heredar.',
+    '16':'El plano completo de tu patrimonio: qué estructura te conviene, cuánto ahorras en impuestos y cómo blindar lo que construiste.',
+    '17':'Ordena tus empresas: qué vehículo societario te conviene, cómo reducir la carga tributaria del negocio y proteger los activos.',
+    '9':'Un informe PDF listo para llevar a tu asesor o contador con todo tu diagnóstico ordenado.',
+    '12':'Toma el control de tu mes con la regla 50/30/20 y sabe exactamente cuánto puedes gastar, ahorrar y destinar a deudas.'
+  };
+
+  // Formateo de precio para el copy.
+  function _precioPlan(plan, moneda){
+    const p = PLAN_PRECIO[plan]; if(!p) return '';
+    if(moneda === 'usd') return 'USD $' + p.usd + '/año';
+    return '$' + p.cop.toLocaleString('es-CO') + '/año';
+  }
+
+  // ── Pantalla de bloqueo DURO (reemplaza el contenido del módulo) ──
+  function mostrarModuloBloqueadoDuro(id, feature){
     document.querySelectorAll('.module').forEach(m=>m.classList.remove('active'));
     document.querySelectorAll('.sb-item, .bb-item').forEach(n=>n.classList.remove('active'));
+    document.querySelectorAll(`[data-module="${id}"]`).forEach(el=>el.classList.add('active'));
+    let cont = document.getElementById('pw-bloqueo-duro');
+    if(!cont){
+      cont = document.createElement('section');
+      cont.id = 'pw-bloqueo-duro';
+      cont.className = 'module pw-hard-lock';
+      const main = document.querySelector('.main');
+      if(main) main.appendChild(cont); else document.body.appendChild(cont);
+    }
+    const plan = planRequerido(feature);
+    const nombreMod = MODULO_NOMBRE[String(id)] || 'este módulo';
+    const beneficio = MODULO_BENEFICIO[String(id)] || 'Desbloquea el análisis completo de este módulo.';
+    cont.innerHTML = `
+      <div class="pw-hl-card">
+        <div class="pw-hl-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+        </div>
+        <div class="pw-hl-eyebrow">${nombreMod}</div>
+        <h2 class="pw-hl-title">${beneficio}</h2>
+        <p class="pw-hl-sub">Disponible en el plan <strong>${PLAN_NOMBRE[plan]}</strong>.</p>
+        <div class="pw-hl-actions">
+          <button class="btn-primary pw-hl-cta" data-pw-planes="${feature}">Ver planes</button>
+          <button class="btn-ghost pw-hl-volver">Volver</button>
+        </div>
+      </div>`;
+    cont.classList.add('active');
+    document.getElementById('topbar-title').textContent = nombreMod;
+    cont.querySelector('.pw-hl-cta').addEventListener('click', ()=>abrirPanelPlanes(feature));
+    cont.querySelector('.pw-hl-volver').addEventListener('click', ()=>navigateTo(3));
+    window.scrollTo({top:0,behavior:'smooth'});
+  }
+
+  // ── Modal de upgrade reutilizable (para bloqueos suave/mixto) ──
+  function mostrarModalUpgrade(feature, opts){
+    opts = opts || {};
+    const plan = planRequerido(feature);
+    let ov = document.getElementById('pw-modal-overlay');
+    if(!ov){
+      ov = document.createElement('div');
+      ov.id = 'pw-modal-overlay';
+      ov.className = 'pw-modal-overlay';
+      ov.innerHTML = `
+        <div class="pw-modal" role="dialog" aria-modal="true">
+          <button class="pw-modal-close" aria-label="Cerrar">&times;</button>
+          <div class="pw-modal-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+          </div>
+          <h3 class="pw-modal-title"></h3>
+          <p class="pw-modal-sub"></p>
+          <div class="pw-modal-actions">
+            <button class="btn-primary pw-modal-cta">Ver planes</button>
+            <button class="btn-ghost pw-modal-cancel">Ahora no</button>
+          </div>
+        </div>`;
+      document.body.appendChild(ov);
+      ov.querySelector('.pw-modal-close').addEventListener('click', ()=>ov.classList.remove('show'));
+      ov.querySelector('.pw-modal-cancel').addEventListener('click', ()=>ov.classList.remove('show'));
+      ov.addEventListener('click', e=>{ if(e.target===ov) ov.classList.remove('show'); });
+    }
+    ov.querySelector('.pw-modal-title').textContent = opts.titulo || (MODULO_BENEFICIO[String(opts.modulo)] || 'Desbloquea esta función');
+    ov.querySelector('.pw-modal-sub').innerHTML = `Disponible en el plan <strong>${PLAN_NOMBRE[plan]}</strong>${PLAN_PRECIO[plan] ? ' · desde ' + _precioPlan(plan,'cop') : ''}.`;
+    const cta = ov.querySelector('.pw-modal-cta');
+    const nuevo = cta.cloneNode(true); cta.parentNode.replaceChild(nuevo, cta);
+    nuevo.addEventListener('click', ()=>{ ov.classList.remove('show'); abrirPanelPlanes(feature); });
+    ov.classList.add('show');
+  }
+
+  // ── Badge del plan en el header ──
+  function renderBadgePlan(){
+    const menu = document.getElementById('topbar-user-menu');
+    if(!menu) return;
+    const plan = planActual();
+    let badge = document.getElementById('pw-plan-badge');
+    if(!badge){
+      badge = document.createElement('button');
+      badge.id = 'pw-plan-badge';
+      badge.className = 'pw-plan-badge';
+      badge.title = 'Tu plan · ver facturación';
+      menu.insertBefore(badge, menu.firstChild);
+      badge.addEventListener('click', ()=>abrirPanelPlanes(null));
+    }
+    badge.textContent = PLAN_NOMBRE[plan] || 'Gratis';
+    badge.className = 'pw-plan-badge pw-plan-' + plan;
+  }
+
+  // ── Candados en el sidebar según el plan ──
+  function aplicarCandadosSidebar(){
+    document.querySelectorAll('.sb-item[data-module], .bb-item[data-module]').forEach(item=>{
+      const m = item.dataset.module;
+      const bloqueo = MODULO_BLOQUEO[String(m)];
+      // Marcamos candado solo cuando el módulo NO es accesible ni siquiera parcialmente:
+      // duro = candado si no puede; suave = candado si no puede; mixto/libre = sin candado (entran gratis).
+      let bloqueado = false;
+      if(bloqueo){
+        if(bloqueo.tipo === 'duro' || bloqueo.tipo === 'suave'){
+          bloqueado = !puedeAcceder(bloqueo.feature);
+        }
+      }
+      item.classList.toggle('sb-locked', bloqueado);
+      let lock = item.querySelector('.sb-lock');
+      if(bloqueado && !lock){
+        lock = document.createElement('span');
+        lock.className = 'sb-lock';
+        lock.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
+        item.appendChild(lock);
+      } else if(!bloqueado && lock){
+        lock.remove();
+      }
+    });
+  }
+
+  // ── Refresco global de la UI que depende del plan ──
+  function aplicarUIPlan(){
+    try{ renderBadgePlan(); }catch(e){}
+    try{ aplicarCandadosSidebar(); }catch(e){}
+    try{ renderSwitchPruebaPlan(); }catch(e){}
+  }
+
+  // ── Panel de planes / facturación (SPA interno) ──
+  function abrirPanelPlanes(featureDestacar){
+    let ov = document.getElementById('pw-planes-overlay');
+    if(!ov){
+      ov = document.createElement('div');
+      ov.id = 'pw-planes-overlay';
+      ov.className = 'pw-planes-overlay';
+      document.body.appendChild(ov);
+      ov.addEventListener('click', e=>{ if(e.target===ov) ov.classList.remove('show'); });
+    }
+    ov.innerHTML = construirPanelPlanesHTML(featureDestacar);
+    ov.classList.add('show');
+    ov.querySelector('.pw-planes-close').addEventListener('click', ()=>ov.classList.remove('show'));
+    // Toggle moneda
+    ov.querySelectorAll('.pw-moneda-btn').forEach(btn=>{
+      btn.addEventListener('click', function(){
+        ov.querySelectorAll('.pw-moneda-btn').forEach(b=>b.classList.remove('active'));
+        this.classList.add('active');
+        ov.querySelector('.pw-planes-grid').dataset.moneda = this.dataset.moneda;
+        ov.querySelectorAll('[data-precio-cop]').forEach(el=>{
+          el.textContent = this.dataset.moneda==='usd'
+            ? 'USD $' + el.dataset.precioUsd
+            : '$' + Number(el.dataset.precioCop).toLocaleString('es-CO');
+        });
+      });
+    });
+    // Botones de plan (Fase 1: informativos / modo prueba)
+    ov.querySelectorAll('.pw-plan-cta').forEach(btn=>{
+      btn.addEventListener('click', function(){
+        const planObjetivo = this.dataset.plan;
+        if(MODO_PRUEBA_PLAN){
+          _setPlanPrueba(planObjetivo);
+          ov.classList.remove('show');
+          showToast('Plan de prueba: ' + (PLAN_NOMBRE[planObjetivo]||planObjetivo), 'success');
+        } else {
+          // Fase 2 conectará aquí Wompi/PayPal. Por ahora informamos.
+          showToast('El pago estará disponible muy pronto. Escríbenos para activar tu plan.', 'info');
+        }
+      });
+    });
+  }
+
+  function _planCardHTML(plan, featureDestacar){
+    const incluye = {
+      free:['Mapa patrimonial completo','Diagnóstico fiscal con comparador Ordinario vs Simple','Diagrama de tu organización patrimonial','Score de las 4 capas','Registro de ingresos variables'],
+      diagnostico:['Todo lo del plan Gratis','Ingresos y gastos + presupuesto 50/30/20','Endeudamiento y simulador para salir de deudas','Ahorro, solvencia y gastos no periódicos','Tablero completo y metas a futuro','Ingresos variables: salario sostenible y fondo de estabilización'],
+      asesor:['Todo lo del plan Diagnóstico','Plan sucesoral para proteger a tu familia','Arquitectura patrimonial completa (Blueprint)','Estructura legal con hallazgos, acciones y costos','Calendario anual de eventos y pagos','Informe PDF para tu asesor','Multiperfil (pareja, padres, hijos) y snapshots mensuales']
+    };
+    const precio = plan==='free'
+      ? '<span class="pw-plan-precio">Gratis</span>'
+      : `<span class="pw-plan-precio" data-precio-cop="${PLAN_PRECIO[plan].cop}" data-precio-usd="${PLAN_PRECIO[plan].usd}">$${PLAN_PRECIO[plan].cop.toLocaleString('es-CO')}</span><span class="pw-plan-periodo">/año</span>`;
+    const esActual = planActual()===plan;
+    const destacado = featureDestacar && planRequerido(featureDestacar)===plan;
+    const lista = (incluye[plan]||[]).map(x=>`<li>${x}</li>`).join('');
+    let cta;
+    if(esActual) cta = `<button class="btn-ghost pw-plan-cta" disabled>Tu plan actual</button>`;
+    else if(plan==='free') cta = `<button class="btn-ghost pw-plan-cta" data-plan="free">Comenzar gratis</button>`;
+    else cta = `<button class="btn-primary pw-plan-cta" data-plan="${plan}">Elegir ${PLAN_NOMBRE[plan]}</button>`;
+    return `
+      <div class="pw-plan-card ${destacado?'pw-plan-destacado':''} ${esActual?'pw-plan-actual':''}">
+        ${destacado?'<div class="pw-plan-ribbon">Recomendado para ti</div>':''}
+        <div class="pw-plan-nombre">${PLAN_NOMBRE[plan]}</div>
+        <div class="pw-plan-precio-wrap">${precio}</div>
+        ${plan!=='free'?'<div class="pw-plan-cupon">50% primer año con <strong>LANZAMIENTO50</strong></div>':'<div class="pw-plan-cupon">&nbsp;</div>'}
+        <ul class="pw-plan-incluye">${lista}</ul>
+        ${cta}
+      </div>`;
+  }
+
+  function construirPanelPlanesHTML(featureDestacar){
+    return `
+      <div class="pw-planes-modal">
+        <button class="pw-planes-close" aria-label="Cerrar">&times;</button>
+        <div class="pw-planes-head">
+          <h2>Elige tu plan</h2>
+          <p>Empieza gratis con tu diagnóstico patrimonial. Sube de plan cuando quieras — pago único anual, sin cobros automáticos.</p>
+          <div class="pw-moneda-toggle">
+            <button class="pw-moneda-btn active" data-moneda="cop">COP $</button>
+            <button class="pw-moneda-btn" data-moneda="usd">USD $</button>
+          </div>
+        </div>
+        <div class="pw-planes-grid" data-moneda="cop">
+          ${_planCardHTML('free', featureDestacar)}
+          ${_planCardHTML('diagnostico', featureDestacar)}
+          ${_planCardHTML('asesor', featureDestacar)}
+        </div>
+        <div class="pw-planes-nota">Precios con IVA incluido. Renovación manual con recordatorio por correo. Cancelación sin penalidad y reembolso dentro de los primeros 7 días (Ley 2300 de 2023).</div>
+      </div>`;
+  }
+
+  // ── Switch de pruebas (solo en modo prueba) ──
+  function renderSwitchPruebaPlan(){
+    if(!MODO_PRUEBA_PLAN){
+      const ex = document.getElementById('pw-switch-prueba'); if(ex) ex.remove();
+      return;
+    }
+    let box = document.getElementById('pw-switch-prueba');
+    if(!box){
+      box = document.createElement('div');
+      box.id = 'pw-switch-prueba';
+      box.className = 'pw-switch-prueba';
+      document.body.appendChild(box);
+    }
+    const plan = planActual();
+    box.innerHTML = `
+      <span class="pw-sp-label">PRUEBA · plan:</span>
+      <button data-plan="free" class="${plan==='free'?'active':''}">Gratis</button>
+      <button data-plan="diagnostico" class="${plan==='diagnostico'?'active':''}">Diagnóstico</button>
+      <button data-plan="asesor" class="${plan==='asesor'?'active':''}">Asesor</button>`;
+    box.querySelectorAll('button').forEach(b=>{
+      b.addEventListener('click', ()=>_setPlanPrueba(b.dataset.plan));
+    });
+  }
+
+  /* ── BLOQUEO SUAVE ──
+     El módulo se abre, pero su contenido se difumina y se superpone una capa
+     con CTA. Se aplica después del render del módulo. */
+  function aplicarBloqueoSuave(id, feature){
+    const modEl = document.getElementById('modulo-'+id);
+    if(!modEl) return;
+    // Quitar overlay previo si el usuario ya tiene acceso.
+    const prev = modEl.querySelector(':scope > .pw-soft-overlay');
+    const cont = modEl.querySelector(':scope > .pw-soft-content') ? modEl : null;
+    if(puedeAcceder(feature)){
+      if(prev) prev.remove();
+      modEl.classList.remove('pw-soft-locked');
+      return;
+    }
+    if(prev) return; // ya está aplicado
+    modEl.classList.add('pw-soft-locked');
+    const plan = planRequerido(feature);
+    const beneficio = MODULO_BENEFICIO[String(id)] || 'Desbloquea el análisis completo de este módulo.';
+    const ov = document.createElement('div');
+    ov.className = 'pw-soft-overlay';
+    ov.innerHTML = `
+      <div class="pw-soft-card">
+        <div class="pw-soft-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+        <h3>${beneficio}</h3>
+        <p>Disponible en el plan <strong>${PLAN_NOMBRE[plan]}</strong>.</p>
+        <button class="btn-primary pw-soft-cta">Ver planes</button>
+      </div>`;
+    ov.querySelector('.pw-soft-cta').addEventListener('click', ()=>abrirPanelPlanes(feature));
+    modEl.appendChild(ov);
+  }
+
+  /* ── BLOQUEO MIXTO ──
+     El módulo queda usable; secciones concretas (marcadas en el render con
+     data-pw-feature="xxx") se bloquean si el plan no las incluye.
+     Cada sección bloqueada se difumina y recibe un pequeño CTA encima. */
+  function aplicarBloqueoMixto(id){
+    const modEl = document.getElementById('modulo-'+id);
+    if(!modEl) return;
+    modEl.querySelectorAll('[data-pw-feature]').forEach(sec=>{
+      const feat = sec.getAttribute('data-pw-feature');
+      const yaProcesado = sec.classList.contains('pw-mixto-proc');
+      if(puedeAcceder(feat)){
+        sec.classList.remove('pw-mixto-locked');
+        const g = sec.querySelector(':scope > .pw-mixto-gate'); if(g) g.remove();
+        return;
+      }
+      sec.classList.add('pw-mixto-locked','pw-mixto-proc');
+      if(sec.querySelector(':scope > .pw-mixto-gate')) return;
+      const plan = planRequerido(feat);
+      const gate = document.createElement('div');
+      gate.className = 'pw-mixto-gate';
+      gate.innerHTML = `
+        <div class="pw-mixto-gate-inner">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+          <span>Disponible en <strong>${PLAN_NOMBRE[plan]}</strong></span>
+          <button class="btn-primary btn-sm pw-mixto-cta">Desbloquear</button>
+        </div>`;
+      gate.querySelector('.pw-mixto-cta').addEventListener('click', ()=>abrirPanelPlanes(feat));
+      sec.appendChild(gate);
+    });
+  }
+
+  // Orquestador: aplica el bloqueo del módulo recién renderizado.
+  function aplicarBloqueoModulo(id){
+    const b = MODULO_BLOQUEO[String(id)];
+    if(!b) return;
+    if(b.tipo === 'suave'){
+      aplicarBloqueoSuave(id, b.feature);
+      // Si tiene la base, aún puede haber gates internos de nivel superior (p.ej. M5 calendario).
+      if(puedeAcceder(b.feature)) aplicarBloqueoMixto(id);
+    }
+    else if(b.tipo === 'mixto') aplicarBloqueoMixto(id);
+    // 'duro' se maneja antes del render; 'libre' no hace nada.
+  }
+
+  function navigateTo(num){
     const id = isNaN(num) ? num : parseInt(num);
+    // ── PAYWALL · bloqueo DURO ──
+    // Si el módulo requiere un plan que el usuario no tiene y es de tipo 'duro',
+    // mostramos la pantalla de upgrade en vez del contenido del módulo.
+    const bloqueo = MODULO_BLOQUEO[String(id)];
+    if(bloqueo && bloqueo.tipo === 'duro' && !puedeAcceder(bloqueo.feature)){
+      mostrarModuloBloqueadoDuro(id, bloqueo.feature);
+      return;
+    }
+    document.querySelectorAll('.module').forEach(m=>m.classList.remove('active'));
+    document.querySelectorAll('.sb-item, .bb-item').forEach(n=>n.classList.remove('active'));
     document.getElementById('modulo-'+id).classList.add('active');
     document.querySelectorAll(`[data-module="${id}"]`).forEach(el=>el.classList.add('active'));
     document.getElementById('topbar-title').textContent = MODULE_TITLES[id] || '';
@@ -3067,6 +3565,8 @@ function showToast(msg, type) {
     // Toggle clase en .main para expandir ancho en módulos de layout ancho (fallback sin :has())
     const _mainEl = document.querySelector('.main');
     if(_mainEl){ _mainEl.classList.toggle('is-modulo-16', id === 16); }
+    // ── PAYWALL · bloqueo suave/mixto tras el render del módulo ──
+    try{ aplicarBloqueoModulo(id); }catch(e){ console.warn('aplicarBloqueoModulo:', e); }
     window.scrollTo({top:0,behavior:'smooth'});
   }
   
@@ -5182,7 +5682,12 @@ function showToast(msg, type) {
     // para que la vista activa se re-renderice con datos frescos.
     _dbRendered.fin = false;
     _dbRendered.pat = false;
-    dbSetView(_dbGetSavedView());
+    // PAYWALL · si el plan no incluye el tablero financiero completo, abrir en la
+    // vista patrimonial (que sí es gratuita) para no mostrar de entrada una vista gateada.
+    let vista = _dbGetSavedView();
+    if(vista === 'fin' && !puedeAcceder('m6-tablero-completo')) vista = 'pat';
+    dbSetView(vista);
+    try{ if(typeof aplicarBloqueoMixto==='function') aplicarBloqueoMixto(6); }catch(e){}
   }
   // Listeners del toggle: una sola vez, cuando el DOM ya existe.
   document.addEventListener('DOMContentLoaded', function(){
@@ -8407,6 +8912,8 @@ function showToast(msg, type) {
         try {
           clientePerfil = await loadPerfil(_viewAsFromUrl);
         } catch(e){ console.warn('[view_as] Error cargando perfil del cliente:', e); }
+        // Suscripción del cliente observado (el asesor ve lo que el cliente tiene).
+        try { cargarSubscription(clientePerfil); } catch(e){ console.warn('[view_as] Error subscription:', e); }
 
         // Mostrar banner rojo
         const clientName = (clientePerfil && clientePerfil.nombre) || 'cliente ' + _viewAsFromUrl.slice(0,8);
@@ -8450,6 +8957,10 @@ function showToast(msg, type) {
     try {
       perfil = await loadPerfil(user.uid);
     } catch(e){ console.warn('Error cargando perfil:', e); }
+
+    // Cargar estado de suscripción (paywall). El doc del cliente puede traer
+    // subscription:{plan,status,...}. Si no, queda 'free'. Fase 1: solo lectura.
+    try { cargarSubscription(perfil); } catch(e){ console.warn('Error cargando subscription:', e); }
 
         /* 🔗 Vincular con sesión pagada si hay token pendiente en localStorage.
        Se ejecuta SILENCIOSAMENTE — si falla no bloqueamos el flujo normal. */
@@ -8711,6 +9222,9 @@ function showToast(msg, type) {
       navigateTo(isNaN(m) ? m : parseInt(m));
     });
   });
+  // Pintar badge, candados y switch de prueba una vez el DOM del sidebar existe.
+  // (cargarSubscription también lo invoca tras login; esto cubre el arranque previo.)
+  try{ aplicarUIPlan(); }catch(e){}
   /* ── Referencias cruzadas a otros módulos por nombre ──
      Cualquier <span class="mod-link" data-mod="N">Nombre</span> en el HTML
      estático o inyectado con innerHTML se vuelve clicable y navega al módulo N. */
@@ -9063,6 +9577,7 @@ function showToast(msg, type) {
 
     renderMVarContratos();
     renderMVarStats();
+    try{ if(typeof aplicarBloqueoMixto==='function') aplicarBloqueoMixto('var'); }catch(e){}
   }
 
   // Mapeo de tipos antiguos (legacy) del módulo variable → nuevas clases fiscales unificadas.
@@ -12899,9 +13414,12 @@ function showToast(msg, type) {
     return h;
   }
 
-  function capaCardHtml(c){
+  function capaCardHtml(c, detalleLibre){
+    // detalleLibre indica si el plan permite expandir el detalle de la capa.
+    // Si no se pasa (true por defecto), se asume acceso (compatibilidad).
+    if(detalleLibre === undefined) detalleLibre = true;
     const mk = capaMetricaClave(c);
-    const abierta = !!capasAbiertas[c.id];
+    const abierta = detalleLibre && !!capasAbiertas[c.id];
     const top = (c.brechas||[]).slice(0, abierta ? 99 : 2);
     let h = '<div class="capa-card '+c.estado+(abierta?' open':'')+'">';
     h += '<button class="capa-head" data-capa="'+c.id+'">'
@@ -12917,10 +13435,14 @@ function showToast(msg, type) {
       top.forEach(b=>{ h += '<li class="sev-'+b.sev+'"><strong>'+b.titulo+'</strong>'+(abierta?'<span>'+b.detalle+'</span>':'')+'</li>'; });
       h += '</ul>';
       const ocultas = Math.max(0, (c.brechas||[]).length - 2);
-      if(!abierta) h += '<button class="capa-mas" data-capa="'+c.id+'">'+(ocultas>0 ? '+'+ocultas+' más · ver el detalle' : 'Ver el detalle')+'</button>';
+      const lockMas = detalleLibre ? '' : ' capa-mas-lock';
+      const txtDet = detalleLibre ? (ocultas>0 ? '+'+ocultas+' más · ver el detalle' : 'Ver el detalle') : 'Ver el detalle · plan Asesor';
+      if(!abierta) h += '<button class="capa-mas'+lockMas+'" data-capa="'+c.id+'">'+txtDet+'</button>';
     } else {
       h += '<div class="capa-ok">Sin problemas detectados en esta capa.</div>';
-      if(!abierta) h += '<button class="capa-mas" data-capa="'+c.id+'">Ver el detalle</button>';
+      const lockMas = detalleLibre ? '' : ' capa-mas-lock';
+      const txtDet = detalleLibre ? 'Ver el detalle' : 'Ver el detalle · plan Asesor';
+      if(!abierta) h += '<button class="capa-mas'+lockMas+'" data-capa="'+c.id+'">'+txtDet+'</button>';
     }
     if(abierta){
       if(c.id==='liquidez'){
@@ -12986,17 +13508,28 @@ function showToast(msg, type) {
     let h = '<div class="card capas-card">';
     h += '<div class="capas-resumen"><div class="capas-idx"><span class="v">'+ev.indice+'</span><span class="l">de 100</span></div>'
       + '<div class="capas-idx-txt">Tu punto más flojo es <strong>'+nombres[ev.eslabonDebil]+'</strong>: es lo primero que fallaría si algo sale mal, y por eso es donde más te conviene empezar.</div></div>';
-    h += '<div class="capas-grid">' + ev.orden.map(k=>capaCardHtml(ev.capas[k])).join('') + '</div>';
+    // PAYWALL · el detalle por capa (hallazgos + contribución por activo) es feature Asesor.
+    // El score y las tarjetas resumen quedan libres; el detalle expandible se envuelve en
+    // un contenedor marcado para que aplicarBloqueoMixto lo tape en planes inferiores.
+    const detalleLibre = puedeAcceder('m15-capas-detallado');
+    h += '<div class="capas-grid">' + ev.orden.map(k=>capaCardHtml(ev.capas[k], detalleLibre)).join('') + '</div>';
     if((ev.compounding||[]).length){
+      h += '<div class="capa-detalle-avanzado" data-pw-feature="m15-capas-detallado">';
       h += '<div class="capa-comp"><div class="capa-div-t">Riesgos que se suman entre capas</div><ul>'
         + ev.compounding.slice(0,4).map(x=>'<li><strong>'+escapeHtml(x.activo)+':</strong> '+x.detalle+'</li>').join('') + '</ul></div>';
+      h += '</div>';
     }
     h += '<p class="pf-note" style="margin-top:12px">Orientación educativa basada en lo que registraste. Los umbrales son configurables; valida las decisiones legales y tributarias con tu abogado y tu contador.</p>';
     h += '</div>';
     cont.innerHTML = h;
     cont.querySelectorAll('[data-capa]').forEach(b=>{
-      b.addEventListener('click', ()=>{ const k=b.dataset.capa; if(capasAbiertas[k]) delete capasAbiertas[k]; else capasAbiertas[k]=true; renderCapasTablero(); });
+      b.addEventListener('click', ()=>{
+        // En planes sin detalle, el clic de expandir lleva al panel de planes.
+        if(!puedeAcceder('m15-capas-detallado')){ abrirPanelPlanes('m15-capas-detallado'); return; }
+        const k=b.dataset.capa; if(capasAbiertas[k]) delete capasAbiertas[k]; else capasAbiertas[k]=true; renderCapasTablero();
+      });
     });
+    try{ if(typeof aplicarBloqueoMixto==='function') aplicarBloqueoMixto(15); }catch(e){}
   }
   try{ window.renderCapasTablero = renderCapasTablero; }catch(e){}
 
@@ -14470,6 +15003,9 @@ function showToast(msg, type) {
     }
 
     cont.innerHTML = html;
+    // PAYWALL · el diagnóstico de hallazgos completos es feature de plan Asesor.
+    // Se marca para que aplicarBloqueoMixto lo tape (el diagrama queda libre).
+    cont.setAttribute('data-pw-feature', 'm13-hallazgos-completos');
 
     // Mostrar/ocultar el botón "Planifica tu sucesión" según si hay algo material que planificar
     // (se muestra si hay dependientes o patrimonio > 200 SMMLV)
@@ -14493,6 +15029,8 @@ function showToast(msg, type) {
         try{ navigateTo(m); }catch(err){}
       });
     });
+    // PAYWALL · reaplicar gate mixto tras un re-render disparado por edición de inputs.
+    try{ if(typeof aplicarBloqueoMixto==='function') aplicarBloqueoMixto(13); }catch(e){}
   }
 
 

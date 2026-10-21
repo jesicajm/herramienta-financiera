@@ -17,7 +17,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-functions-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<link rel="stylesheet" href="styles.css?v=105">
+<link rel="stylesheet" href="styles.css?v=123">
 <style>
 /* ═══ Simulador de Deuda (Módulo 7) ═══ */
 #modulo-7 .ds-hint{font-size:13px;line-height:1.5;color:rgba(0,0,0,.55);margin:0 0 14px}
@@ -850,6 +850,8 @@
           Agregar contrato
         </button>
 
+        <!-- PAYWALL · todo el análisis de ingresos variables es feature 'ingvar-completo' (plan Diagnóstico). El registro de contratos de arriba queda libre. -->
+        <div id="mvar-analisis-wrap" data-pw-feature="ingvar-completo">
         <!-- Análisis estadístico -->
         <div class="kpi-grid" id="mvar-kpis"></div>
 
@@ -958,6 +960,7 @@
           </div>
           <div id="mvar-recos"></div>
         </div>
+        </div><!-- /mvar-analisis-wrap -->
 
       </div>
 
@@ -1249,8 +1252,8 @@
 
       <div id="m5-saldo-kpi" style="margin-top:14px"></div>
 
-      <!-- Calendario anual de eventos -->
-      <div class="card calendar-card">
+      <!-- Calendario anual de eventos · PAYWALL feature asesor (m5-calendario-eventos) -->
+      <div class="card calendar-card" data-pw-feature="m5-calendario-eventos">
         <div class="card-head">
           <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
           <h3>Calendario anual de eventos</h3>
@@ -1292,7 +1295,7 @@
       </div>
 
       <!-- ════════ VISTA FINANCIERA (Mes a mes) ════════ -->
-      <div id="db-view-fin" class="db-view" role="tabpanel" aria-labelledby="db-view-fin-tab">
+      <div id="db-view-fin" class="db-view" role="tabpanel" aria-labelledby="db-view-fin-tab" data-pw-feature="m6-tablero-completo">
       <!-- ════════ SECCIÓN 1: MES A MES (flujo financiero) ════════ -->
       <div class="db-section-head" id="db-financiero-head">
         <h2 class="db-section-title">Tu mes a mes</h2>
@@ -3152,6 +3155,6 @@
     </div>
 </div>
 
-<script src="app.js?v=105"></script>
+<script src="app.js?v=123"></script>
 </body>
 </html>
