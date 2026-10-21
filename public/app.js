@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════
    FIREBASE — auth + firestore
    ═══════════════════════════════════════════════════════════ */
-   console.log('%cABBA · build 2026-10-21-v123 · paywall bloqueo de módulos (Fase 1 cliente)', 'color:#0e4d3a;font-weight:bold');
+   console.log('%cABBA · build 2026-10-21-v124 · paywall: planes Diagnóstico/Organizador/Asesor, precios + descuento, botones alineados', 'color:#0e4d3a;font-weight:bold');
    const firebaseConfig = {
     apiKey: "AIzaSyBLNS_xLAoAsnf5XfajAmVf12f4_mpUMfY",
     authDomain: "evaluafinanzas.firebaseapp.com",
@@ -797,14 +797,14 @@
    plan mínimo que la habilita. Fase 1 = solo gating en cliente.
    ═══════════════════════════════════════════════════════════ */
   const PLAN_ORDEN = { free:0, diagnostico:1, asesor:2 };
-  const PLAN_NOMBRE = { free:'Gratis', diagnostico:'Diagnóstico Financiero', asesor:'Asesor Patrimonial' };
+  const PLAN_NOMBRE = { free:'Diagnóstico', diagnostico:'Organizador Financiero', asesor:'Asesor Patrimonial' };
   const PLAN_PRECIO = {
-    diagnostico:{ cop:360000, usd:89 },
-    asesor:{ cop:790000, usd:189 }
+    diagnostico:{ cop:260000, usd:65 },
+    asesor:{ cop:480000, usd:120 }
   };
 
   const FEATURES = {
-    // ── Plan GRATIS · Diagnóstico patrimonial ──
+    // ── Plan DIAGNÓSTICO (gratis) ──
     'perfil': 'free',
     'm10-perfil-fiscal': 'free',
     'm3-mapa': 'free',
@@ -814,19 +814,21 @@
     'm15-score-capas': 'free',
     'ingvar-registro': 'free',
     'm6-tablero-resumido': 'free',
+    // Abiertos al gratis por decisión de producto (enganche): ingresos/gastos,
+    // endeudamiento, ahorro y gastos no periódicos (el calendario sigue de pago).
+    'm1-ingresos-gastos': 'free',
+    'm2-endeudamiento': 'free',
+    'm4-ahorro-solvencia': 'free',
+    'm5-gastos-basico': 'free',
 
-    // ── Plan DIAGNÓSTICO FINANCIERO · $360k/año ──
-    'm1-ingresos-gastos': 'diagnostico',
+    // ── Plan ORGANIZADOR FINANCIERO · $260k/año ──
     'ingvar-completo': 'diagnostico',
-    'm2-endeudamiento': 'diagnostico',
-    'm4-ahorro-solvencia': 'diagnostico',
-    'm5-gastos-basico': 'diagnostico',
     'm6-tablero-completo': 'diagnostico',
     'm7-simulador-deudas': 'diagnostico',
     'm8-metas': 'diagnostico',
     'm12-presupuesto': 'diagnostico',
 
-    // ── Plan ASESOR PATRIMONIAL · $790k/año ──
+    // ── Plan ASESOR PATRIMONIAL · $480k/año ──
     'm5-calendario-eventos': 'asesor',
     'm9-pdf-informe': 'asesor',
     'm13-hallazgos-completos': 'asesor',
@@ -844,12 +846,12 @@
   // 'mixto' = se abre; funciones específicas dentro quedan bloqueadas.
   // 'libre' = sin bloqueo a nivel módulo (puede tener features internas).
   const MODULO_BLOQUEO = {
-    '1':   { tipo:'suave', feature:'m1-ingresos-gastos' },
+    '1':   { tipo:'libre', feature:'m1-ingresos-gastos' },   // gratis
     'var': { tipo:'mixto', feature:'ingvar-registro' },      // registro libre, análisis = ingvar-completo
-    '2':   { tipo:'suave', feature:'m2-endeudamiento' },
+    '2':   { tipo:'libre', feature:'m2-endeudamiento' },     // gratis
     '3':   { tipo:'libre', feature:'m3-mapa' },
-    '4':   { tipo:'suave', feature:'m4-ahorro-solvencia' },
-    '5':   { tipo:'suave', feature:'m5-gastos-basico' },      // base = diagnóstico; calendario (asesor) = gate interno
+    '4':   { tipo:'libre', feature:'m4-ahorro-solvencia' },  // gratis
+    '5':   { tipo:'mixto', feature:'m5-gastos-basico' },     // base libre; solo el calendario (asesor) va gateado
     '6':   { tipo:'mixto', feature:'m6-tablero-resumido' },   // resumen libre, completo = m6-tablero-completo
     '7':   { tipo:'suave', feature:'m7-simulador-deudas' },
     '8':   { tipo:'suave', feature:'m8-metas' },
@@ -3240,8 +3242,8 @@ function showToast(msg, type) {
         <h2 class="pw-hl-title">${beneficio}</h2>
         <p class="pw-hl-sub">Disponible en el plan <strong>${PLAN_NOMBRE[plan]}</strong>.</p>
         <div class="pw-hl-actions">
-          <button class="btn-primary pw-hl-cta" data-pw-planes="${feature}">Ver planes</button>
-          <button class="btn-ghost pw-hl-volver">Volver</button>
+          <button class="btn btn-primary pw-hl-cta" data-pw-planes="${feature}">Ver planes</button>
+          <button class="btn btn-secondary pw-hl-volver">Volver</button>
         </div>
       </div>`;
     cont.classList.add('active');
@@ -3269,8 +3271,8 @@ function showToast(msg, type) {
           <h3 class="pw-modal-title"></h3>
           <p class="pw-modal-sub"></p>
           <div class="pw-modal-actions">
-            <button class="btn-primary pw-modal-cta">Ver planes</button>
-            <button class="btn-ghost pw-modal-cancel">Ahora no</button>
+            <button class="btn btn-primary pw-modal-cta">Ver planes</button>
+            <button class="btn btn-secondary pw-modal-cancel">Ahora no</button>
           </div>
         </div>`;
       document.body.appendChild(ov);
@@ -3300,7 +3302,7 @@ function showToast(msg, type) {
       menu.insertBefore(badge, menu.firstChild);
       badge.addEventListener('click', ()=>abrirPanelPlanes(null));
     }
-    badge.textContent = PLAN_NOMBRE[plan] || 'Gratis';
+    badge.textContent = PLAN_NOMBRE[plan] || 'Diagnóstico';
     badge.className = 'pw-plan-badge pw-plan-' + plan;
   }
 
@@ -3357,9 +3359,12 @@ function showToast(msg, type) {
         this.classList.add('active');
         ov.querySelector('.pw-planes-grid').dataset.moneda = this.dataset.moneda;
         ov.querySelectorAll('[data-precio-cop]').forEach(el=>{
-          el.textContent = this.dataset.moneda==='usd'
-            ? 'USD $' + el.dataset.precioUsd
-            : '$' + Number(el.dataset.precioCop).toLocaleString('es-CO');
+          if(this.dataset.moneda==='usd'){
+            const u = Number(el.dataset.precioUsd);
+            el.textContent = 'USD $' + (Number.isInteger(u) ? u : u.toFixed(2));
+          } else {
+            el.textContent = '$' + Number(el.dataset.precioCop).toLocaleString('es-CO');
+          }
         });
       });
     });
@@ -3381,26 +3386,43 @@ function showToast(msg, type) {
 
   function _planCardHTML(plan, featureDestacar){
     const incluye = {
-      free:['Mapa patrimonial completo','Diagnóstico fiscal con comparador Ordinario vs Simple','Diagrama de tu organización patrimonial','Score de las 4 capas','Registro de ingresos variables'],
-      diagnostico:['Todo lo del plan Gratis','Ingresos y gastos + presupuesto 50/30/20','Endeudamiento y simulador para salir de deudas','Ahorro, solvencia y gastos no periódicos','Tablero completo y metas a futuro','Ingresos variables: salario sostenible y fondo de estabilización'],
-      asesor:['Todo lo del plan Diagnóstico','Plan sucesoral para proteger a tu familia','Arquitectura patrimonial completa (Blueprint)','Estructura legal con hallazgos, acciones y costos','Calendario anual de eventos y pagos','Informe PDF para tu asesor','Multiperfil (pareja, padres, hijos) y snapshots mensuales']
+      free:['Ingresos, gastos, endeudamiento, ahorro y gastos no periódicos','Mapa patrimonial completo','Diagnóstico fiscal con comparador Ordinario vs Simple','Diagrama de tu organización patrimonial','Score de las 4 capas','Registro de ingresos variables'],
+      diagnostico:['Todo lo del plan Diagnóstico','Presupuesto mensual (regla 50/30/20)','Simulador para salir de deudas','Metas y patrimonio a futuro','Tablero patrimonial completo','Ingresos variables: salario sostenible y fondo de estabilización'],
+      asesor:['Todo lo del plan Organizador Financiero','Plan sucesoral para proteger a tu familia','Arquitectura patrimonial completa (Blueprint)','Estructura legal con hallazgos, acciones y costos','Calendario anual de eventos y pagos','Informe PDF para tu asesor','Multiperfil (pareja, padres, hijos) y snapshots mensuales']
     };
-    const precio = plan==='free'
-      ? '<span class="pw-plan-precio">Gratis</span>'
-      : `<span class="pw-plan-precio" data-precio-cop="${PLAN_PRECIO[plan].cop}" data-precio-usd="${PLAN_PRECIO[plan].usd}">$${PLAN_PRECIO[plan].cop.toLocaleString('es-CO')}</span><span class="pw-plan-periodo">/año</span>`;
     const esActual = planActual()===plan;
     const destacado = featureDestacar && planRequerido(featureDestacar)===plan;
     const lista = (incluye[plan]||[]).map(x=>`<li>${x}</li>`).join('');
     let cta;
-    if(esActual) cta = `<button class="btn-ghost pw-plan-cta" disabled>Tu plan actual</button>`;
-    else if(plan==='free') cta = `<button class="btn-ghost pw-plan-cta" data-plan="free">Comenzar gratis</button>`;
-    else cta = `<button class="btn-primary pw-plan-cta" data-plan="${plan}">Elegir ${PLAN_NOMBRE[plan]}</button>`;
+    if(esActual) cta = `<button class="btn btn-secondary pw-plan-cta" disabled>Tu plan actual</button>`;
+    else if(plan==='free') cta = `<button class="btn btn-secondary pw-plan-cta" data-plan="free">Comenzar gratis</button>`;
+    else cta = `<button class="btn btn-primary pw-plan-cta" data-plan="${plan}">Elegir ${PLAN_NOMBRE[plan]}</button>`;
+
+    // ── Bloque de precio ──
+    // Plan free: "Gratis". Planes de pago: precio normal tachado arriba +
+    // precio con 50% del cupón LANZAMIENTO50 como valor principal (primer año).
+    // Ambos valores llevan data-attrs COP/USD para que el toggle los actualice.
+    let precioHTML;
+    if(plan==='free'){
+      precioHTML = '<div class="pw-plan-precio-wrap"><span class="pw-plan-precio">Gratis</span></div>';
+    } else {
+      const cop = PLAN_PRECIO[plan].cop, usd = PLAN_PRECIO[plan].usd;
+      const copDesc = Math.round(cop/2), usdDesc = usd/2;
+      const fmtCOP = v => '$' + v.toLocaleString('es-CO');
+      const fmtUSD = v => 'USD $' + (Number.isInteger(v) ? v : v.toFixed(2));
+      precioHTML =
+        '<div class="pw-plan-precio-wrap">'
+        + `<span class="pw-plan-precio-lista" data-precio-cop="${cop}" data-precio-usd="${usd}">${fmtCOP(cop)}</span>`
+        + `<div class="pw-plan-precio-row"><span class="pw-plan-precio" data-precio-cop="${copDesc}" data-precio-usd="${usdDesc}">${fmtCOP(copDesc)}</span><span class="pw-plan-periodo">/primer año</span></div>`
+        + '</div>';
+    }
+
     return `
       <div class="pw-plan-card ${destacado?'pw-plan-destacado':''} ${esActual?'pw-plan-actual':''}">
         ${destacado?'<div class="pw-plan-ribbon">Recomendado para ti</div>':''}
         <div class="pw-plan-nombre">${PLAN_NOMBRE[plan]}</div>
-        <div class="pw-plan-precio-wrap">${precio}</div>
-        ${plan!=='free'?'<div class="pw-plan-cupon">50% primer año con <strong>LANZAMIENTO50</strong></div>':'<div class="pw-plan-cupon">&nbsp;</div>'}
+        ${precioHTML}
+        ${plan!=='free'?'<div class="pw-plan-cupon">50% OFF con <strong>LANZAMIENTO50</strong> · luego '+('$'+PLAN_PRECIO[plan].cop.toLocaleString('es-CO'))+'/año</div>':'<div class="pw-plan-cupon">&nbsp;</div>'}
         <ul class="pw-plan-incluye">${lista}</ul>
         ${cta}
       </div>`;
@@ -3412,7 +3434,7 @@ function showToast(msg, type) {
         <button class="pw-planes-close" aria-label="Cerrar">&times;</button>
         <div class="pw-planes-head">
           <h2>Elige tu plan</h2>
-          <p>Empieza gratis con tu diagnóstico patrimonial. Sube de plan cuando quieras — pago único anual, sin cobros automáticos.</p>
+          <p>Empieza gratis con tu diagnóstico patrimonial. Sube de plan cuando quieras — pago único anual, sin cobros automáticos. <strong>Lanzamiento: 50% OFF el primer año con el cupón LANZAMIENTO50.</strong></p>
           <div class="pw-moneda-toggle">
             <button class="pw-moneda-btn active" data-moneda="cop">COP $</button>
             <button class="pw-moneda-btn" data-moneda="usd">USD $</button>
@@ -3476,7 +3498,7 @@ function showToast(msg, type) {
         <div class="pw-soft-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
         <h3>${beneficio}</h3>
         <p>Disponible en el plan <strong>${PLAN_NOMBRE[plan]}</strong>.</p>
-        <button class="btn-primary pw-soft-cta">Ver planes</button>
+        <button class="btn btn-primary pw-soft-cta">Ver planes</button>
       </div>`;
     ov.querySelector('.pw-soft-cta').addEventListener('click', ()=>abrirPanelPlanes(feature));
     modEl.appendChild(ov);
@@ -3506,7 +3528,7 @@ function showToast(msg, type) {
         <div class="pw-mixto-gate-inner">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
           <span>Disponible en <strong>${PLAN_NOMBRE[plan]}</strong></span>
-          <button class="btn-primary btn-sm pw-mixto-cta">Desbloquear</button>
+          <button class="pw-mixto-cta">Desbloquear</button>
         </div>`;
       gate.querySelector('.pw-mixto-cta').addEventListener('click', ()=>abrirPanelPlanes(feat));
       sec.appendChild(gate);
@@ -5676,16 +5698,19 @@ function showToast(msg, type) {
     if(which === 'fin' && !_dbRendered.fin) _dbRenderFin();
     else if(which === 'pat' && !_dbRendered.pat) _dbRenderPat();
     _dbSaveView(which);
+    // PAYWALL · reaplicar el gate mixto tras togglear la vista (la patrimonial es de pago).
+    try{ if(typeof aplicarBloqueoMixto==='function') aplicarBloqueoMixto(6); }catch(e){}
   }
   function renderTableroModulo6(){
     // Al entrar al módulo, marcamos ambas vistas como pendientes
     // para que la vista activa se re-renderice con datos frescos.
     _dbRendered.fin = false;
     _dbRendered.pat = false;
-    // PAYWALL · si el plan no incluye el tablero financiero completo, abrir en la
-    // vista patrimonial (que sí es gratuita) para no mostrar de entrada una vista gateada.
+    // PAYWALL · la vista patrimonial es de pago (m6-tablero-completo); la financiera
+    // es gratuita. Si el plan no la incluye, abrir en la financiera para no mostrar de
+    // entrada una vista gateada.
     let vista = _dbGetSavedView();
-    if(vista === 'fin' && !puedeAcceder('m6-tablero-completo')) vista = 'pat';
+    if(vista === 'pat' && !puedeAcceder('m6-tablero-completo')) vista = 'fin';
     dbSetView(vista);
     try{ if(typeof aplicarBloqueoMixto==='function') aplicarBloqueoMixto(6); }catch(e){}
   }
