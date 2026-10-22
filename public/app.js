@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════
    FIREBASE — auth + firestore
    ═══════════════════════════════════════════════════════════ */
-   console.log('%cABBA · build 2026-10-21-v125 · paywall: teasers persuasivos en bloqueos + precios tachados (50% real)', 'color:#0e4d3a;font-weight:bold');
+   console.log('%cABBA · build 2026-10-22-v127 · CTA dorado tostado #9a6714 con texto blanco', 'color:#0e4d3a;font-weight:bold');
    const firebaseConfig = {
     apiKey: "AIzaSyBLNS_xLAoAsnf5XfajAmVf12f4_mpUMfY",
     authDomain: "evaluafinanzas.firebaseapp.com",
@@ -3209,7 +3209,7 @@ function showToast(msg, type) {
     '16':'El plano completo de tu patrimonio: qué estructura te conviene, cuánto ahorras en impuestos y cómo blindar lo que construiste.',
     '17':'Ordena tus empresas: qué vehículo societario te conviene, cómo reducir la carga tributaria del negocio y proteger los activos.',
     '9':'Un informe PDF listo para llevar a tu asesor o contador con todo tu diagnóstico ordenado.',
-    '12':'Toma el control de tu mes con la regla 50/30/20 y sabe exactamente cuánto puedes gastar, ahorrar y destinar a deudas.'
+    '12':'Controla en qué se te va el dinero cada mes: cuánto gastas en lo necesario, en gustos y en ahorro, y dónde puedes recortar para que te sobre al final del mes.'
   };
 
   // Formateo de precio para el copy.
@@ -3217,6 +3217,16 @@ function showToast(msg, type) {
     const p = PLAN_PRECIO[plan]; if(!p) return '';
     if(moneda === 'usd') return 'USD $' + p.usd + '/año';
     return '$' + p.cop.toLocaleString('es-CO') + '/año';
+  }
+
+  // Frase de disponibilidad que NO sugiere exclusividad: un plan inferior siempre
+  // está incluido en los superiores. Para 'diagnostico' menciona también Asesor.
+  function textoPlanRequerido(plan){
+    if(plan === 'diagnostico'){
+      return `Incluido en <strong>${PLAN_NOMBRE.diagnostico}</strong> y <strong>${PLAN_NOMBRE.asesor}</strong>`;
+    }
+    // asesor (o cualquier otro): es el tope, no hay ambigüedad
+    return `Incluido en <strong>${PLAN_NOMBRE[plan]}</strong>`;
   }
 
   // ── Pantalla de bloqueo DURO (reemplaza el contenido del módulo) ──
@@ -3242,7 +3252,7 @@ function showToast(msg, type) {
         </div>
         <div class="pw-hl-eyebrow">${nombreMod}</div>
         <h2 class="pw-hl-title">${beneficio}</h2>
-        <p class="pw-hl-sub">Disponible en el plan <strong>${PLAN_NOMBRE[plan]}</strong>.</p>
+        <p class="pw-hl-sub">${textoPlanRequerido(plan)}.</p>
         <div class="pw-hl-actions">
           <button class="btn btn-primary pw-hl-cta" data-pw-planes="${feature}">Ver planes</button>
           <button class="btn btn-secondary pw-hl-volver">Volver</button>
@@ -3283,7 +3293,7 @@ function showToast(msg, type) {
       ov.addEventListener('click', e=>{ if(e.target===ov) ov.classList.remove('show'); });
     }
     ov.querySelector('.pw-modal-title').textContent = opts.titulo || (MODULO_BENEFICIO[String(opts.modulo)] || 'Desbloquea esta función');
-    ov.querySelector('.pw-modal-sub').innerHTML = `Disponible en el plan <strong>${PLAN_NOMBRE[plan]}</strong>${PLAN_PRECIO[plan] ? ' · desde ' + _precioPlan(plan,'cop') : ''}.`;
+    ov.querySelector('.pw-modal-sub').innerHTML = `${textoPlanRequerido(plan)}${PLAN_PRECIO[plan] ? ' · desde ' + _precioPlan(plan,'cop') : ''}.`;
     const cta = ov.querySelector('.pw-modal-cta');
     const nuevo = cta.cloneNode(true); cta.parentNode.replaceChild(nuevo, cta);
     nuevo.addEventListener('click', ()=>{ ov.classList.remove('show'); abrirPanelPlanes(feature); });
@@ -3498,7 +3508,7 @@ function showToast(msg, type) {
       <div class="pw-soft-card">
         <div class="pw-soft-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
         <h3>${beneficio}</h3>
-        <p>Disponible en el plan <strong>${PLAN_NOMBRE[plan]}</strong>.</p>
+        <p>${textoPlanRequerido(plan)}.</p>
         <button class="btn btn-primary pw-soft-cta">Ver planes</button>
       </div>`;
     ov.querySelector('.pw-soft-cta').addEventListener('click', ()=>abrirPanelPlanes(feature));
@@ -3509,7 +3519,7 @@ function showToast(msg, type) {
   // Se muestra en el gate de las secciones bloqueadas (mixto) para dar ganas de ver el resultado.
   const FEATURE_GANCHO = {
     'ingvar-completo':      'Descubre tu salario sostenible y cuánto apartar en tu fondo de estabilización.',
-    'm6-tablero-completo':  'Mira cómo crece tu patrimonio neto año a año y tu ingreso pasivo proyectado.',
+    'm6-tablero-completo':  'Tu panorama completo: a dónde se va tu dinero cada mes y cómo crece tu patrimonio neto e ingreso pasivo año a año.',
     'm13-hallazgos-completos':'Recibe los hallazgos de tu estructura legal con la acción, la norma y el costo de cada uno.',
     'm15-capas-detallado':  'Abre el detalle de cada capa: qué falla, por qué y cuánto aporta cada activo.',
     'm5-calendario-eventos':'Organiza tus pagos estacionales en un calendario anual y evita sorpresas.',
@@ -3543,7 +3553,7 @@ function showToast(msg, type) {
           <div class="pw-mixto-gate-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
           ${gancho ? `<div class="pw-mixto-gate-txt">${gancho}</div>` : ''}
           <div class="pw-mixto-gate-row">
-            <span class="pw-mixto-gate-plan">Incluido en <strong>${PLAN_NOMBRE[plan]}</strong></span>
+            <span class="pw-mixto-gate-plan">${textoPlanRequerido(plan)}</span>
             <button class="pw-mixto-cta">Desbloquear</button>
           </div>
         </div>`;
@@ -5723,12 +5733,9 @@ function showToast(msg, type) {
     // para que la vista activa se re-renderice con datos frescos.
     _dbRendered.fin = false;
     _dbRendered.pat = false;
-    // PAYWALL · la vista patrimonial es de pago (m6-tablero-completo); la financiera
-    // es gratuita. Si el plan no la incluye, abrir en la financiera para no mostrar de
-    // entrada una vista gateada.
-    let vista = _dbGetSavedView();
-    if(vista === 'pat' && !puedeAcceder('m6-tablero-completo')) vista = 'fin';
-    dbSetView(vista);
+    // PAYWALL · todo el tablero (vista financiera y patrimonial) es de pago
+    // (m6-tablero-completo). Ambas vistas muestran el gate si el plan no lo incluye.
+    dbSetView(_dbGetSavedView());
     try{ if(typeof aplicarBloqueoMixto==='function') aplicarBloqueoMixto(6); }catch(e){}
   }
   // Listeners del toggle: una sola vez, cuando el DOM ya existe.

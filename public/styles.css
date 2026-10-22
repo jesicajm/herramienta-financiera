@@ -26,6 +26,15 @@
     --accent-2:     #1a6b54;
     --accent-soft:  #e3eee8;
     --accent-tint:  #f0f6f2;
+
+    /* CTA dorado — color de marca ABBA (el mismo de los gráficos). Complementario
+       cálido del verde: contrasta, connota valor/premium y da ganas de clic.
+       Se usa SOLO en los llamados a la acción del paywall. Texto oscuro encima
+       (contraste WCAG 6.4:1, AA). */
+    --cta:          #9a6714;
+    --cta-hover:    #855912;
+    --cta-ink:      #ffffff;
+    --cta-soft:     #f6ecd6;
   
     /* Estados — tonos cálidos sobrios */
     --pos:          #0e4d3a;
@@ -6442,6 +6451,25 @@
    Usa los tokens del design system (--accent verde esmeralda, --serif, --sans).
    ═══════════════════════════════════════════════════════════════════════════ */
 
+/* ── CTA dorado del paywall ──
+   Los llamados a la acción del paywall usan el dorado de marca (--cta), no el
+   negro de .btn-primary general. Se aplica solo a las clases pw-*-cta, así que
+   el resto de la app conserva sus botones. Texto oscuro para contraste AA. */
+.pw-hl-cta.btn-primary,
+.pw-modal-cta.btn-primary,
+.pw-soft-cta.btn-primary,
+.pw-plan-cta.btn-primary{
+  background: var(--cta); color: var(--cta-ink);
+  box-shadow: 0 1px 2px rgba(0,0,0,.08), 0 4px 14px rgba(154,103,20,.28);
+}
+.pw-hl-cta.btn-primary:hover,
+.pw-modal-cta.btn-primary:hover,
+.pw-soft-cta.btn-primary:hover,
+.pw-plan-cta.btn-primary:hover{
+  background: var(--cta-hover); color: var(--cta-ink);
+  box-shadow: 0 2px 6px rgba(0,0,0,.1), 0 8px 24px rgba(154,103,20,.38);
+}
+
 /* ── Badge de plan en el header ── */
 .pw-plan-badge{
   font-family: var(--sans);
@@ -6556,16 +6584,16 @@
 .pw-teaser-head{ margin-bottom: 14px; }
 .pw-teaser-head h3{ font-family: var(--serif); font-size: 18px; font-weight: 500; color: var(--ink); margin: 0 0 6px; }
 .pw-teaser-head p{ font-family: var(--sans); font-size: 14px; color: var(--ink-3); margin: 0; line-height: 1.5; }
-/* Botón compacto del gate mixto, alineado con el primario (negro) de la app */
+/* Botón compacto del gate mixto, en dorado de marca (CTA) */
 .pw-mixto-cta{
   height: 36px; padding: 0 16px; border: none;
   border-radius: var(--r-md); cursor: pointer;
   font-family: var(--sans); font-size: 13px; font-weight: 600;
-  background: var(--ink); color: var(--bg);
-  box-shadow: 0 1px 2px rgba(0,0,0,.08), 0 4px 14px rgba(20,18,14,.14);
+  background: var(--cta); color: var(--cta-ink);
+  box-shadow: 0 1px 2px rgba(0,0,0,.08), 0 4px 14px rgba(154,103,20,.28);
   transition: all .15s; white-space: nowrap;
 }
-.pw-mixto-cta:hover{ background: var(--accent); box-shadow: var(--sh-pop); }
+.pw-mixto-cta:hover{ background: var(--cta-hover); box-shadow: 0 8px 24px rgba(154,103,20,.38); }
 .pw-mixto-cta:active{ transform: scale(.98); }
 
 /* Botón "ver el detalle" bloqueado en M15 */
