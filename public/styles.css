@@ -6584,16 +6584,16 @@
 .pw-teaser-head{ margin-bottom: 14px; }
 .pw-teaser-head h3{ font-family: var(--serif); font-size: 18px; font-weight: 500; color: var(--ink); margin: 0 0 6px; }
 .pw-teaser-head p{ font-family: var(--sans); font-size: 14px; color: var(--ink-3); margin: 0; line-height: 1.5; }
-/* Botón compacto del gate mixto, en dorado de marca (CTA) */
+/* Botón "Desbloquear" del gate mixto, en verde de marca de la app */
 .pw-mixto-cta{
   height: 36px; padding: 0 16px; border: none;
   border-radius: var(--r-md); cursor: pointer;
   font-family: var(--sans); font-size: 13px; font-weight: 600;
-  background: var(--cta); color: var(--cta-ink);
-  box-shadow: 0 1px 2px rgba(0,0,0,.08), 0 4px 14px rgba(154,103,20,.28);
+  background: var(--accent); color: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,.08), 0 4px 14px rgba(14,77,58,.28);
   transition: all .15s; white-space: nowrap;
 }
-.pw-mixto-cta:hover{ background: var(--cta-hover); box-shadow: 0 8px 24px rgba(154,103,20,.38); }
+.pw-mixto-cta:hover{ background: var(--accent-2); box-shadow: 0 8px 24px rgba(14,77,58,.38); }
 .pw-mixto-cta:active{ transform: scale(.98); }
 
 /* Botón "ver el detalle" bloqueado en M15 */

@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════
    FIREBASE — auth + firestore
    ═══════════════════════════════════════════════════════════ */
-   console.log('%cABBA · build 2026-10-22-v127 · CTA dorado tostado #9a6714 con texto blanco', 'color:#0e4d3a;font-weight:bold');
+   console.log('%cABBA · build 2026-10-22-v128 · botón Desbloquear en verde de marca', 'color:#0e4d3a;font-weight:bold');
    const firebaseConfig = {
     apiKey: "AIzaSyBLNS_xLAoAsnf5XfajAmVf12f4_mpUMfY",
     authDomain: "evaluafinanzas.firebaseapp.com",
