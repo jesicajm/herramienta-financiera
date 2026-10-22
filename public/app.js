@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════
    FIREBASE — auth + firestore
    ═══════════════════════════════════════════════════════════ */
-   console.log('%cABBA · build 2026-10-22-v128 · botón Desbloquear en verde de marca', 'color:#0e4d3a;font-weight:bold');
+   console.log('%cABBA · build 2026-10-22-v129 · paywall + legacy bypass + view_as asesor', 'color:#0e4d3a;font-weight:bold');
    const firebaseConfig = {
     apiKey: "AIzaSyBLNS_xLAoAsnf5XfajAmVf12f4_mpUMfY",
     authDomain: "evaluafinanzas.firebaseapp.com",
@@ -869,7 +869,53 @@
     'perfil': { tipo:'libre', feature:'perfil' }
   };
 
+  /* ─── LEGACY: usuarios creados ANTES del lanzamiento del paywall ─────────
+     Fecha de corte: a partir de este día, los nuevos registros se rigen por
+     el paywall normal. Cualquier perfil creado antes (o sin createdAt, que
+     equivale a "pre-corte") queda como legacy → acceso total de por vida.
+     Para activar en producción, actualizar esta fecha al día del merge a main.
+     ────────────────────────────────────────────────────────────────────── */
+  const FECHA_CORTE_BLOQUEO = new Date('2026-10-22T00:00:00-05:00');
+
+  function isLegacyUser(){
+    try{
+      const perfil = state.profile || {};
+      const ca = perfil.createdAt;
+      // Sin createdAt → legacy (cualquier perfil anterior a que agregáramos el campo).
+      if(!ca) return true;
+      let d;
+      if(ca && typeof ca === 'object' && typeof ca.toDate === 'function') d = ca.toDate();
+      else if(ca instanceof Date) d = ca;
+      else if(typeof ca === 'number') d = new Date(ca);
+      else if(typeof ca === 'string') d = new Date(ca);
+      else return true;
+      if(!d || isNaN(d.getTime())) return true;
+      return d < FECHA_CORTE_BLOQUEO;
+    } catch(e){
+      console.warn('isLegacyUser falló, asumo legacy por seguridad:', e);
+      return true;
+    }
+  }
+
   function planActual(){
+    // 1) Modo lectura (asesor viendo app de un cliente con ?view_as=UID):
+    //    el asesor ve TODO como plan asesor, independiente del plan real
+    //    del cliente. Así Natalia no queda bloqueada por el paywall del cliente.
+    try{
+      if (typeof window !== 'undefined' && typeof window.isReadOnly === 'function' && window.isReadOnly()){
+        return 'asesor';
+      }
+    } catch(e){}
+
+    // 2) Modo prueba: prevalece sobre legacy para poder validar bloqueos.
+    //    Si NO está activo, los usuarios legacy entran como 'asesor' (acceso total).
+    let modoPrueba = false;
+    try{ modoPrueba = (typeof MODO_PRUEBA_PLAN !== 'undefined') && !!MODO_PRUEBA_PLAN; }catch(e){}
+    if (!modoPrueba){
+      if (isLegacyUser()) return 'asesor';
+    }
+
+    // 3) Flujo normal: lee del state.subscription.
     const s = state.subscription || {};
     if(!s.plan) return 'free';
     // Una suscripción vencida o pendiente degrada a 'free' en el acceso.
@@ -890,7 +936,8 @@
   // Exponer para depuración / integración futura.
   window.ABBA_PAYWALL = {
     FEATURES, MODULO_BLOQUEO, PLAN_NOMBRE, PLAN_PRECIO,
-    puedeAcceder, planActual, planRequerido,
+    FECHA_CORTE_BLOQUEO,
+    puedeAcceder, planActual, planRequerido, isLegacyUser,
     setPlan: function(plan){ _setPlanPrueba(plan); }
   };
 
