@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════
    FIREBASE — auth + firestore
    ═══════════════════════════════════════════════════════════ */
-   console.log('%cABBA · build 2026-10-23-v130 · paywall + legacy + view_as + modo prueba solo asesores', 'color:#0e4d3a;font-weight:bold');
+   console.log('%cABBA · build 2026-10-23-v131 · fix: createdAt ahora llega al state.profile (sin esto todo nuevo quedaba legacy)', 'color:#0e4d3a;font-weight:bold');
    const firebaseConfig = {
     apiKey: "AIzaSyBLNS_xLAoAsnf5XfajAmVf12f4_mpUMfY",
     authDomain: "evaluafinanzas.firebaseapp.com",
@@ -8941,7 +8941,8 @@ function showToast(msg, type) {
         edadRetiro: edadRetiro,
         moneda: moneda,
         consentimientoTratamiento: perfilData.consentimientoTratamiento,
-        consentimientoRecomendaciones: perfilData.consentimientoRecomendaciones
+        consentimientoRecomendaciones: perfilData.consentimientoRecomendaciones,
+        createdAt: now   // ← crítico para que isLegacyUser() funcione (sin esto, el nuevo usuario queda marcado como legacy en memoria)
       });
       aplicarMoneda(moneda);
       document.getElementById('user-display').textContent = nombre;
@@ -9064,7 +9065,8 @@ function showToast(msg, type) {
           edadRetiro: (clientePerfil && clientePerfil.edadRetiro != null) ? clientePerfil.edadRetiro : null,
           moneda: (clientePerfil && clientePerfil.moneda) || 'COP',
           consentimientoTratamiento: (clientePerfil && clientePerfil.consentimientoTratamiento) || {aceptado:true}, // simulamos aceptado para no bloquear
-          consentimientoRecomendaciones: (clientePerfil && clientePerfil.consentimientoRecomendaciones) || {aceptado:false}
+          consentimientoRecomendaciones: (clientePerfil && clientePerfil.consentimientoRecomendaciones) || {aceptado:false},
+          createdAt: (clientePerfil && clientePerfil.createdAt) || null   // consistencia (view_as igual devuelve 'asesor' por readonly)
         });
         aplicarMoneda(state.profile.moneda);
 
@@ -9146,7 +9148,8 @@ function showToast(msg, type) {
       edadRetiro: perfil.edadRetiro != null ? perfil.edadRetiro : null,
       moneda: perfil.moneda || 'COP',
       consentimientoTratamiento: perfil.consentimientoTratamiento,
-      consentimientoRecomendaciones: perfil.consentimientoRecomendaciones || {aceptado:false}
+      consentimientoRecomendaciones: perfil.consentimientoRecomendaciones || {aceptado:false},
+      createdAt: perfil.createdAt   // ← crítico para isLegacyUser() en logins subsecuentes
     });
     aplicarMoneda(state.profile.moneda);
   
