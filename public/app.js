@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════
    FIREBASE — auth + firestore
    ═══════════════════════════════════════════════════════════ */
-   console.log('%cABBA · build 2026-10-22-v129 · paywall + legacy bypass + view_as asesor', 'color:#0e4d3a;font-weight:bold');
+   console.log('%cABBA · build 2026-10-23-v130 · paywall + legacy + view_as + modo prueba solo asesores', 'color:#0e4d3a;font-weight:bold');
    const firebaseConfig = {
     apiKey: "AIzaSyBLNS_xLAoAsnf5XfajAmVf12f4_mpUMfY",
     authDomain: "evaluafinanzas.firebaseapp.com",
@@ -910,7 +910,7 @@
     // 2) Modo prueba: prevalece sobre legacy para poder validar bloqueos.
     //    Si NO está activo, los usuarios legacy entran como 'asesor' (acceso total).
     let modoPrueba = false;
-    try{ modoPrueba = (typeof MODO_PRUEBA_PLAN !== 'undefined') && !!MODO_PRUEBA_PLAN; }catch(e){}
+    try{ modoPrueba = (typeof esModoPrueba === 'function') && esModoPrueba(); }catch(e){}
     if (!modoPrueba){
       if (isLegacyUser()) return 'asesor';
     }
@@ -965,9 +965,9 @@
       expiresAt = sub.expiresAt || null;
       couponUsed = sub.couponUsed || null;
     }
-    // Override de prueba (solo si está activo el modo prueba).
+    // Override de prueba (solo si está activo el modo prueba Y el usuario es asesor).
     try{
-      if(MODO_PRUEBA_PLAN){
+      if(esModoPrueba()){
         const p = localStorage.getItem('abba_plan_prueba');
         if(p && PLAN_ORDEN.hasOwnProperty(p)){ plan = p; status = 'active'; }
       }
@@ -977,14 +977,34 @@
   }
 
   // ── Modo prueba: permite cambiar de plan sin pasarela para validar el bloqueo. ──
-  // Poner en false (o quitar el panel) antes de producción.  También se activa con
-  // ?prueba=1 en la URL o localStorage 'abba_modo_prueba'='1'.
-  const MODO_PRUEBA_PLAN = (function(){
+  // Se activa con ?prueba=1 en la URL o localStorage 'abba_modo_prueba'='1',
+  // PERO solo surte efecto si el usuario autenticado es un asesor (está en /asesores/{uid}).
+  // Así un cliente de pago que accidentalmente use ?prueba=1 no puede burlar el paywall.
+  const _FLAG_MODO_PRUEBA = (function(){
     try{
       if(/[?&]prueba=1/.test(location.search)) { localStorage.setItem('abba_modo_prueba','1'); return true; }
       return localStorage.getItem('abba_modo_prueba') === '1';
     }catch(e){ return false; }
   })();
+
+  // Se setea en onAuthStateChange después de leer /asesores/{uid}.
+  let _usuarioEsAsesor = false;
+
+  // El modo prueba está activo si Y solo si:
+  //   (1) el flag en URL/localStorage está presente
+  //   (2) el usuario autenticado es un asesor verificado
+  function esModoPrueba(){
+    return !!_FLAG_MODO_PRUEBA && _usuarioEsAsesor === true;
+  }
+
+  // Limpia el flag de modo prueba del localStorage. Útil cuando detectamos
+  // que un usuario no-asesor lo tenía activo (lo activó por accidente o lo heredó).
+  function limpiarFlagModoPrueba(){
+    try{
+      localStorage.removeItem('abba_modo_prueba');
+      localStorage.removeItem('abba_plan_prueba');
+    }catch(e){}
+  }
 
 /* ═══════════════════════════════════════════════════════════
    MÓDULO 3 · MAPA PATRIMONIAL (integrado)
@@ -3431,7 +3451,7 @@ function showToast(msg, type) {
     ov.querySelectorAll('.pw-plan-cta').forEach(btn=>{
       btn.addEventListener('click', function(){
         const planObjetivo = this.dataset.plan;
-        if(MODO_PRUEBA_PLAN){
+        if(esModoPrueba()){
           _setPlanPrueba(planObjetivo);
           ov.classList.remove('show');
           showToast('Plan de prueba: ' + (PLAN_NOMBRE[planObjetivo]||planObjetivo), 'success');
@@ -3507,9 +3527,9 @@ function showToast(msg, type) {
       </div>`;
   }
 
-  // ── Switch de pruebas (solo en modo prueba) ──
+  // ── Switch de pruebas (solo en modo prueba Y para asesores) ──
   function renderSwitchPruebaPlan(){
-    if(!MODO_PRUEBA_PLAN){
+    if(!esModoPrueba()){
       const ex = document.getElementById('pw-switch-prueba'); if(ex) ex.remove();
       return;
     }
@@ -8988,14 +9008,31 @@ function showToast(msg, type) {
     // Usuario autenticado
     currency = 'COP $';
 
+    /* ═══ Verificación de asesor (una sola vez por login).
+         Setea _usuarioEsAsesor, que gobierna:
+           - Modo prueba del paywall (solo asesores pueden activarlo)
+           - View_as (ya tenía su propio check, lo reusa de aquí)
+         Si el flag de modo prueba está activo pero el usuario NO es asesor,
+         lo limpiamos del localStorage para que no quede "pegado". ═══ */
+    try {
+      const asesorDoc = await db.collection('asesores').doc(user.uid).get();
+      _usuarioEsAsesor = asesorDoc.exists;
+    } catch(e){
+      console.warn('[auth] Error verificando si es asesor:', e);
+      _usuarioEsAsesor = false;
+    }
+    if (_FLAG_MODO_PRUEBA && !_usuarioEsAsesor){
+      console.warn('[paywall] Flag de modo prueba detectado en un usuario no-asesor. Limpiando.');
+      limpiarFlagModoPrueba();
+    }
+    try { aplicarUIPlan(); } catch(e){}
+    try { renderSwitchPruebaPlan(); } catch(e){}
+
     /* ═══ MODO VIEW_AS: si llegó con ?view_as=<uid> y el user es asesor,
          cargamos los datos de ese UID en modo solo-lectura ═══ */
     if (_viewAsFromUrl) {
-      let esAsesor = false;
-      try {
-        const asesorDoc = await db.collection('asesores').doc(user.uid).get();
-        esAsesor = asesorDoc.exists;
-      } catch(e){ console.warn('[view_as] Error verificando asesor:', e); }
+      // Reusamos _usuarioEsAsesor del check de arriba (ya se consultó /asesores).
+      const esAsesor = _usuarioEsAsesor === true;
 
       if (esAsesor) {
         _readOnlyMode = true;
