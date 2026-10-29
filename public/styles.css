@@ -6451,40 +6451,53 @@
    Usa los tokens del design system (--accent verde esmeralda, --serif, --sans).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* ── CTA dorado del paywall ──
-   Los llamados a la acción del paywall usan el dorado de marca (--cta), no el
-   negro de .btn-primary general. Se aplica solo a las clases pw-*-cta, así que
-   el resto de la app conserva sus botones. Texto oscuro para contraste AA. */
+/* ── CTA del paywall · verde de marca ──
+   Los llamados a la acción del paywall usan el VERDE de marca (--accent),
+   consistente con el botón "Desbloquear" (.pw-mixto-cta). Se aplica solo a
+   las clases pw-*-cta, así que el resto de la app conserva sus botones. */
 .pw-hl-cta.btn-primary,
 .pw-modal-cta.btn-primary,
 .pw-soft-cta.btn-primary,
 .pw-plan-cta.btn-primary{
-  background: var(--cta); color: var(--cta-ink);
-  box-shadow: 0 1px 2px rgba(0,0,0,.08), 0 4px 14px rgba(154,103,20,.28);
+  background: var(--accent); color: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,.08), 0 4px 14px rgba(14,77,58,.28);
 }
 .pw-hl-cta.btn-primary:hover,
 .pw-modal-cta.btn-primary:hover,
 .pw-soft-cta.btn-primary:hover,
 .pw-plan-cta.btn-primary:hover{
-  background: var(--cta-hover); color: var(--cta-ink);
-  box-shadow: 0 2px 6px rgba(0,0,0,.1), 0 8px 24px rgba(154,103,20,.38);
+  background: var(--accent-2); color: #fff;
+  box-shadow: 0 2px 6px rgba(0,0,0,.1), 0 8px 24px rgba(14,77,58,.38);
 }
 
-/* ── Badge de plan en el header ── */
+/* ── Badge de plan en el header ──
+   Diseño unificado: pill verde oscuro sólido con texto blanco en los TRES
+   planes (free "Diagnóstico", diagnostico "Organizador Financiero", asesor
+   "Asesor Patrimonial"). El plan se identifica por el texto, el estilo
+   visual es consistente para que no haya jerarquía visual implícita. */
 .pw-plan-badge{
   font-family: var(--sans);
   font-size: 12px; font-weight: 600; letter-spacing: .2px;
   padding: 5px 12px; border-radius: var(--r-pill);
-  border: 1px solid var(--line); background: var(--surface-soft);
-  color: var(--ink-2); cursor: pointer; white-space: nowrap;
+  border: 1px solid transparent;
+  background: linear-gradient(135deg, #0e4d3a, #1a6b54);
+  color: #fff; cursor: pointer; white-space: nowrap;
+  box-shadow: 0 1px 3px rgba(14,77,58,.3);
   transition: all .15s ease; margin-right: 4px;
 }
-.pw-plan-badge:hover{ border-color: var(--accent); color: var(--accent); }
-.pw-plan-badge.pw-plan-free{ background: var(--surface-soft); color: var(--ink-3); }
-.pw-plan-badge.pw-plan-diagnostico{ background: var(--accent-soft); color: var(--accent); border-color: var(--accent-soft); }
+.pw-plan-badge:hover{
+  background: linear-gradient(135deg, #0d4332, #175c49);
+  box-shadow: 0 2px 6px rgba(14,77,58,.4);
+}
+/* Overrides por plan: todos usan el mismo tratamiento verde oscuro, pero
+   dejamos los selectores por si querés diferenciar más adelante. */
+.pw-plan-badge.pw-plan-free,
+.pw-plan-badge.pw-plan-diagnostico,
 .pw-plan-badge.pw-plan-asesor{
-  background: linear-gradient(135deg, #0e4d3a, #1a6b54); color: #fff;
-  border-color: transparent; box-shadow: 0 1px 3px rgba(14,77,58,.3);
+  background: linear-gradient(135deg, #0e4d3a, #1a6b54);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 1px 3px rgba(14,77,58,.3);
 }
 
 /* ── Candados en el sidebar ── */
