@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════
    FIREBASE — auth + firestore
    ═══════════════════════════════════════════════════════════ */
-   console.log('%cABBA · build 2026-10-29-v137 · Estrategia fiscal: optimizador y SAS bloqueados (plan Organizador), comparador libre', 'color:#0e4d3a;font-weight:bold');
+   console.log('%cABBA · build 2026-10-29-v138 · optimizador gratis en Impuestos · solo SAS bloqueado · modo prueba por ?prueba=1 (TEMPORAL)', 'color:#0e4d3a;font-weight:bold');
    const firebaseConfig = {
     apiKey: "AIzaSyBLNS_xLAoAsnf5XfajAmVf12f4_mpUMfY",
     authDomain: "evaluafinanzas.firebaseapp.com",
@@ -1037,8 +1037,11 @@
   // El modo prueba está activo si Y solo si:
   //   (1) el flag en URL/localStorage está presente
   //   (2) el usuario autenticado es un asesor verificado
+  // ⚠️ TEMPORAL (rama feat/bloqueo-modulos-pagados): para poder probar el paywall
+  // sin ser asesor, basta ?prueba=1. ANTES DE MERGE A MAIN, restaurar la condición
+  // completa:  return !!_FLAG_MODO_PRUEBA && _usuarioEsAsesor === true;
   function esModoPrueba(){
-    return !!_FLAG_MODO_PRUEBA && _usuarioEsAsesor === true;
+    return !!_FLAG_MODO_PRUEBA;   // TEMPORAL · solo el flag; quitar antes de producción
   }
 
   // Limpia el flag de modo prueba del localStorage. Útil cuando detectamos
@@ -3635,7 +3638,7 @@ function showToast(msg, type) {
     'm15-capas-detallado':  'Abre el detalle de cada capa: qué falla, por qué y cuánto aporta cada activo.',
     'm5-calendario-eventos':'Organiza tus pagos estacionales en un calendario anual y evita sorpresas.',
     'm9-pdf-informe':       'Descarga tu diagnóstico completo en PDF, listo para tu asesor o contador.',
-    'm11-estrategia-fiscal':'Descubre cuánto puedes ahorrar en impuestos con las estrategias que aplican a tu caso.'
+    'm11-estrategia-fiscal':'Simula si crear una empresa te conviene y cuánto podrías ahorrar en impuestos.'
   };
 
   /* ── BLOQUEO MIXTO ──
@@ -12661,6 +12664,10 @@ function showToast(msg, type) {
         + 'Las líneas en "—" te dicen dónde registrar el dato para activar esa deducción. El 25% exento y los dependientes solo aplican a rentas de trabajo.</p></div>';
     }
 
+    // Optimizador de aportes voluntarios — GRATUITO, justo debajo de la cascada de renta
+    // (el aporte es una de las deducciones de arriba; aquí se ve cuánto baja el impuesto).
+    html += pfOptimizadorHtml();
+
     if(iva){
       html += '<div class="pf-diag-card"><div class="pf-diag-t">IVA del periodo</div>';
       html += '<div class="pf-diag-row"><span>IVA generado (ventas × '+Math.round(iva.tarifa*100)+'%)</span><b>'+fmt(iva.generado)+'</b></div>';
@@ -12694,17 +12701,9 @@ function showToast(msg, type) {
     // El comparador Ordinario vs Simple queda LIBRE (plan Gratis, como se anunció).
     html += pfComparadorHtml();
 
-    // Optimizador de aportes y Simulador SAS: PAYWALL (plan Organizador). Cada uno
-    // muestra su título + qué hace (teaser nítido) y difumina el resultado con el gate.
-    const _optHtml = pfOptimizadorHtml();
-    if(_optHtml.trim()){
-      html += '<div data-pw-feature="m11-estrategia-fiscal" '
-        + 'data-pw-gancho="Mira cuántos impuestos te ahorras aportando a pensión voluntaria o AFC, y encuentra tu punto óptimo.">'
-        + '<div class="pf-teaser-head" data-pw-teaser><h3>Optimizador de aportes voluntarios</h3>'
-        +   '<p>Cuánto aportar a pensión voluntaria o AFC para pagar menos renta, con tu punto óptimo según tus ingresos.</p></div>'
-        + _optHtml
-        + '</div>';
-    }
+    // Simulador SAS: PAYWALL (plan Organizador). Muestra su título + qué hace
+    // (teaser nítido) y difumina el resultado con el gate.
+    // (El optimizador de aportes se movió a la pestaña Impuestos y es gratuito.)
     const _sasHtml = pfSasHtml();
     if(_sasHtml.trim()){
       html += '<div data-pw-feature="m11-estrategia-fiscal" '
@@ -12716,9 +12715,9 @@ function showToast(msg, type) {
     }
 
     // Estado vacío (sin datos para ninguna estrategia).
-    if(!pfComparadorHtml().trim() && !_optHtml.trim() && !_sasHtml.trim()){
+    if(!pfComparadorHtml().trim() && !_sasHtml.trim()){
       html += '<div class="pf-diag-card"><div class="pf-diag-t">Aún no hay estrategias que mostrar</div>'
-        + '<p class="pf-note" style="margin-top:6px">Completa tus ingresos y tu <strong>Perfil personal y fiscal</strong> para que podamos comparar regímenes (Ordinario vs Simple), calcular tu punto óptimo de aportes voluntarios y evaluar si te conviene crear una empresa.</p>'
+        + '<p class="pf-note" style="margin-top:6px">Completa tus ingresos y tu <strong>Perfil personal y fiscal</strong> para que podamos comparar regímenes (Ordinario vs Simple) y evaluar si te conviene crear una empresa.</p>'
         + '<button class="btn btn-secondary" style="margin-top:12px" onclick="navigateTo(10)">Ir a mi Perfil fiscal</button></div>';
     }
     html += '</div>';  // ─── fin PANEL ESTRATEGIA ───
