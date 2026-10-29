@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════
    FIREBASE — auth + firestore
    ═══════════════════════════════════════════════════════════ */
-   console.log('%cABBA · build 2026-10-29-v134 · fix timing: aplicarUIPlan() también después de cargar perfil (badge dejaba de refrescarse)', 'color:#0e4d3a;font-weight:bold');
+   console.log('%cABBA · build 2026-10-29-v135 · Diagnóstico fiscal en 3 pestañas (Resumen · Impuestos · Estrategia)', 'color:#0e4d3a;font-weight:bold');
    const firebaseConfig = {
     apiKey: "AIzaSyBLNS_xLAoAsnf5XfajAmVf12f4_mpUMfY",
     authDomain: "evaluafinanzas.firebaseapp.com",
@@ -12471,6 +12471,20 @@ function showToast(msg, type) {
     let html = '<div id="diag-migrate-banner"></div>';
     html += '<div class="pf-diag-head"><h3>Tu diagnóstico fiscal'+opt+'</h3><p>Calculado con lo que registraste aquí y en los demás módulos. Es una estimación de planeación, no la liquidación oficial.</p></div>';
 
+    // ─── Barra de pestañas (3 vistas): Resumen · Impuestos · Estrategia ───
+    const _tab = (state.fiscal && state.fiscal._diagTab) || 'resumen';
+    html += '<div class="pf-tabs" role="tablist" aria-label="Vistas del diagnóstico fiscal">'
+      + '<button class="pf-tab'+(_tab==='resumen'?' on':'')+'" data-pf-tab-btn="resumen" role="tab" type="button" aria-selected="'+(_tab==='resumen')+'">'
+      +   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Resumen</button>'
+      + '<button class="pf-tab'+(_tab==='impuestos'?' on':'')+'" data-pf-tab-btn="impuestos" role="tab" type="button" aria-selected="'+(_tab==='impuestos')+'">'
+      +   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h4"/></svg>Impuestos</button>'
+      + '<button class="pf-tab'+(_tab==='estrategia'?' on':'')+'" data-pf-tab-btn="estrategia" role="tab" type="button" aria-selected="'+(_tab==='estrategia')+'">'
+      +   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l7 4v6c0 5-3 9-7 10-4-1-7-5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>Estrategia</button>'
+      + '</div>';
+
+    // ══════════ PANEL: RESUMEN ══════════
+    html += '<div class="pf-tab-panel" data-pf-tab="resumen"'+(_tab!=='resumen'?' hidden':'')+'>';
+
     html += '<div class="pf-diag-card '+(dd.debe?'is-warn':'is-ok')+'">';
     html += '<div class="pf-diag-t">'+(dd.debe?'Debes declarar renta':'Por ahora no estarías obligado a declarar renta')+'</div>';
     html += '<div class="pf-diag-s">'+(dd.debe
@@ -12487,6 +12501,14 @@ function showToast(msg, type) {
     });
     html += '<div class="pf-thr-uvt">Topes calculados con la UVT del año · UVT '+fmt(uvtValor())+'. Los consumos, compras y consignaciones los registras en tu Perfil personal y fiscal.</div>';
     html += '</div>';
+
+    // Resumen de obligaciones (qué debes presentar) va también en el Resumen.
+    html += pfObligacionesHtml();
+
+    html += '</div>';  // ─── fin PANEL RESUMEN ───
+
+    // ══════════ PANEL: IMPUESTOS ══════════
+    html += '<div class="pf-tab-panel" data-pf-tab="impuestos"'+(_tab!=='impuestos'?' hidden':'')+'>';
 
     const det = pfIngresoDetalle();
     html += '<div class="pf-diag-card"><div class="pf-diag-t">Conciliación de ingresos'+opt+'</div>';
@@ -12655,15 +12677,46 @@ function showToast(msg, type) {
       html += '</div>';
     }
 
-    html += pfObligacionesHtml();
+    // IVA e ICA ya se agregaron arriba (siguen en el panel Impuestos).
     html += pfCalendarioHtml();
-    html += pfComparadorHtml();
-    html += pfOptimizadorHtml();
-    html += pfSasHtml();
     html += pfHerenciaHtml();
     html += pfPatrimonioHtml();
 
+    html += '</div>';  // ─── fin PANEL IMPUESTOS ───
+
+    // ══════════ PANEL: ESTRATEGIA ══════════
+    html += '<div class="pf-tab-panel" data-pf-tab="estrategia"'+(_tab!=='estrategia'?' hidden':'')+'>';
+    html += '<div class="pf-diag-head" style="margin-bottom:14px"><h3>Estrategia tributaria</h3><p>Decisiones que pueden bajar tu carga fiscal: qué régimen te conviene, cuánto aportar para optimizar y si vale la pena crear una empresa.</p></div>';
+    const _estrategiaHtml = pfComparadorHtml() + pfOptimizadorHtml() + pfSasHtml();
+    if(_estrategiaHtml.trim()){
+      html += _estrategiaHtml;
+    } else {
+      html += '<div class="pf-diag-card"><div class="pf-diag-t">Aún no hay estrategias que mostrar</div>'
+        + '<p class="pf-note" style="margin-top:6px">Completa tus ingresos y tu <strong>Perfil personal y fiscal</strong> para que podamos comparar regímenes (Ordinario vs Simple), calcular tu punto óptimo de aportes voluntarios y evaluar si te conviene crear una empresa.</p>'
+        + '<button class="btn btn-secondary" style="margin-top:12px" onclick="navigateTo(10)">Ir a mi Perfil fiscal</button></div>';
+    }
+    html += '</div>';  // ─── fin PANEL ESTRATEGIA ───
+
     cont.innerHTML = html;
+
+    // ─── Wiring de las pestañas: cambiar de vista sin re-renderizar (solo muestra/oculta) ───
+    cont.querySelectorAll('[data-pf-tab-btn]').forEach(btn=>{
+      btn.addEventListener('click', function(){
+        const destino = this.getAttribute('data-pf-tab-btn');
+        state.fiscal._diagTab = destino;
+        try{ scheduleSave('fiscal'); }catch(e){}
+        cont.querySelectorAll('[data-pf-tab-btn]').forEach(b=>{
+          const on = b.getAttribute('data-pf-tab-btn')===destino;
+          b.classList.toggle('on', on);
+          b.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        cont.querySelectorAll('[data-pf-tab]').forEach(panel=>{
+          panel.hidden = panel.getAttribute('data-pf-tab')!==destino;
+        });
+        try{ window.scrollTo({top:0,behavior:'smooth'}); }catch(e){}
+      });
+    });
+
     // Inyectar banner de migración (después del innerHTML, para que el contenedor exista)
     renderMigrateBanner('diag-migrate-banner');
     cont.querySelectorAll('[data-incl-key]').forEach(cb=>{

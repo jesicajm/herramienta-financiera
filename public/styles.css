@@ -6737,3 +6737,71 @@
   .pw-planes-modal{ padding: 28px 18px; }
   .pw-plan-badge{ display: none; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MÓDULO 11 · DIAGNÓSTICO FISCAL — pestañas (Resumen · Impuestos · Estrategia)
+   Mismo lenguaje visual que el toggle del Tablero (#modulo-6).
+   ═══════════════════════════════════════════════════════════════════════════ */
+#modulo-11 .pf-tabs{
+  display: inline-flex;
+  background: var(--surface, #fff);
+  border: 1px solid var(--line, #e6dfd0);
+  border-radius: 14px;
+  padding: 6px;
+  gap: 2px;
+  margin-bottom: 22px;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+#modulo-11 .pf-tab{
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 20px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink-3, #6f6e6a);
+  cursor: pointer;
+  transition: background-color .15s ease, color .15s ease;
+  white-space: nowrap;
+}
+#modulo-11 .pf-tab:hover:not(.on){
+  background: var(--bg-2, #efeae0);
+  color: var(--ink, #0c0c0d);
+}
+#modulo-11 .pf-tab.on{
+  background: var(--accent, #0e4d3a);
+  color: #fff;
+}
+#modulo-11 .pf-tab:focus-visible{
+  outline: 2px solid var(--accent, #0e4d3a);
+  outline-offset: 2px;
+}
+#modulo-11 .pf-tab svg{
+  width: 16px; height: 16px; flex: none;
+}
+#modulo-11 .pf-tab-panel{
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+/* El gap del panel manda; anulamos el margin propio de las tarjetas para no duplicar. */
+#modulo-11 .pf-tab-panel > .pf-diag-card,
+#modulo-11 .pf-tab-panel > .pf-diag-head{ margin-bottom: 0; }
+/* animación sutil al cambiar de pestaña */
+#modulo-11 .pf-tab-panel:not([hidden]){
+  animation: pfTabIn .22s ease;
+}
+@keyframes pfTabIn{
+  from{ opacity: 0; transform: translateY(4px); }
+  to{ opacity: 1; transform: none; }
+}
+@media (max-width: 520px){
+  #modulo-11 .pf-tabs{ width: 100%; }
+  #modulo-11 .pf-tab{ padding: 10px 14px; flex: 1 0 auto; justify-content: center; }
+}
