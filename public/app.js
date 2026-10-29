@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════
    FIREBASE — auth + firestore
    ═══════════════════════════════════════════════════════════ */
-   console.log('%cABBA · build 2026-10-22-v128 · botón Desbloquear en verde de marca', 'color:#0e4d3a;font-weight:bold');
+   console.log('%cABBA · build 2026-10-29-v134 · fix timing: aplicarUIPlan() también después de cargar perfil (badge dejaba de refrescarse)', 'color:#0e4d3a;font-weight:bold');
    const firebaseConfig = {
     apiKey: "AIzaSyBLNS_xLAoAsnf5XfajAmVf12f4_mpUMfY",
     authDomain: "evaluafinanzas.firebaseapp.com",
@@ -87,6 +87,33 @@
       document.body.insertBefore(banner, document.body.firstChild);
       // Empujar el contenido abajo para que no quede tapado por el banner
       document.body.style.paddingTop = (banner.offsetHeight || 42) + 'px';
+    }
+
+    /* Banner informativo (navy) que aparece arriba de la pantalla de login cuando
+       se accede con ?view_as=<uid> sin sesión. Deja claro al asesor que debe
+       autenticarse PRIMERO con su cuenta para entrar al modo lectura del cliente. */
+    function mostrarBannerViewAsLogin(uidCliente){
+      if (document.getElementById('view-as-login-banner')) return;
+      const banner = document.createElement('div');
+      banner.id = 'view-as-login-banner';
+      banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#1e2853;color:#fff;padding:12px 16px;text-align:center;font-size:14px;line-height:1.45;font-family:-apple-system,BlinkMacSystemFont,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.2);';
+      banner.innerHTML =
+        '<div style="max-width:720px;margin:0 auto;">'
+        + '<strong>Modo lectura solicitado</strong> para el cliente <code style="background:rgba(255,255,255,0.15);padding:2px 6px;border-radius:4px;font-size:12px;">' + String(uidCliente).slice(0,12) + '…</code>'
+        + '<div style="font-size:12.5px;margin-top:4px;color:#c9d3e6;">Inicia sesión con tu cuenta de asesora abajo para ver la app de este cliente. Si inicias sesión con una cuenta no-asesora, el modo lectura se cancela y entras como cliente normal.</div>'
+        + '</div>';
+      document.body.insertBefore(banner, document.body.firstChild);
+      document.body.style.paddingTop = (banner.offsetHeight || 60) + 'px';
+    }
+
+    /* Oculta el banner informativo del login (lo llamamos después del login exitoso
+       para que no quede visible mientras procesamos view_as). */
+    function ocultarBannerViewAsLogin(){
+      const banner = document.getElementById('view-as-login-banner');
+      if (banner){
+        banner.remove();
+        document.body.style.paddingTop = '';
+      }
     }
   /* ═══════════════════════════════════════════════════════════
      CONFIGURACIÓN FISCAL — parámetros por año (UVT, topes, tarifas, calendario)
@@ -869,7 +896,69 @@
     'perfil': { tipo:'libre', feature:'perfil' }
   };
 
+  /* ─── LEGACY: usuarios creados ANTES del lanzamiento del paywall ─────────
+     Fecha de corte: a partir de este día, los nuevos registros se rigen por
+     el paywall normal. Cualquier perfil creado antes (o sin createdAt, que
+     equivale a "pre-corte") queda como legacy → acceso total de por vida.
+     Para activar en producción, actualizar esta fecha al día del merge a main.
+     ────────────────────────────────────────────────────────────────────── */
+  const FECHA_CORTE_BLOQUEO = new Date('2026-10-22T00:00:00-05:00');
+
+  function isLegacyUser(){
+    try{
+      const perfil = state.profile || {};
+      let ca = perfil.createdAt;
+
+      // Fallback: si el perfil no tiene createdAt (porque la cuenta fue creada
+      // antes de que agregáramos el campo), lo derivamos de Firebase Auth que
+      // SIEMPRE tiene user.metadata.creationTime. Así una cuenta recién creada
+      // sin createdAt en el perfil NO queda como legacy por error.
+      if (!ca){
+        try {
+          const authUser = (typeof firebase !== 'undefined' && firebase.auth) ? firebase.auth().currentUser : null;
+          if (authUser && authUser.metadata && authUser.metadata.creationTime){
+            ca = authUser.metadata.creationTime;
+          }
+        } catch(e){}
+      }
+
+      // Si de verdad no hay fecha ni en perfil ni en Auth, asumimos legacy
+      // (defensa). En la práctica esto no pasa porque Auth siempre tiene creationTime.
+      if(!ca) return true;
+
+      let d;
+      if(ca && typeof ca === 'object' && typeof ca.toDate === 'function') d = ca.toDate();
+      else if(ca instanceof Date) d = ca;
+      else if(typeof ca === 'number') d = new Date(ca);
+      else if(typeof ca === 'string') d = new Date(ca);
+      else return true;
+      if(!d || isNaN(d.getTime())) return true;
+      return d < FECHA_CORTE_BLOQUEO;
+    } catch(e){
+      console.warn('isLegacyUser falló, asumo legacy por seguridad:', e);
+      return true;
+    }
+  }
+
   function planActual(){
+    // 1) Modo lectura (asesor viendo app de un cliente con ?view_as=UID):
+    //    el asesor ve TODO como plan asesor, independiente del plan real
+    //    del cliente. Así Natalia no queda bloqueada por el paywall del cliente.
+    try{
+      if (typeof window !== 'undefined' && typeof window.isReadOnly === 'function' && window.isReadOnly()){
+        return 'asesor';
+      }
+    } catch(e){}
+
+    // 2) Modo prueba: prevalece sobre legacy para poder validar bloqueos.
+    //    Si NO está activo, los usuarios legacy entran como 'asesor' (acceso total).
+    let modoPrueba = false;
+    try{ modoPrueba = (typeof esModoPrueba === 'function') && esModoPrueba(); }catch(e){}
+    if (!modoPrueba){
+      if (isLegacyUser()) return 'asesor';
+    }
+
+    // 3) Flujo normal: lee del state.subscription.
     const s = state.subscription || {};
     if(!s.plan) return 'free';
     // Una suscripción vencida o pendiente degrada a 'free' en el acceso.
@@ -890,7 +979,8 @@
   // Exponer para depuración / integración futura.
   window.ABBA_PAYWALL = {
     FEATURES, MODULO_BLOQUEO, PLAN_NOMBRE, PLAN_PRECIO,
-    puedeAcceder, planActual, planRequerido,
+    FECHA_CORTE_BLOQUEO,
+    puedeAcceder, planActual, planRequerido, isLegacyUser,
     setPlan: function(plan){ _setPlanPrueba(plan); }
   };
 
@@ -918,9 +1008,9 @@
       expiresAt = sub.expiresAt || null;
       couponUsed = sub.couponUsed || null;
     }
-    // Override de prueba (solo si está activo el modo prueba).
+    // Override de prueba (solo si está activo el modo prueba Y el usuario es asesor).
     try{
-      if(MODO_PRUEBA_PLAN){
+      if(esModoPrueba()){
         const p = localStorage.getItem('abba_plan_prueba');
         if(p && PLAN_ORDEN.hasOwnProperty(p)){ plan = p; status = 'active'; }
       }
@@ -930,14 +1020,34 @@
   }
 
   // ── Modo prueba: permite cambiar de plan sin pasarela para validar el bloqueo. ──
-  // Poner en false (o quitar el panel) antes de producción.  También se activa con
-  // ?prueba=1 en la URL o localStorage 'abba_modo_prueba'='1'.
-  const MODO_PRUEBA_PLAN = (function(){
+  // Se activa con ?prueba=1 en la URL o localStorage 'abba_modo_prueba'='1',
+  // PERO solo surte efecto si el usuario autenticado es un asesor (está en /asesores/{uid}).
+  // Así un cliente de pago que accidentalmente use ?prueba=1 no puede burlar el paywall.
+  const _FLAG_MODO_PRUEBA = (function(){
     try{
       if(/[?&]prueba=1/.test(location.search)) { localStorage.setItem('abba_modo_prueba','1'); return true; }
       return localStorage.getItem('abba_modo_prueba') === '1';
     }catch(e){ return false; }
   })();
+
+  // Se setea en onAuthStateChange después de leer /asesores/{uid}.
+  let _usuarioEsAsesor = false;
+
+  // El modo prueba está activo si Y solo si:
+  //   (1) el flag en URL/localStorage está presente
+  //   (2) el usuario autenticado es un asesor verificado
+  function esModoPrueba(){
+    return !!_FLAG_MODO_PRUEBA && _usuarioEsAsesor === true;
+  }
+
+  // Limpia el flag de modo prueba del localStorage. Útil cuando detectamos
+  // que un usuario no-asesor lo tenía activo (lo activó por accidente o lo heredó).
+  function limpiarFlagModoPrueba(){
+    try{
+      localStorage.removeItem('abba_modo_prueba');
+      localStorage.removeItem('abba_plan_prueba');
+    }catch(e){}
+  }
 
 /* ═══════════════════════════════════════════════════════════
    MÓDULO 3 · MAPA PATRIMONIAL (integrado)
@@ -3384,7 +3494,7 @@ function showToast(msg, type) {
     ov.querySelectorAll('.pw-plan-cta').forEach(btn=>{
       btn.addEventListener('click', function(){
         const planObjetivo = this.dataset.plan;
-        if(MODO_PRUEBA_PLAN){
+        if(esModoPrueba()){
           _setPlanPrueba(planObjetivo);
           ov.classList.remove('show');
           showToast('Plan de prueba: ' + (PLAN_NOMBRE[planObjetivo]||planObjetivo), 'success');
@@ -3460,9 +3570,9 @@ function showToast(msg, type) {
       </div>`;
   }
 
-  // ── Switch de pruebas (solo en modo prueba) ──
+  // ── Switch de pruebas (solo en modo prueba Y para asesores) ──
   function renderSwitchPruebaPlan(){
-    if(!MODO_PRUEBA_PLAN){
+    if(!esModoPrueba()){
       const ex = document.getElementById('pw-switch-prueba'); if(ex) ex.remove();
       return;
     }
@@ -8874,7 +8984,8 @@ function showToast(msg, type) {
         edadRetiro: edadRetiro,
         moneda: moneda,
         consentimientoTratamiento: perfilData.consentimientoTratamiento,
-        consentimientoRecomendaciones: perfilData.consentimientoRecomendaciones
+        consentimientoRecomendaciones: perfilData.consentimientoRecomendaciones,
+        createdAt: now   // ← crítico para que isLegacyUser() funcione (sin esto, el nuevo usuario queda marcado como legacy en memoria)
       });
       aplicarMoneda(moneda);
       document.getElementById('user-display').textContent = nombre;
@@ -8932,6 +9043,11 @@ function showToast(msg, type) {
       if (diagnosticTokenFlow.hasPending()) {
         diagnosticTokenFlow.showWelcomeBanner(true);
         showAuthPane('register');
+      } else if (_viewAsFromUrl) {
+        // Si vino con ?view_as=<uid> sin sesión, mostrar un banner explicando
+        // que debe autenticarse como asesor para continuar.
+        try { mostrarBannerViewAsLogin(_viewAsFromUrl); } catch(e){ console.warn('banner view_as login:', e); }
+        showAuthPane('login');
       } else {
         diagnosticTokenFlow.showWelcomeBanner(false);
         showAuthPane('login');
@@ -8941,14 +9057,35 @@ function showToast(msg, type) {
     // Usuario autenticado
     currency = 'COP $';
 
+    /* ═══ Verificación de asesor (una sola vez por login).
+         Setea _usuarioEsAsesor, que gobierna:
+           - Modo prueba del paywall (solo asesores pueden activarlo)
+           - View_as (ya tenía su propio check, lo reusa de aquí)
+         Si el flag de modo prueba está activo pero el usuario NO es asesor,
+         lo limpiamos del localStorage para que no quede "pegado". ═══ */
+    try {
+      const asesorDoc = await db.collection('asesores').doc(user.uid).get();
+      _usuarioEsAsesor = asesorDoc.exists;
+    } catch(e){
+      console.warn('[auth] Error verificando si es asesor:', e);
+      _usuarioEsAsesor = false;
+    }
+    if (_FLAG_MODO_PRUEBA && !_usuarioEsAsesor){
+      console.warn('[paywall] Flag de modo prueba detectado en un usuario no-asesor. Limpiando.');
+      limpiarFlagModoPrueba();
+    }
+    try { aplicarUIPlan(); } catch(e){}
+    try { renderSwitchPruebaPlan(); } catch(e){}
+
     /* ═══ MODO VIEW_AS: si llegó con ?view_as=<uid> y el user es asesor,
          cargamos los datos de ese UID en modo solo-lectura ═══ */
     if (_viewAsFromUrl) {
-      let esAsesor = false;
-      try {
-        const asesorDoc = await db.collection('asesores').doc(user.uid).get();
-        esAsesor = asesorDoc.exists;
-      } catch(e){ console.warn('[view_as] Error verificando asesor:', e); }
+      // Reusamos _usuarioEsAsesor del check de arriba (ya se consultó /asesores).
+      const esAsesor = _usuarioEsAsesor === true;
+
+      // Ocultamos el banner informativo del login (si estaba visible porque
+      // llegó con ?view_as= sin sesión). Lo quitamos ahora que ya hay user.
+      try { ocultarBannerViewAsLogin(); } catch(e){}
 
       if (esAsesor) {
         _readOnlyMode = true;
@@ -8980,7 +9117,8 @@ function showToast(msg, type) {
           edadRetiro: (clientePerfil && clientePerfil.edadRetiro != null) ? clientePerfil.edadRetiro : null,
           moneda: (clientePerfil && clientePerfil.moneda) || 'COP',
           consentimientoTratamiento: (clientePerfil && clientePerfil.consentimientoTratamiento) || {aceptado:true}, // simulamos aceptado para no bloquear
-          consentimientoRecomendaciones: (clientePerfil && clientePerfil.consentimientoRecomendaciones) || {aceptado:false}
+          consentimientoRecomendaciones: (clientePerfil && clientePerfil.consentimientoRecomendaciones) || {aceptado:false},
+          createdAt: (clientePerfil && clientePerfil.createdAt) || null   // consistencia (view_as igual devuelve 'asesor' por readonly)
         });
         aplicarMoneda(state.profile.moneda);
 
@@ -9006,6 +9144,21 @@ function showToast(msg, type) {
     try {
       perfil = await loadPerfil(user.uid);
     } catch(e){ console.warn('Error cargando perfil:', e); }
+
+    /* ─── Auto-migración de createdAt ───────────────────────────────────────
+       Las cuentas creadas antes de v131 no tienen `createdAt` guardado en
+       Firestore. isLegacyUser() las detectaría como legacy aunque sean
+       recientes. Lo arreglamos usando user.metadata.creationTime (que Auth
+       siempre tiene) y lo persistimos para no repetirlo cada login.
+       ──────────────────────────────────────────────────────────────────── */
+    if (perfil && !perfil.createdAt && user && user.metadata && user.metadata.creationTime){
+      const caMigrado = new Date(user.metadata.creationTime).toISOString();
+      perfil.createdAt = caMigrado;
+      try {
+        await savePerfil(user.uid, { createdAt: caMigrado });
+        console.log('[auto-migración] createdAt de ' + user.email + ' = ' + caMigrado);
+      } catch(e){ console.warn('[auto-migración] no se pudo persistir createdAt:', e); }
+    }
 
     // Cargar estado de suscripción (paywall). El doc del cliente puede traer
     // subscription:{plan,status,...}. Si no, queda 'free'. Fase 1: solo lectura.
@@ -9062,13 +9215,21 @@ function showToast(msg, type) {
       edadRetiro: perfil.edadRetiro != null ? perfil.edadRetiro : null,
       moneda: perfil.moneda || 'COP',
       consentimientoTratamiento: perfil.consentimientoTratamiento,
-      consentimientoRecomendaciones: perfil.consentimientoRecomendaciones || {aceptado:false}
+      consentimientoRecomendaciones: perfil.consentimientoRecomendaciones || {aceptado:false},
+      createdAt: perfil.createdAt   // ← crítico para isLegacyUser() en logins subsecuentes
     });
     aplicarMoneda(state.profile.moneda);
-  
+
     document.getElementById('user-display').textContent = state.profile.nombre;
     document.getElementById('user-avatar').textContent = (state.profile.nombre||'U').charAt(0).toUpperCase();
-  
+
+    // Refrescar la UI de plan AHORA que state.profile.createdAt está populado.
+    // Sin esta llamada, el badge superior derecho queda con el valor que tenía
+    // cuando cargarSubscription() lo renderizó (antes de que isLegacyUser()
+    // tuviera createdAt disponible), y puede mostrar "Asesor Patrimonial" en
+    // una cuenta free. Defensa adicional al fallback de Auth.creationTime.
+    try{ aplicarUIPlan(); }catch(e){}
+
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('app').classList.add('show');
     await loadAllData();
