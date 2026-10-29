@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════
    FIREBASE — auth + firestore
    ═══════════════════════════════════════════════════════════ */
-   console.log('%cABBA · build 2026-10-29-v135 · Diagnóstico fiscal en 3 pestañas (Resumen · Impuestos · Estrategia)', 'color:#0e4d3a;font-weight:bold');
+   console.log('%cABBA · build 2026-10-29-v136 · fix: paneles de pestañas M11 ocultan bien (hidden vs display:flex)', 'color:#0e4d3a;font-weight:bold');
    const firebaseConfig = {
     apiKey: "AIzaSyBLNS_xLAoAsnf5XfajAmVf12f4_mpUMfY",
     authDomain: "evaluafinanzas.firebaseapp.com",

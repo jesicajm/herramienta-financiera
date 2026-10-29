@@ -6785,18 +6785,19 @@
 #modulo-11 .pf-tab svg{
   width: 16px; height: 16px; flex: none;
 }
-#modulo-11 .pf-tab-panel{
+/* Panel oculto: el atributo [hidden] debe ganar sobre el display del panel. */
+#modulo-11 .pf-tab-panel[hidden]{ display: none !important; }
+/* Panel visible: columna con separación entre tarjetas. El display SOLO aplica
+   cuando NO está oculto, para que [hidden] siga funcionando. */
+#modulo-11 .pf-tab-panel:not([hidden]){
   display: flex;
   flex-direction: column;
   gap: 14px;
+  animation: pfTabIn .22s ease;
 }
 /* El gap del panel manda; anulamos el margin propio de las tarjetas para no duplicar. */
 #modulo-11 .pf-tab-panel > .pf-diag-card,
 #modulo-11 .pf-tab-panel > .pf-diag-head{ margin-bottom: 0; }
-/* animación sutil al cambiar de pestaña */
-#modulo-11 .pf-tab-panel:not([hidden]){
-  animation: pfTabIn .22s ease;
-}
 @keyframes pfTabIn{
   from{ opacity: 0; transform: translateY(4px); }
   to{ opacity: 1; transform: none; }
