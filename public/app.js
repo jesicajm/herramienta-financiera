@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════
    FIREBASE — auth + firestore
    ═══════════════════════════════════════════════════════════ */
-   console.log('%cABBA · build 2026-10-23-v131 · fix: createdAt ahora llega al state.profile (sin esto todo nuevo quedaba legacy)', 'color:#0e4d3a;font-weight:bold');
+   console.log('%cABBA · build 2026-10-29-v134 · fix timing: aplicarUIPlan() también después de cargar perfil (badge dejaba de refrescarse)', 'color:#0e4d3a;font-weight:bold');
    const firebaseConfig = {
     apiKey: "AIzaSyBLNS_xLAoAsnf5XfajAmVf12f4_mpUMfY",
     authDomain: "evaluafinanzas.firebaseapp.com",
@@ -87,6 +87,33 @@
       document.body.insertBefore(banner, document.body.firstChild);
       // Empujar el contenido abajo para que no quede tapado por el banner
       document.body.style.paddingTop = (banner.offsetHeight || 42) + 'px';
+    }
+
+    /* Banner informativo (navy) que aparece arriba de la pantalla de login cuando
+       se accede con ?view_as=<uid> sin sesión. Deja claro al asesor que debe
+       autenticarse PRIMERO con su cuenta para entrar al modo lectura del cliente. */
+    function mostrarBannerViewAsLogin(uidCliente){
+      if (document.getElementById('view-as-login-banner')) return;
+      const banner = document.createElement('div');
+      banner.id = 'view-as-login-banner';
+      banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#1e2853;color:#fff;padding:12px 16px;text-align:center;font-size:14px;line-height:1.45;font-family:-apple-system,BlinkMacSystemFont,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.2);';
+      banner.innerHTML =
+        '<div style="max-width:720px;margin:0 auto;">'
+        + '<strong>Modo lectura solicitado</strong> para el cliente <code style="background:rgba(255,255,255,0.15);padding:2px 6px;border-radius:4px;font-size:12px;">' + String(uidCliente).slice(0,12) + '…</code>'
+        + '<div style="font-size:12.5px;margin-top:4px;color:#c9d3e6;">Inicia sesión con tu cuenta de asesora abajo para ver la app de este cliente. Si inicias sesión con una cuenta no-asesora, el modo lectura se cancela y entras como cliente normal.</div>'
+        + '</div>';
+      document.body.insertBefore(banner, document.body.firstChild);
+      document.body.style.paddingTop = (banner.offsetHeight || 60) + 'px';
+    }
+
+    /* Oculta el banner informativo del login (lo llamamos después del login exitoso
+       para que no quede visible mientras procesamos view_as). */
+    function ocultarBannerViewAsLogin(){
+      const banner = document.getElementById('view-as-login-banner');
+      if (banner){
+        banner.remove();
+        document.body.style.paddingTop = '';
+      }
     }
   /* ═══════════════════════════════════════════════════════════
      CONFIGURACIÓN FISCAL — parámetros por año (UVT, topes, tarifas, calendario)
@@ -880,9 +907,25 @@
   function isLegacyUser(){
     try{
       const perfil = state.profile || {};
-      const ca = perfil.createdAt;
-      // Sin createdAt → legacy (cualquier perfil anterior a que agregáramos el campo).
+      let ca = perfil.createdAt;
+
+      // Fallback: si el perfil no tiene createdAt (porque la cuenta fue creada
+      // antes de que agregáramos el campo), lo derivamos de Firebase Auth que
+      // SIEMPRE tiene user.metadata.creationTime. Así una cuenta recién creada
+      // sin createdAt en el perfil NO queda como legacy por error.
+      if (!ca){
+        try {
+          const authUser = (typeof firebase !== 'undefined' && firebase.auth) ? firebase.auth().currentUser : null;
+          if (authUser && authUser.metadata && authUser.metadata.creationTime){
+            ca = authUser.metadata.creationTime;
+          }
+        } catch(e){}
+      }
+
+      // Si de verdad no hay fecha ni en perfil ni en Auth, asumimos legacy
+      // (defensa). En la práctica esto no pasa porque Auth siempre tiene creationTime.
       if(!ca) return true;
+
       let d;
       if(ca && typeof ca === 'object' && typeof ca.toDate === 'function') d = ca.toDate();
       else if(ca instanceof Date) d = ca;
@@ -9000,6 +9043,11 @@ function showToast(msg, type) {
       if (diagnosticTokenFlow.hasPending()) {
         diagnosticTokenFlow.showWelcomeBanner(true);
         showAuthPane('register');
+      } else if (_viewAsFromUrl) {
+        // Si vino con ?view_as=<uid> sin sesión, mostrar un banner explicando
+        // que debe autenticarse como asesor para continuar.
+        try { mostrarBannerViewAsLogin(_viewAsFromUrl); } catch(e){ console.warn('banner view_as login:', e); }
+        showAuthPane('login');
       } else {
         diagnosticTokenFlow.showWelcomeBanner(false);
         showAuthPane('login');
@@ -9034,6 +9082,10 @@ function showToast(msg, type) {
     if (_viewAsFromUrl) {
       // Reusamos _usuarioEsAsesor del check de arriba (ya se consultó /asesores).
       const esAsesor = _usuarioEsAsesor === true;
+
+      // Ocultamos el banner informativo del login (si estaba visible porque
+      // llegó con ?view_as= sin sesión). Lo quitamos ahora que ya hay user.
+      try { ocultarBannerViewAsLogin(); } catch(e){}
 
       if (esAsesor) {
         _readOnlyMode = true;
@@ -9092,6 +9144,21 @@ function showToast(msg, type) {
     try {
       perfil = await loadPerfil(user.uid);
     } catch(e){ console.warn('Error cargando perfil:', e); }
+
+    /* ─── Auto-migración de createdAt ───────────────────────────────────────
+       Las cuentas creadas antes de v131 no tienen `createdAt` guardado en
+       Firestore. isLegacyUser() las detectaría como legacy aunque sean
+       recientes. Lo arreglamos usando user.metadata.creationTime (que Auth
+       siempre tiene) y lo persistimos para no repetirlo cada login.
+       ──────────────────────────────────────────────────────────────────── */
+    if (perfil && !perfil.createdAt && user && user.metadata && user.metadata.creationTime){
+      const caMigrado = new Date(user.metadata.creationTime).toISOString();
+      perfil.createdAt = caMigrado;
+      try {
+        await savePerfil(user.uid, { createdAt: caMigrado });
+        console.log('[auto-migración] createdAt de ' + user.email + ' = ' + caMigrado);
+      } catch(e){ console.warn('[auto-migración] no se pudo persistir createdAt:', e); }
+    }
 
     // Cargar estado de suscripción (paywall). El doc del cliente puede traer
     // subscription:{plan,status,...}. Si no, queda 'free'. Fase 1: solo lectura.
@@ -9152,10 +9219,17 @@ function showToast(msg, type) {
       createdAt: perfil.createdAt   // ← crítico para isLegacyUser() en logins subsecuentes
     });
     aplicarMoneda(state.profile.moneda);
-  
+
     document.getElementById('user-display').textContent = state.profile.nombre;
     document.getElementById('user-avatar').textContent = (state.profile.nombre||'U').charAt(0).toUpperCase();
-  
+
+    // Refrescar la UI de plan AHORA que state.profile.createdAt está populado.
+    // Sin esta llamada, el badge superior derecho queda con el valor que tenía
+    // cuando cargarSubscription() lo renderizó (antes de que isLegacyUser()
+    // tuviera createdAt disponible), y puede mostrar "Asesor Patrimonial" en
+    // una cuenta free. Defensa adicional al fallback de Auth.creationTime.
+    try{ aplicarUIPlan(); }catch(e){}
+
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('app').classList.add('show');
     await loadAllData();
