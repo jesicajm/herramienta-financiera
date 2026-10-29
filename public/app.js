@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════
    FIREBASE — auth + firestore
    ═══════════════════════════════════════════════════════════ */
-   console.log('%cABBA · build 2026-10-29-v136 · fix: paneles de pestañas M11 ocultan bien (hidden vs display:flex)', 'color:#0e4d3a;font-weight:bold');
+   console.log('%cABBA · build 2026-10-29-v137 · Estrategia fiscal: optimizador y SAS bloqueados (plan Organizador), comparador libre', 'color:#0e4d3a;font-weight:bold');
    const firebaseConfig = {
     apiKey: "AIzaSyBLNS_xLAoAsnf5XfajAmVf12f4_mpUMfY",
     authDomain: "evaluafinanzas.firebaseapp.com",
@@ -856,6 +856,7 @@
     'm7-simulador-deudas': 'diagnostico',
     'm8-metas': 'diagnostico',
     'm12-presupuesto': 'diagnostico',
+    'm11-estrategia-fiscal': 'diagnostico',   // pestaña Estrategia del Diagnóstico fiscal (optimizador + SAS; el comparador queda libre)
 
     // ── Plan ASESOR PATRIMONIAL · $480k/año ──
     'm5-calendario-eventos': 'asesor',
@@ -3633,7 +3634,8 @@ function showToast(msg, type) {
     'm13-hallazgos-completos':'Recibe los hallazgos de tu estructura legal con la acción, la norma y el costo de cada uno.',
     'm15-capas-detallado':  'Abre el detalle de cada capa: qué falla, por qué y cuánto aporta cada activo.',
     'm5-calendario-eventos':'Organiza tus pagos estacionales en un calendario anual y evita sorpresas.',
-    'm9-pdf-informe':       'Descarga tu diagnóstico completo en PDF, listo para tu asesor o contador.'
+    'm9-pdf-informe':       'Descarga tu diagnóstico completo en PDF, listo para tu asesor o contador.',
+    'm11-estrategia-fiscal':'Descubre cuánto puedes ahorrar en impuestos con las estrategias que aplican a tu caso.'
   };
 
   /* ── BLOQUEO MIXTO ──
@@ -3655,7 +3657,8 @@ function showToast(msg, type) {
       sec.classList.add('pw-mixto-locked','pw-mixto-proc');
       if(sec.querySelector(':scope > .pw-mixto-gate')) return;
       const plan = planRequerido(feat);
-      const gancho = FEATURE_GANCHO[feat] || '';
+      // Gancho por-elemento (data-pw-gancho) con prioridad; si no, el de la feature.
+      const gancho = sec.getAttribute('data-pw-gancho') || FEATURE_GANCHO[feat] || '';
       const gate = document.createElement('div');
       gate.className = 'pw-mixto-gate';
       gate.innerHTML = `
@@ -12687,10 +12690,33 @@ function showToast(msg, type) {
     // ══════════ PANEL: ESTRATEGIA ══════════
     html += '<div class="pf-tab-panel" data-pf-tab="estrategia"'+(_tab!=='estrategia'?' hidden':'')+'>';
     html += '<div class="pf-diag-head" style="margin-bottom:14px"><h3>Estrategia tributaria</h3><p>Decisiones que pueden bajar tu carga fiscal: qué régimen te conviene, cuánto aportar para optimizar y si vale la pena crear una empresa.</p></div>';
-    const _estrategiaHtml = pfComparadorHtml() + pfOptimizadorHtml() + pfSasHtml();
-    if(_estrategiaHtml.trim()){
-      html += _estrategiaHtml;
-    } else {
+
+    // El comparador Ordinario vs Simple queda LIBRE (plan Gratis, como se anunció).
+    html += pfComparadorHtml();
+
+    // Optimizador de aportes y Simulador SAS: PAYWALL (plan Organizador). Cada uno
+    // muestra su título + qué hace (teaser nítido) y difumina el resultado con el gate.
+    const _optHtml = pfOptimizadorHtml();
+    if(_optHtml.trim()){
+      html += '<div data-pw-feature="m11-estrategia-fiscal" '
+        + 'data-pw-gancho="Mira cuántos impuestos te ahorras aportando a pensión voluntaria o AFC, y encuentra tu punto óptimo.">'
+        + '<div class="pf-teaser-head" data-pw-teaser><h3>Optimizador de aportes voluntarios</h3>'
+        +   '<p>Cuánto aportar a pensión voluntaria o AFC para pagar menos renta, con tu punto óptimo según tus ingresos.</p></div>'
+        + _optHtml
+        + '</div>';
+    }
+    const _sasHtml = pfSasHtml();
+    if(_sasHtml.trim()){
+      html += '<div data-pw-feature="m11-estrategia-fiscal" '
+        + 'data-pw-gancho="Simula si crear una empresa (SAS) te conviene: cuánto pagarías como sueldo vs. utilidad y qué régimen elegir.">'
+        + '<div class="pf-teaser-head" data-pw-teaser><h3>¿Te conviene crear una empresa (SAS)?</h3>'
+        +   '<p>Compara lo que pagarías como persona natural frente a una SAS, repartiendo entre sueldo y utilidad, en Ordinario y en Simple.</p></div>'
+        + _sasHtml
+        + '</div>';
+    }
+
+    // Estado vacío (sin datos para ninguna estrategia).
+    if(!pfComparadorHtml().trim() && !_optHtml.trim() && !_sasHtml.trim()){
       html += '<div class="pf-diag-card"><div class="pf-diag-t">Aún no hay estrategias que mostrar</div>'
         + '<p class="pf-note" style="margin-top:6px">Completa tus ingresos y tu <strong>Perfil personal y fiscal</strong> para que podamos comparar regímenes (Ordinario vs Simple), calcular tu punto óptimo de aportes voluntarios y evaluar si te conviene crear una empresa.</p>'
         + '<button class="btn btn-secondary" style="margin-top:12px" onclick="navigateTo(10)">Ir a mi Perfil fiscal</button></div>';
@@ -12834,6 +12860,9 @@ function showToast(msg, type) {
     // === Presupuesto: ahora vive en su propio módulo (12) ===
     cont.querySelectorAll('[data-cta-asesor]').forEach(b=> b.addEventListener('click', ()=>{ try{ navigateTo(9); }catch(e){} }));
     cont.querySelectorAll('[data-cta-whatsapp]').forEach(b=> b.addEventListener('click', ()=> abrirWhatsAppAsesor(b.textContent)));
+
+    // PAYWALL · bloquea los bloques de Estrategia (optimizador + SAS) según el plan.
+    try{ if(typeof aplicarBloqueoMixto==='function') aplicarBloqueoMixto(11); }catch(e){}
   }
 
   /* ═══ FASE 3 · DETECTOR DE VULNERABILIDADES Y OPORTUNIDADES ═══ */
