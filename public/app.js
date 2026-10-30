@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════
    FIREBASE — auth + firestore
    ═══════════════════════════════════════════════════════════ */
-   console.log('%cABBA · build 2026-10-30-v139 · Vulnerabilidades y oportunidades solo en pestaña Resumen', 'color:#0e4d3a;font-weight:bold');
+   console.log('%cABBA · build 2026-10-30-v140 · diagrama estructura legal al inicio + tamaño natural (no se agranda con pocas columnas)', 'color:#0e4d3a;font-weight:bold');
    const firebaseConfig = {
     apiKey: "AIzaSyBLNS_xLAoAsnf5XfajAmVf12f4_mpUMfY",
     authDomain: "evaluafinanzas.firebaseapp.com",
@@ -15145,7 +15145,7 @@ function showToast(msg, type) {
       // posiciones centradas
       let startX = (totalW - (sumaAnchos + (n-1)*GAP_X))/2;
       const centros = anchos.map((w,i)=>{ const c = startX + w/2; startX += w + GAP_X; return c; });
-      svg = '<svg viewBox="0 0 '+totalW+' '+totalH+'" preserveAspectRatio="xMidYMin meet" class="leg-svg">';
+      svg = '<svg viewBox="0 0 '+totalW+' '+totalH+'" width="'+totalW+'" height="'+totalH+'" preserveAspectRatio="xMidYMin meet" class="leg-svg">';
       grupos.forEach((t,i)=> svg += linea(cx, yCab+CAB_H, centros[i], yGrp));
       svg += rectBox(cx, yCab, CAB_W, CAB_H, cabeza, 'Tú, la persona', 'cab');
       grupos.forEach((t,i)=>{ const info=TIPO[t]||{label:'Otros',clase:'otr'}; svg += rectBox(centros[i], yGrp, anchos[i], GRP_H, info.label, grupoSub(directoGrupos[t]), 'grp '+info.clase, true); });
@@ -15166,7 +15166,7 @@ function showToast(msg, type) {
       const cx = totalW/2;
       let startX = (totalW - (sumaR + (nR-1)*GAP_X))/2;
       const rCentros = ramaAnchos.map((w,i)=>{ const c = startX + w/2; startX += w + GAP_X; return c; });
-      svg = '<svg viewBox="0 0 '+totalW+' '+totalH+'" preserveAspectRatio="xMidYMin meet" class="leg-svg">';
+      svg = '<svg viewBox="0 0 '+totalW+' '+totalH+'" width="'+totalW+'" height="'+totalH+'" preserveAspectRatio="xMidYMin meet" class="leg-svg">';
       ramas.forEach((r,i)=> svg += linea(cx, yCab+CAB_H, rCentros[i], yRama));
       svg += rectBox(cx, yCab, CAB_W, CAB_H, cabeza, 'Tú, la persona', 'cab');
       ramas.forEach((r,i)=>{

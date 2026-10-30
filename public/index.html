@@ -17,7 +17,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-functions-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<link rel="stylesheet" href="styles.css?v=139">
+<link rel="stylesheet" href="styles.css?v=140">
 <style>
 /* ═══ Simulador de Deuda (Módulo 7) ═══ */
 #modulo-7 .ds-hint{font-size:13px;line-height:1.5;color:rgba(0,0,0,.55);margin:0 0 14px}
@@ -2186,6 +2186,9 @@
         <p class="pf-sub">Con tus bienes ya registrados y unas preguntas cortas, revisamos si tu patrimonio está bien organizado desde el punto de vista legal. Detectamos: cómo protegerte frente a demandas, qué pasa con tus bienes si tú faltas, obligaciones que puedas tener pendientes con la DIAN, y si conviene mover algún bien a una estructura mejor.</p>
       </div>
 
+      <!-- ─── DIAGRAMA DE ESTRUCTURA — al inicio del módulo; se renderiza desde app.js ─── -->
+      <div id="leg-estructura-diagrama"></div>
+
       <!-- ─── BLOQUE 1 · Planeación sucesoral ─── -->
       <div class="pf-card">
         <div class="pf-card-head">
@@ -2452,9 +2455,6 @@
           <p class="pf-note" style="margin-top:10px">Sin ese acuerdo, la parte de un socio que fallece pasa a sus herederos, que pueden no conocer el negocio ni querer seguir en él. Muchas empresas rentables se traban o se venden a mal precio por no haber definido esto antes.</p>
         </div>
       </div>
-
-      <!-- ─── DIAGRAMA DE ESTRUCTURA — se renderiza desde app.js ─── -->
-      <div id="leg-estructura-diagrama"></div>
 
       <!-- ─── DIAGNÓSTICO — se renderiza dinámicamente desde app.js ─── -->
       <div id="leg-diagnostico"></div>
@@ -3159,6 +3159,6 @@
     </div>
 </div>
 
-<script src="app.js?v=139"></script>
+<script src="app.js?v=140"></script>
 </body>
 </html>
