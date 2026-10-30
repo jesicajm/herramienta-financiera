@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════
    FIREBASE — auth + firestore
    ═══════════════════════════════════════════════════════════ */
-   console.log('%cABBA · build 2026-10-29-v138 · optimizador gratis en Impuestos · solo SAS bloqueado · modo prueba por ?prueba=1 (TEMPORAL)', 'color:#0e4d3a;font-weight:bold');
+   console.log('%cABBA · build 2026-10-30-v139 · Vulnerabilidades y oportunidades solo en pestaña Resumen', 'color:#0e4d3a;font-weight:bold');
    const firebaseConfig = {
     apiKey: "AIzaSyBLNS_xLAoAsnf5XfajAmVf12f4_mpUMfY",
     authDomain: "evaluafinanzas.firebaseapp.com",
@@ -12510,6 +12510,10 @@ function showToast(msg, type) {
 
     // Resumen de obligaciones (qué debes presentar) va también en el Resumen.
     html += pfObligacionesHtml();
+
+    // Vulnerabilidades y oportunidades: SOLO en el Resumen. Contenedor que llena
+    // renderVulnerabilidades() después del innerHTML.
+    html += '<div id="pf-vulnerabilidades"></div>';
 
     html += '</div>';  // ─── fin PANEL RESUMEN ───
 
