@@ -9,7 +9,7 @@
  * ║                            → notificación interna a Jessica  ║
  * ║  2 │ checkExpiredPayments  Cron cada 15 min                  ║
  * ║                            → marca expired las sesiones      ║
- * ║                              sin pago > 3h                   ║
+ * ║                              pasadas de payment_deadline     ║
  * ║                            → email de cortesía al cliente    ║
  * ╚══════════════════════════════════════════════════════════════╝
  *
@@ -60,7 +60,7 @@ const CONFIG = {
   pagoDiagnosticoUrl: "https://evaluafinanzas.web.app/pago-diagnostico",
   // ⬇️  Reemplazá con el link exacto del event type "Diagnóstico patrimonial con Natalia"
   calendlyEventUrl:
-    "https://calendly.com/abba-asesoria/diagnostico-patrimonial-con-natalia",
+    "https://calendly.com/abba-asesoria/diagnostico-natalia",
   // URL de la app de ABBA (donde el cliente completa su diagnóstico).
   //
   // ⚠️ IMPORTANTE — actualizar esta URL en cada fase del proyecto:
@@ -94,6 +94,67 @@ function formatBogota(date) {
     // 9:00 a. m. → 9:00 AM   /   3:30 p. m. → 3:30 PM
     .replace(/\s+a\.\s*m\./gi, " AM")
     .replace(/\s+p\.\s*m\./gi, " PM");
+}
+
+/**
+ * Calcula el plazo límite para que el cliente envíe el comprobante de pago.
+ *
+ * Regla (acordada con Natalia, 2026-11-12):
+ *   - Si el booking cae L-V entre 8am y 3pm Bogotá → +3 horas (plazo rápido,
+ *     hay margen para confirmar antes del cierre de las 6pm).
+ *   - Cualquier otro momento (tarde/noche L-V, fines de semana, madrugada) →
+ *     siguiente día calendario 12pm Bogotá (así nadie queda cancelado por
+ *     caer fuera de horario laboral).
+ *   - Techo: deadline ≤ session_start − 2h (el plazo nunca pasa la sesión).
+ *
+ * Colombia no tiene horario de verano, offset fijo UTC-5.
+ *
+ * Ejemplos:
+ *   Lunes 10am    → Lunes 1pm   (+3h)
+ *   Lunes 4pm     → Martes 12pm
+ *   Viernes 9pm   → Sábado 12pm
+ *   Sábado 11am   → Domingo 12pm
+ *   Domingo 9am   → Lunes 12pm
+ *
+ * @param {Date} now - momento del booking (UTC)
+ * @param {Date} sessionStart - fecha/hora de la sesión agendada (UTC)
+ * @returns {Date} deadline en UTC
+ */
+function calcularPaymentDeadline(now, sessionStart) {
+  const BOGOTA_OFFSET_MIN = -5 * 60; // UTC-5 (sin DST)
+  // "now en Bogotá" representado como si fuera UTC (truco para leer hora/día local).
+  const nowBogota = new Date(now.getTime() + BOGOTA_OFFSET_MIN * 60 * 1000);
+  const diaSemana = nowBogota.getUTCDay(); // 0=dom, 1=lun, ..., 6=sáb
+  const horaBogota = nowBogota.getUTCHours();
+
+  const esLunesViernes = diaSemana >= 1 && diaSemana <= 5;
+  const enHorarioLaboralManana = horaBogota >= 8 && horaBogota < 15;
+
+  let deadline;
+  if (esLunesViernes && enHorarioLaboralManana) {
+    // Plazo rápido: +3 horas desde ahora.
+    deadline = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+  } else {
+    // Siguiente día calendario 12pm Bogotá.
+    const nextDayBogotaMidnight = new Date(Date.UTC(
+      nowBogota.getUTCFullYear(),
+      nowBogota.getUTCMonth(),
+      nowBogota.getUTCDate() + 1, // +1 día
+      0, 0, 0, 0
+    ));
+    // 12pm Bogotá = +12h desde medianoche Bogotá.
+    const nextDay12pmBogota = new Date(nextDayBogotaMidnight.getTime() + 12 * 60 * 60 * 1000);
+    // Convertir de "Bogotá-as-UTC" al UTC real.
+    deadline = new Date(nextDay12pmBogota.getTime() - BOGOTA_OFFSET_MIN * 60 * 1000);
+  }
+
+  // Techo: el deadline nunca debe pasar la sesión menos 2h.
+  if (sessionStart instanceof Date && !isNaN(sessionStart.getTime())) {
+    const maxDeadline = new Date(sessionStart.getTime() - 2 * 60 * 60 * 1000);
+    if (deadline > maxDeadline) deadline = maxDeadline;
+  }
+
+  return deadline;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -225,7 +286,8 @@ async function handleNewInvitee(payload, res) {
 
     // ═══ FIRESTORE ═══
     const now = new Date();
-    const paymentDeadline = new Date(now.getTime() + 3 * 60 * 60 * 1000); // +3h
+    // Deadline dinámico según horario laboral (ver calcularPaymentDeadline).
+    const paymentDeadline = calcularPaymentDeadline(now, sessionStart);
 
     const sessionDoc = {
       calendly_invitee_uuid: inviteeUuid,
@@ -425,7 +487,7 @@ async function sendPaymentExpiredEmail(transporter, session) {
     calendlyUrl: CONFIG.calendlyEventUrl,
   };
   const html = renderEmailExpiracion(ctx);
-  const text = `Hola ${session.client_name}, no recibimos tu comprobante en 3h y liberamos el horario. Cuando quieras volver a agendar: ${CONFIG.calendlyEventUrl}`;
+  const text = `Hola ${session.client_name}, no recibimos tu comprobante dentro del plazo acordado y liberamos el horario. Cuando quieras volver a agendar: ${CONFIG.calendlyEventUrl}`;
 
   await transporter.sendMail({
     from: `"Natalia Jaramillo — ABBA Patrimonial" <${CONFIG.gmail.user}>`,
@@ -527,7 +589,7 @@ exports.checkExpiredPayments = onSchedule(
         try {
           await cancelCalendlyEvent(
             s.calendly_event_uri,
-            "Pago no recibido dentro del plazo de 3 horas."
+            "Pago no recibido dentro del plazo acordado."
           );
           logger.info(`✖  Calendly cancelado: ${s.id}`);
         } catch (err) {
