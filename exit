@@ -1,0 +1,20 @@
+[33m7748b8c[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/feat/mejoras-app[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m, [m[1;32mfeat/mejoras-app[m[33m)[m feat: pagina de confirmacion personalizada post-reserva Calendly
+[33mc74be6f[m Merge branch 'feat/reestructura-diagnostico'
+[33m01b452f[m[33m ([m[1;31morigin/feat/reestructura-diagnostico[m[33m, [m[1;32mfeat/reestructura-diagnostico[m[33m)[m fix(email-post): simplificar intro, limpiar nombre camino, agregar instrucciones de pago y whatsapp
+[33mc59e57b[m feat: entrega C - envio real del correo post-sesion desde Natalia
+[33m22ff3d0[m feat(panel): entrega B - vista post-sesion con formulario y guardado de borrador
+[33m704fc38[m fix: modulos minimos solo ingresos_gastos+fiscal (legal esta en fiscal.legal)
+[33m907f7ad[m feat: prompt con 5 caminos ABBA + trigger notifica a Jessica al completar modulos
+[33m319143a[m feat(panel): estructura legal por activo + resumen agregado
+[33mbc4e371[m feat(panel): entrega A - descarga de contexto para Claude.ai pre-sesion
+[33m52f374e[m feat: modo view_as de solo lectura para asesor + banner + guards
+[33m26c73a7[m fix(panel): doble conteo de salario personal + variable integrado con clase fiscal
+[33md9f7e0c[m fix(panel): estructura real de metas/ahorro + clase fiscal de contratos variables
+[33m386405e[m feat(panel): preparacion como vista completa + salario personal real para ingresos variables
+[33mf3e7d5f[m feat(panel): chips de modulos clickeables con detalle + stub abrir-app
+[33mce2fca7[m feat(panel): chip de vinculacion y modal de preparacion de sesion
+[33m0f77b8a[m[33m ([m[1;31morigin/feat/token-register-first[m[33m, [m[1;32mfeat/token-register-first[m[33m)[m fix(auth): alinear diagnosticTokenFlow con detectDiagSessionToken existente
+[33m30240ae[m feat(auth): registro-primero con token de diagnostico y vinculacion silenciosa
+[33m3dd25d9[m feat(email): recordatorio 12h con app como CTA principal
+[33mff96c7c[m chore: actualiza emailTemplates, index.js e indices para produccion
+[33m7c3d7f1[m refactor: reagendamiento Calendly-driven en vez de manual

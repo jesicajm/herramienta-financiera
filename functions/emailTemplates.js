@@ -122,7 +122,7 @@ function renderEmailInstruccionesPago(ctx) {
             <p style="margin:0 0 16px;font-size:15px;line-height:1.65;color:${COLORS.ink};">
               Recibimos tu solicitud de sesión para el
               <strong>${formatBogota(sessionStart)}</strong>.
-              Para confirmarla, necesitamos el pago dentro de las próximas 3 horas:
+              Para confirmarla, necesitamos el pago antes de la fecha límite que aparece abajo:
             </p>
 
             <!-- Deadline -->
@@ -217,7 +217,7 @@ function renderEmailInstruccionesPago(ctx) {
               Natalia Jaramillo
             </p>
             <p style="margin:4px 0 0;font-size:12px;color:${COLORS.muted};">
-              ABBA · Arquitectura Patrimonial
+              ABBA Patrimonial · Arquitectura Patrimonial
             </p>
           </td>
         </tr>
@@ -325,7 +325,7 @@ function renderEmailExpiracion(ctx) {
         <tr><td style="padding:32px;">
           <p style="margin:0 0 16px;font-size:15px;line-height:1.65;">Hola <strong>${clientName}</strong>,</p>
           <p style="margin:0 0 16px;font-size:15px;line-height:1.65;color:${COLORS.ink};">
-            No recibimos el comprobante de pago dentro de las 3 horas posteriores a tu reserva, así que liberamos el horario para otros clientes.
+            No recibimos el comprobante de pago dentro del plazo que te indicamos en el correo de confirmación, así que liberamos el horario para otros clientes.
           </p>
           <p style="margin:0 0 20px;font-size:15px;line-height:1.65;color:${COLORS.ink};">
             Si quieres retomar el proceso, puedes volver a agendar cuando estés listo/a. Si tuviste algún inconveniente con el pago, responde este correo y te ayudamos.
@@ -469,7 +469,7 @@ function renderEmailConfirmacion(ctx) {
               Natalia Jaramillo
             </p>
             <p style="margin:4px 0 0;font-size:12px;color:${COLORS.muted};">
-              ABBA Patrimonial · Arquitectura de patrimonio
+              ABBA Patrimonial · Arquitectura Patrimonial
             </p>
           </td>
         </tr>
@@ -699,7 +699,7 @@ function renderEmailRecordatorio12h(ctx) {
               Natalia Jaramillo
             </p>
             <p style="margin:4px 0 0;font-size:12px;color:${COLORS.muted};">
-              ABBA Patrimonial · Arquitectura de patrimonio
+              ABBA Patrimonial · Arquitectura Patrimonial
             </p>
           </td>
         </tr>
@@ -867,7 +867,7 @@ function renderEmailReagendamiento(ctx) {
               Natalia Jaramillo
             </p>
             <p style="margin:4px 0 0;font-size:12px;color:${COLORS.muted};">
-              ABBA Patrimonial · Arquitectura de patrimonio
+              ABBA Patrimonial · Arquitectura Patrimonial
             </p>
           </td>
         </tr>
@@ -1089,7 +1089,7 @@ function renderEmailPostSesion(ctx) {
               Natalia Jaramillo
             </p>
             <p style="margin:4px 0 0;font-size:12px;color:${COLORS.muted};">
-              ABBA Patrimonial · Arquitectura de patrimonio
+              ABBA Patrimonial · Arquitectura Patrimonial
             </p>
           </td>
         </tr>
